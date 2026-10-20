@@ -1,0 +1,14 @@
+# A computing node. The Tisma programs (tisma-slicer, tisma-fea and their libraries) come from a Tisma Slicer build
+# for Linux, copied to deploy/tisma/ before building the image (see README.md).
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
+        libgl1 libglu1-mesa libegl1 libgtk-3-0 libdbus-1-3 libwebkit2gtk-4.1-0 libvulkan1 mesa-vulkan-drivers \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY pyproject.toml LICENSE ./
+COPY tisma_cloud ./tisma_cloud
+RUN python3 -m venv /venv && /venv/bin/pip install --no-cache-dir . \
+    && useradd --system --home /work tisma && mkdir -p /work && chown tisma /work
+COPY deploy/tisma /opt/tisma
+USER tisma
+CMD ["/venv/bin/python", "-m", "tisma_cloud.node", "--config", "/etc/tisma/node.toml"]

@@ -1,0 +1,14 @@
+# Settings of a computing node. The token is printed by "tisma-cloud-admin node-add" on the master; it may also be
+# given in the environment variable TISMA_NODE_TOKEN instead of here.
+master_url = "http://192.168.1.10:8000"
+# token = "tn_..."
+tisma_slicer = "/opt/tisma/tisma-slicer"       # Windows: C:/Program Files/TismaSlicer/tisma-slicer-console.exe
+tisma_fea = "/opt/tisma/tisma-fea"             # Windows: C:/Program Files/TismaSlicer/tisma-fea.exe
+work_dir = "/work"
+# Jobs at the same time: 1 on the i7 laptops (slicing already uses every core), 2 on the i5.
+slots = 1
+# Longest job [s].
+timeout_s = 3600
+# The analyses may use the graphics card (Vulkan).
+gpu = true
+verify_tls = true

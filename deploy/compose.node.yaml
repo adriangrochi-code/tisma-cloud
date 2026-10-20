@@ -1,0 +1,19 @@
+# A computing node (any machine of the local network). Run: docker compose -f deploy/compose.node.yaml up -d
+services:
+  node:
+    build: { context: .., dockerfile: deploy/Dockerfile.node }
+    restart: unless-stopped
+    environment:
+      TISMA_NODE_TOKEN: ${TISMA_NODE_TOKEN}
+    volumes:
+      - ./node.toml:/etc/tisma/node.toml:ro
+    # No privileges and a read-only system: a job only writes in its work directory.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/work:size=8g", "/tmp:size=1g"]
+    # GTX 1060 for the analyses (needs the NVIDIA container toolkit); only on the machine with the card.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: 1, capabilities: [gpu, compute, utility, graphics] }]

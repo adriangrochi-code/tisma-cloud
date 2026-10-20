@@ -1,0 +1,10 @@
+# The master server: API, queue and accounts (no Tisma programs needed).
+FROM python:3.11-slim
+WORKDIR /app
+COPY pyproject.toml LICENSE ./
+COPY tisma_cloud ./tisma_cloud
+RUN pip install --no-cache-dir ".[master]" && useradd --system --home /data tisma && mkdir -p /data && chown tisma /data
+USER tisma
+ENV TISMA_STORAGE_DIR=/data/storage
+EXPOSE 8000
+CMD ["uvicorn", "tisma_cloud.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
