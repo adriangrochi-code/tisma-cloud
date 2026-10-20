@@ -54,6 +54,17 @@ class Settings:
     anonymous_per_minute: int = field(default_factory=lambda: _int("TISMA_ANONYMOUS_PER_MINUTE", 120))
     max_uploads: int = field(default_factory=lambda: _int("TISMA_MAX_UPLOADS", 8))
     max_uploads_per_account: int = field(default_factory=lambda: _int("TISMA_MAX_UPLOADS_PER_ACCOUNT", 2))
+    # E-mail of the codes (account confirmation, new password): the SMTP server of the domain (e.g. the mail hosting of
+    # tisma.com.uy). Empty host: the messages are only written to the log (development).
+    smtp_host: str = field(default_factory=lambda: os.environ.get("TISMA_SMTP_HOST", ""))
+    smtp_port: int = field(default_factory=lambda: _int("TISMA_SMTP_PORT", 587))
+    # starttls (port 587), ssl (port 465) or none (only for a server on the same machine).
+    smtp_security: str = field(default_factory=lambda: os.environ.get("TISMA_SMTP_SECURITY", "starttls"))
+    smtp_user: str = field(default_factory=lambda: os.environ.get("TISMA_SMTP_USER", ""))
+    smtp_password: str = field(default_factory=lambda: os.environ.get("TISMA_SMTP_PASSWORD", ""))
+    smtp_from: str = field(default_factory=lambda: os.environ.get("TISMA_SMTP_FROM", "Tisma Cloud <noreply@tisma.com.uy>"))
+    # Client IDs of "Sign in with Google" (web page, phone app), comma separated. Empty: disabled.
+    google_client_ids: str = field(default_factory=lambda: os.environ.get("TISMA_GOOGLE_CLIENT_IDS", ""))
     # Key of the web site for /v1/site (it creates the users and records their payments). Empty: disabled.
     site_key: str = field(default_factory=lambda: os.environ.get("TISMA_SITE_KEY", ""))
     # Days a user may keep computing after paid_until (a payment that arrives late).

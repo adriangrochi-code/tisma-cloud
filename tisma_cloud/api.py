@@ -18,7 +18,9 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from . import __version__, billing, scheduler
+from . import __version__, billing, codes, scheduler
+from .google_auth import GoogleError, GoogleVerifier
+from .mail import code_message, mailer_for
 from .db import Database
 from .jobs import JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles, plan_job
 from .models import ApiToken, Job, Node, Payment, Plan, User, utcnow
@@ -38,6 +40,10 @@ class Services:
         self.db.create_all()
         self.storage = Storage(settings.storage_dir)
         self.limiter = RateLimiter()
+        # A slower window for the e-mails sent to one address (at most a few per hour).
+        self.hourly = RateLimiter(3600.)
+        self.mailer = mailer_for(settings)
+        self.google = GoogleVerifier([c.strip() for c in settings.google_client_ids.split(",") if c.strip()])
 
     def sweep(self) -> None:
         """Requeues the jobs of lost nodes and removes the files of old jobs."""
@@ -196,6 +202,25 @@ class RegisterBody(BaseModel):
     plan: str | None = None
 
 
+class EmailBody(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+
+
+class CodeBody(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    device: str = Field(default="", max_length=100)
+
+
+class ResetBody(CodeBody):
+    password: str = Field(min_length=8, max_length=200)
+
+
+class GoogleBody(BaseModel):
+    id_token: str = Field(min_length=20, max_length=8000)
+    device: str = Field(default="", max_length=100)
+
+
 class CheckoutBody(BaseModel):
     plan: str = Field(min_length=1, max_length=50)
     months: int = Field(default=1, ge=1, le=12)
@@ -237,6 +262,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             task.cancel()
+            # The connections to the database are closed with the server.
+            services.db.engine.dispose()
 
     app = FastAPI(title="Tisma Cloud", version=__version__, lifespan=lifespan)
     app.state.services = services
@@ -358,7 +385,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict:
         billing_url = cfg.billing_url or (cfg.public_url + "/cuenta" if cfg.public_url else "")
         return {"ok": True, "service": "tisma-cloud", "version": __version__, "billing_url": billing_url,
-                "payments": bool(provider)}
+                "payments": bool(provider),
+                # The web client ID of "Sign in with Google" (the first one), for the account page.
+                "google_client_id": services.google.client_ids[0] if services.google.client_ids else ""}
 
     @app.post("/v1/auth/login")
     def login(request: Request, body: LoginBody) -> dict:
@@ -371,9 +400,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ok = verify_password(body.password, user.password_hash if user and user.password_hash else DUMMY_HASH)
             if user is None or not ok or not user.enabled:
                 raise HTTPException(401, "Wrong e-mail or password")
-            token = new_token("tu")
-            s.add(ApiToken(user_id=user.id, token_hash=hash_token(token), label=body.device))
-            return {"token": token, "email": user.email}
+            if not user.email_verified:
+                raise HTTPException(403, "E-mail not verified: enter the code we sent to it")
+            return {"token": open_session(s, user, body.device), "email": user.email}
 
     @app.post("/v1/auth/logout")
     def logout(user: UserDep, request: Request) -> dict:
@@ -411,13 +440,133 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if plan is None or not plan.public:
                 plan = s.execute(select(Plan).where(Plan.public.is_(True)).order_by(Plan.price_cents)).scalars().first() \
                     or s.get(Plan, "trial")
-            # Not paid yet: the account can log in and pay, not compute.
-            user = User(email=email, plan_name=plan.name, password_hash=hash_password(body.password))
+            # Not verified nor paid yet: the code sent to the address confirms it; then the account can pay.
+            user = User(email=email, plan_name=plan.name, password_hash=hash_password(body.password),
+                        email_verified=False)
             s.add(user)
             s.flush()
-            token = new_token("tu")
-            s.add(ApiToken(user_id=user.id, token_hash=hash_token(token), label="Account page"))
-            return {"token": token, "email": email}
+            code = codes.issue(s, user, "verify")
+        send_code(email, "verify", code)
+        return {"verification_required": True, "email": email}
+
+    def open_session(s, user: User, device: str) -> str:  # noqa: ANN001
+        token = new_token("tu")
+        s.add(ApiToken(user_id=user.id, token_hash=hash_token(token), label=device[:100]))
+        return token
+
+    def send_code(email: str, purpose: str, code: str) -> None:
+        subject, text = code_message(purpose, code)
+        try:
+            services.mailer.send(email, subject, text)
+        except Exception:  # noqa: BLE001 (the account exists; the user can ask the code again)
+            log.exception("Could not send the %s code to %s", purpose, email)
+            raise HTTPException(503, "The e-mail could not be sent: try again in a few minutes") from None
+
+    def mail_allowed(request: Request, email: str) -> bool:
+        """At most one code per minute and 5 per hour to an address, and 20 per hour from a network address."""
+        return (limiter.allow(f"mail-min:{email}", 1) and services.hourly.allow(f"mail-hour:{email}", 5)
+                and services.hourly.allow(f"mail-ip:{client_key(request)}", 20))
+
+    def code_attempt_allowed(request: Request, email: str) -> bool:
+        return (limiter.allow(f"code-ip:{client_key(request)}", cfg.login_per_minute)
+                and limiter.allow(f"code-email:{email}", cfg.login_per_minute))
+
+    @app.post("/v1/auth/verify")
+    def verify_email(request: Request, body: CodeBody) -> dict:
+        email = body.email.strip().lower()
+        if not code_attempt_allowed(request, email):
+            raise HTTPException(429, "Too many attempts: wait a minute", headers={"Retry-After": "60"})
+        # The wrong attempt is saved before the answer (an exception inside the session would undo it).
+        token = None
+        with db.session() as s:
+            user = s.execute(select(User).where(User.email == email)).scalar_one_or_none()
+            if user is not None and user.enabled and codes.check(s, user, "verify", body.code):
+                user.email_verified = True
+                token = open_session(s, user, body.device)
+        if token is None:
+            raise HTTPException(400, "Wrong or expired code")
+        return {"token": token, "email": email}
+
+    @app.post("/v1/auth/resend")
+    def resend_code(request: Request, body: EmailBody) -> dict:
+        """A new confirmation code. The answer is the same whether the address has an account or not."""
+        email = body.email.strip().lower()
+        if not mail_allowed(request, email):
+            raise HTTPException(429, "Wait a minute before asking another code", headers={"Retry-After": "60"})
+        with db.session() as s:
+            user = s.execute(select(User).where(User.email == email)).scalar_one_or_none()
+            code = codes.issue(s, user, "verify") if user is not None and user.enabled and not user.email_verified else None
+        if code:
+            send_code(email, "verify", code)
+        return {"ok": True}
+
+    @app.post("/v1/auth/password/forgot")
+    def forgot_password(request: Request, body: EmailBody) -> dict:
+        """A code to choose a new password. The answer is the same whether the address has an account or not."""
+        email = body.email.strip().lower()
+        if not mail_allowed(request, email):
+            raise HTTPException(429, "Wait a minute before asking another code", headers={"Retry-After": "60"})
+        with db.session() as s:
+            user = s.execute(select(User).where(User.email == email)).scalar_one_or_none()
+            code = codes.issue(s, user, "reset") if user is not None and user.enabled else None
+        if code:
+            send_code(email, "reset", code)
+        return {"ok": True}
+
+    @app.post("/v1/auth/password/reset")
+    def reset_password(request: Request, body: ResetBody) -> dict:
+        email = body.email.strip().lower()
+        if not code_attempt_allowed(request, email):
+            raise HTTPException(429, "Too many attempts: wait a minute", headers={"Retry-After": "60"})
+        token = None
+        with db.session() as s:
+            user = s.execute(select(User).where(User.email == email)).scalar_one_or_none()
+            if user is not None and user.enabled and codes.check(s, user, "reset", body.code):
+                user.password_hash = hash_password(body.password)
+                # The code reached the inbox: the address is theirs. The sessions of the devices are closed.
+                user.email_verified = True
+                s.execute(ApiToken.__table__.delete().where(ApiToken.user_id == user.id))
+                token = open_session(s, user, body.device)
+        if token is None:
+            raise HTTPException(400, "Wrong or expired code")
+        return {"token": token, "email": email}
+
+    @app.post("/v1/auth/google")
+    def google_login(request: Request, body: GoogleBody) -> dict:
+        if not limiter.allow(f"google-ip:{client_key(request)}", cfg.login_per_minute):
+            raise HTTPException(429, "Too many attempts: wait a minute", headers={"Retry-After": "60"})
+        try:
+            who = services.google.verify(body.id_token)
+        except GoogleError as ex:
+            raise HTTPException(401, str(ex)) from None
+        code = None
+        with db.session() as s:
+            user = s.execute(select(User).where(User.google_sub == who.sub)).scalar_one_or_none()
+            if user is None:
+                user = s.execute(select(User).where(User.email == who.email)).scalar_one_or_none()
+                if user is not None:
+                    # Linking needs Google to be the authority on the address, or the account could be taken.
+                    if not who.authoritative or user.google_sub:
+                        raise HTTPException(409, "An account with this e-mail exists: log in with its password")
+                    user.google_sub = who.sub
+                    user.email_verified = True
+                else:
+                    plan = s.execute(select(Plan).where(Plan.public.is_(True)).order_by(Plan.price_cents)).scalars().first() \
+                        or s.get(Plan, "trial")
+                    user = User(email=who.email, plan_name=plan.name, google_sub=who.sub,
+                                email_verified=who.authoritative)
+                    s.add(user)
+                    s.flush()
+            if not user.enabled:
+                raise HTTPException(401, "The account is disabled")
+            if not user.email_verified:
+                code = codes.issue(s, user, "verify")
+                email = user.email
+            else:
+                return {"token": open_session(s, user, body.device), "email": user.email}
+        # An address Google does not vouch for (not Gmail nor Workspace): confirmed with our code like any other.
+        send_code(email, "verify", code)
+        return {"verification_required": True, "email": email}
 
     @app.post("/v1/billing/checkout")
     def checkout(user: UserDep, body: CheckoutBody) -> dict:
@@ -492,7 +641,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/cuenta", response_class=HTMLResponse, include_in_schema=False)
     def account_page() -> HTMLResponse:
         page = resources.files("tisma_cloud").joinpath("static/cuenta.html").read_text(encoding="utf-8")
-        return HTMLResponse(page, headers=PAGE_HEADERS)
+        headers = dict(PAGE_HEADERS)
+        if services.google.client_ids:
+            # The Google button (Google Identity Services), as Google documents its Content Security Policy.
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'unsafe-inline' https://accounts.google.com/gsi/client; "
+                "style-src 'unsafe-inline' https://accounts.google.com/gsi/style; frame-src https://accounts.google.com/gsi/; "
+                "connect-src 'self' https://accounts.google.com/gsi/; img-src data: https:; frame-ancestors 'none'; "
+                "form-action 'self'; base-uri 'none'")
+        return HTMLResponse(page, headers=headers)
 
     @app.post("/v1/jobs", status_code=201)
     def submit(

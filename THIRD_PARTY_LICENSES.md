@@ -14,6 +14,10 @@ installed with pip.
 | psycopg / psycopg-binary | 3.3.6 | LGPL-3.0-only | master (PostgreSQL driver) |
 | python-multipart | 0.0.32 | Apache-2.0 | master (uploads) |
 | httpx / httpcore | 0.28.1 / 1.0.9 | BSD-3-Clause | node, tests |
+| PyJWT | 2.15.1 | MIT | master (Sign in with Google: ID token verification) |
+| cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | master (RS256 signatures, through PyJWT) |
+| cffi / pycparser | 2.1.1 / 3.11 | MIT-0 / BSD-3-Clause | dependencies of cryptography |
+| aiosmtpd | 1.4.6 | Apache-2.0 | tests only (an SMTP server to test the e-mails) |
 | anyio, h11, annotated-types, typing-inspection | — | MIT | dependencies of the above |
 | idna, click | — | BSD-3-Clause | dependencies of the above |
 | typing-extensions | 4.16.0 | PSF-2.0 | dependency of the above |
@@ -30,5 +34,6 @@ Programs run as separate processes (not linked):
 | Tisma Slicer (`tisma-slicer`, `tisma-fea`) | AGPL-3.0 | The source of the version used by the service, with every change, must stay published (AGPL §13). |
 | PostgreSQL 16 | PostgreSQL License | Database (Docker image `postgres:16`). |
 | Caddy 2.8 | Apache-2.0 | HTTPS proxy (Docker image `caddy:2.8`). |
+| Google Identity Services (`accounts.google.com/gsi/client`) | Google's terms | Loaded by the account page from Google only when `TISMA_GOOGLE_CLIENT_IDS` is set; not distributed with the server. |
 
 This is a technical summary, not legal advice.

@@ -18,10 +18,11 @@ master = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.1",
     "python-multipart>=0.0.9",
+    "pyjwt[crypto]>=2.8",
 ]
 # A computing node needs only httpx (and the Tisma programs).
 node = []
-test = ["pytest>=8"]
+test = ["pytest>=8", "aiosmtpd>=1.4"]
 
 [project.scripts]
 tisma-cloud-admin = "tisma_cloud.admin:main"

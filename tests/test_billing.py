@@ -28,9 +28,20 @@ def shop(settings):
 
 
 def register(c, email="ana@correo.com", password="una clave larga", plan=None) -> dict:
+    """Creates an account and confirms it with the code of the e-mail."""
     r = c.post("/v1/auth/register", json={"email": email, "password": password, "plan": plan})
     assert r.status_code == 201, r.text
+    code = last_code(c, email)
+    r = c.post("/v1/auth/verify", json={"email": email.lower(), "code": code})
+    assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['token']}"}
+
+
+def last_code(c, email: str) -> str:
+    import re
+
+    to, _subject, text = [m for m in c.app.state.services.mailer.sent if m[0] == email.lower()][-1]
+    return re.search(r"\b(\d{6})\b", text).group(1)
 
 
 def test_register_and_plans(shop):

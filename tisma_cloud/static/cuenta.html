@@ -34,6 +34,8 @@
   table { width: 100%; border-collapse: collapse; } th, td { text-align: left; padding: 6px 4px; border-top: 1px solid var(--line); font-size: 14px; }
   th { color: var(--muted); font-weight: 500; border-top: 0; }
   .hidden { display: none !important; }
+  button.link { border: 0; background: none; color: var(--accent); padding: 8px 4px; }
+  #google-button { display: flex; justify-content: center; min-height: 44px; }
   #pay-error:empty, #pay-note:empty { display: none; }
   #notice { margin-bottom: 12px; }
   #auth { max-width: 380px; margin: 40px auto 0; }
@@ -48,12 +50,27 @@
 
   <section id="auth" class="box hidden">
     <div class="tabs"><button type="button" id="tab-login" class="on">Entrar</button><button type="button" id="tab-register">Crear cuenta</button></div>
+    <div id="google-box" class="hidden"><div id="google-button"></div><p class="muted" style="text-align:center;margin:12px 0">o con tu correo</p></div>
     <form id="auth-form" autocomplete="on">
       <label>Correo<input id="email" type="email" autocomplete="username" required maxlength="200"></label>
       <label>Contraseña<input id="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
       <label id="password2-label" class="hidden">Repetir contraseña<input id="password2" type="password" autocomplete="new-password" minlength="8" maxlength="200"></label>
       <p class="error" id="auth-error"></p>
       <button class="primary" type="submit" id="auth-submit">Entrar</button>
+      <button type="button" id="forgot" class="link">Olvidé mi contraseña</button>
+    </form>
+  </section>
+
+  <section id="code" class="box hidden">
+    <h2 id="code-title" style="margin-top:0">Confirmá tu correo</h2>
+    <p class="muted" id="code-help"></p>
+    <form id="code-form" autocomplete="off">
+      <label>Código de 6 números<input id="code-input" inputmode="numeric" pattern="\d{6}" maxlength="6" required autocomplete="one-time-code"></label>
+      <label id="newpass-label" class="hidden">Contraseña nueva<input id="newpass" type="password" minlength="8" maxlength="200" autocomplete="new-password"></label>
+      <p class="error" id="code-error"></p>
+      <button class="primary" type="submit" id="code-submit">Confirmar</button>
+      <button type="button" id="code-resend">Mandar otro código</button>
+      <button type="button" id="code-back" class="link">Volver</button>
     </form>
   </section>
 
@@ -83,7 +100,7 @@ let token = null, mode = "login", plans = [], payments = false, me = null;
 try { token = localStorage.getItem(KEY); } catch (e) {}
 const $ = (id) => document.getElementById(id);
 const STATUS = { approved: "aprobado", pending: "pendiente", rejected: "rechazado" };
-const ERRORS = { 401: "Correo o contraseña incorrectos.", 409: "Ese correo ya tiene una cuenta: entrá.", 429: "Demasiados intentos: esperá un minuto." };
+const ERRORS = { 401: "Correo o contraseña incorrectos.", 409: "Ese correo ya tiene una cuenta: entrá.", 429: "Demasiados intentos: esperá un minuto.", 503: "No pudimos mandar el correo: probá de nuevo en unos minutos." };
 function money(cents, cur) { return `${cur} ${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString() : "—"; }
 function el(tag, attrs, ...kids) {
@@ -115,6 +132,46 @@ function setMode(m) {
 }
 $("tab-login").onclick = () => setMode("login");
 $("tab-register").onclick = () => setMode("register");
+let codeEmail = "", codePurpose = "verify";
+function showCode(email, purpose) {
+  codeEmail = email; codePurpose = purpose;
+  $("auth").classList.add("hidden"); $("code").classList.remove("hidden");
+  $("code-title").textContent = purpose === "verify" ? "Confirmá tu correo" : "Elegí una contraseña nueva";
+  $("code-help").textContent = `Te mandamos un código de 6 números a ${email}. Vence en 15 minutos; si no llega, mirá en correo no deseado.`;
+  $("newpass-label").classList.toggle("hidden", purpose !== "reset");
+  $("newpass").required = purpose === "reset";
+  $("code-input").value = ""; $("code-error").textContent = "";
+  $("code-input").focus();
+}
+$("code-back").onclick = () => { $("code").classList.add("hidden"); $("auth").classList.remove("hidden"); };
+$("code-resend").onclick = async () => {
+  $("code-error").textContent = "";
+  try {
+    await api(codePurpose === "verify" ? "/v1/auth/resend" : "/v1/auth/password/forgot", { method: "POST", body: JSON.stringify({ email: codeEmail }) });
+    $("code-error").textContent = "Listo: te mandamos otro código.";
+  } catch (e) { $("code-error").textContent = e.status === 429 ? "Esperá un minuto antes de pedir otro código." : e.message; }
+};
+$("code-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("code-error").textContent = "";
+  $("code-submit").disabled = true;
+  try {
+    const code = $("code-input").value.trim();
+    const r = codePurpose === "verify"
+      ? await api("/v1/auth/verify", { method: "POST", body: JSON.stringify({ email: codeEmail, code, device: "Página de la cuenta" }) })
+      : await api("/v1/auth/password/reset", { method: "POST", body: JSON.stringify({ email: codeEmail, code, password: $("newpass").value, device: "Página de la cuenta" }) });
+    setToken(r.token);
+    $("code").classList.add("hidden");
+    show();
+  } catch (e) { $("code-error").textContent = e.status === 400 ? "Código incorrecto o vencido." : e.message; }
+  $("code-submit").disabled = false;
+});
+$("forgot").onclick = async () => {
+  const email = $("email").value.trim();
+  if (!email) { $("auth-error").textContent = "Escribí tu correo y tocá de nuevo «Olvidé mi contraseña»."; return; }
+  try { await api("/v1/auth/password/forgot", { method: "POST", body: JSON.stringify({ email }) }); showCode(email.toLowerCase(), "reset"); }
+  catch (e) { $("auth-error").textContent = e.status === 429 ? "Esperá un minuto antes de pedir otro código." : e.message; }
+};
 $("auth-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   $("auth-error").textContent = "";
@@ -124,12 +181,39 @@ $("auth-form").addEventListener("submit", async (ev) => {
   try {
     const r = await api(mode === "login" ? "/v1/auth/login" : "/v1/auth/register",
       { method: "POST", body: JSON.stringify(mode === "login" ? { email, password, device: "Página de la cuenta" } : { email, password }) });
-    setToken(r.token);
     $("password").value = $("password2").value = "";
-    show();
-  } catch (e) { $("auth-error").textContent = e.message; }
+    if (r.verification_required) showCode(r.email, "verify");
+    else { setToken(r.token); show(); }
+  } catch (e) {
+    if (e.status === 403) {  // registered but not confirmed: a fresh code
+      try { await api("/v1/auth/resend", { method: "POST", body: JSON.stringify({ email }) }); } catch (x) {}
+      showCode(email.toLowerCase(), "verify");
+    } else $("auth-error").textContent = e.message;
+  }
   $("auth-submit").disabled = false;
 });
+
+// Sign in with Google (Google Identity Services), when the server has a client ID.
+function setupGoogle(clientId) {
+  if (!clientId || window.__gsi) return;
+  window.__gsi = true;
+  const script = document.createElement("script");
+  script.src = "https://accounts.google.com/gsi/client";
+  script.async = true;
+  script.onload = () => {
+    google.accounts.id.initialize({ client_id: clientId, callback: async (resp) => {
+      $("auth-error").textContent = "";
+      try {
+        const r = await api("/v1/auth/google", { method: "POST", body: JSON.stringify({ id_token: resp.credential, device: "Página de la cuenta" }) });
+        if (r.verification_required) showCode(r.email, "verify"); else { setToken(r.token); show(); }
+      } catch (e) { $("auth-error").textContent = e.status === 409 ? "Ya hay una cuenta con ese correo: entrá con su contraseña." : e.message; }
+    } });
+    google.accounts.id.renderButton($("google-button"), { theme: "outline", size: "large", text: "continue_with", locale: "es" });
+    $("google-box").classList.remove("hidden");
+  };
+  document.head.appendChild(script);
+}
+
 $("logout").onclick = async () => { try { await api("/v1/auth/logout", { method: "POST" }); } catch (e) {} setToken(null); show(); };
 
 async function pay(plan) {
@@ -156,8 +240,9 @@ function renderPlans() {
 async function show() {
   const health = await fetch("/v1/health").then((r) => r.json()).catch(() => ({}));
   payments = !!health.payments;
+  setupGoogle(health.google_client_id);
   plans = (await fetch("/v1/plans").then((r) => r.json()).catch(() => ({ plans: [] }))).plans || [];
-  if (!token) { $("account").classList.add("hidden"); $("auth").classList.remove("hidden"); return; }
+  if (!token) { $("account").classList.add("hidden"); if ($("code").classList.contains("hidden")) $("auth").classList.remove("hidden"); return; }
   try {
     me = await api("/v1/me");
     const pays = await api("/v1/billing/payments");

@@ -59,6 +59,23 @@ Tisma / app / página web ──HTTPS──► MAESTRO (Caddy + API + PostgreSQL
   172.16–31.x.x). Se entra con `http://<central>:8000/admin` desde una PC conectada a la red del rack (Wi-Fi o
   cable). El puerto 8000 no se abre en el router.
 
+## Cuentas: correo confirmado y entrar con Google
+
+- **Correo y contraseña:** al crear la cuenta, el central manda un código de 6 números al correo; hasta confirmarlo, la
+  cuenta no inicia sesión. El código vence a los 15 minutos, sirve una vez y muere tras 5 intentos equivocados; se
+  puede pedir otro (uno por minuto, 5 por hora por correo). «Olvidé mi contraseña» manda otro código para elegir una
+  nueva y cierra las sesiones abiertas. Las respuestas de «mandar código» son iguales exista o no la cuenta (no se puede
+  averiguar quién tiene cuenta).
+- **El correo sale del servidor de correo del dominio** (`TISMA_SMTP_*`, por ejemplo el correo de tisma.com.uy que da
+  el hosting, con `noreply@tisma.com.uy`). No conviene mandar desde las PC del rack: los proveedores de correo rechazan
+  o mandan a no deseado lo que sale de una conexión hogareña. Para que lleguen bien, el dominio necesita registros
+  SPF, DKIM y DMARC (los configura el proveedor del correo).
+- **Entrar con Google:** con `TISMA_GOOGLE_CLIENT_IDS` (se crea en la consola de Google Cloud), «Mi cuenta» muestra
+  «Continuar con Google» y la app del teléfono podrá usar el mismo `/v1/auth/google` con el SDK de Google. El central
+  verifica el token como lo documenta Google (firma con las claves públicas de Google, emisor, destinatario y
+  vencimiento). Google responde por la dirección solo si es Gmail o una cuenta de empresa (Google Workspace): solo
+  entonces se vincula a una cuenta existente con ese correo; con otros correos se pide nuestro código.
+
 ## Cobro en el central
 
 Los usuarios crean su cuenta y pagan en **`https://tismaservidores.net/cuenta`** (la página «Mi cuenta» del propio
@@ -206,8 +223,10 @@ TISMA_SLICER_BIN=.../tisma-slicer TISMA_FEA_BIN=.../tisma-fea pytest   # con los
 
 ## Pendiente
 
-- Elegir el medio de pago (Mercado Pago tiene suscripciones en Uruguay según su documentación) y agregarlo en
-  `billing.py`; verificación del correo al crear la cuenta.
+- Elegir el medio de pago para la página (Mercado Pago tiene suscripciones en Uruguay según su documentación) y
+  agregarlo en `billing.py`. En la app del teléfono, las compras dentro de la app de servicios digitales tienen que usar
+  la facturación de Google Play (y la de Apple en iPhone): otro `Provider` que verifica esas compras.
+- Entrar con Google desde Tisma de escritorio (hoy: correo y contraseña; Google en la página y en la app).
 - Medir en tus equipos (laminado y FEA) para fijar las horas de cada plan y el umbral de las placas grandes.
 - Laminado de resina en la nube.
 - Materiales propios del usuario en el FEA en la nube (por ahora se usan los de la tabla incluida).

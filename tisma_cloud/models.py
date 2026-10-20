@@ -55,6 +55,11 @@ class User(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # Administrators are not limited by plans or payments.
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The user proved the e-mail is theirs (a code sent to it, or Google for its own addresses). Accounts made by the
+    # administrator or the web site are trusted; self-registered ones start unverified.
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Google account linked for "Sign in with Google" (the "sub" of its ID tokens).
+    google_sub: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     plan: Mapped[Plan] = relationship(lazy="joined")
@@ -81,6 +86,20 @@ class Payment(Base):
     note: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class EmailCode(Base):
+    """A one-time code sent by e-mail: to confirm the address (verify) or to choose a new password (reset)."""
+
+    __tablename__ = "email_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    purpose: Mapped[str] = mapped_column(String(10))
+    code_hash: Mapped[str] = mapped_column(String(64))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class ApiToken(Base):
