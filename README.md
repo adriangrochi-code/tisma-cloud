@@ -95,6 +95,50 @@ registrado directamente en el central, sin pasar por el servidor externo de la p
 - **Planes con precio:** `PUT /v1/admin/plans/<nombre>` (desde la red interna) o `/v1/site/plans/<nombre>` con
   `price_cents`, `currency` y `public: true` para que aparezca en Mi cuenta.
 
+## Suscripciones con Google Play
+
+Google cobra (tarjetas, saldo de Google Play, facturación del operador y los medios de cada país donde vende Play) y el
+central solo verifica la compra y da el acceso. El plan comprado en la app **vale en toda la cuenta**: la app, Tisma de
+escritorio y «Mi cuenta» en el navegador. Lo que Google **no** permite es pagar con Google Play desde una página web:
+la biblioteca de facturación de Google Play es solo para apps de Android. En la página, el pago es con otro medio (o el
+usuario se suscribe desde la app), y la página puede decir que existe la app (la política de Google Play solo limita lo
+que se dice *dentro* de la app).
+
+Cómo funciona (según la documentación de Google: [backend](https://developer.android.com/google/play/billing/backend),
+[ciclo de vida](https://developer.android.com/google/play/billing/lifecycle/subscriptions),
+[notificaciones](https://developer.android.com/google/play/billing/getting-ready#configure-rtdn)):
+
+1. La app pide `GET /v1/billing/play/account` (un id al azar de la cuenta, sin datos personales) y lo pasa a Google
+   Play como `obfuscatedAccountId` al comprar. `GET /v1/plans` dice el producto de Play de cada plan (`play_product`).
+2. Después de comprar, la app manda el token de compra a `POST /v1/billing/play/purchase`. El central le pregunta a
+   Google (`purchases.subscriptionsv2.get`), comprueba que la compra es de esa cuenta y de uno de nuestros productos, la
+   **confirma** (`acknowledge`; sin eso Google la reembolsa a los 3 días) y da acceso hasta `expiryTime` mientras el
+   estado lo permite (activa, período de gracia, cancelada pero no vencida).
+3. Google avisa cada cambio (renovación, cancelación, suspensión, reembolso, cambio de plan…) a
+   `POST /v1/billing/play/notify` por Pub/Sub. El aviso se verifica (token firmado por Google para nuestra audiencia y
+   nuestra cuenta de servicio) y el central vuelve a preguntarle a Google el estado: los avisos repetidos no cambian
+   nada. Un cambio de plan o una resuscripción fuera de la app se vinculan a la cuenta por el token anterior o por el id
+   de la cuenta.
+4. Un reembolso o una suspensión quitan solo el acceso de Google Play: los pagos registrados aparte (transferencia en
+   Montevideo, otro medio) siguen valiendo.
+
+Configuración (una vez, con la cuenta de desarrollador de Google Play; Uruguay admite cuenta de comerciante y cobra en
+USD según la [tabla de Google](https://support.google.com/googleplay/android-developer/answer/9306917)):
+
+- Play Console: crear las suscripciones (ids como `tisma_basico`, `tisma_pro`) con su precio; Play ofrece precios por
+  país.
+- Google Cloud: habilitar la *Google Play Android Developer API*, crear una cuenta de servicio con su clave JSON e
+  invitarla en Play Console > Usuarios y permisos con permiso para ver datos financieros y administrar pedidos y
+  suscripciones. La clave va en el central fuera del repositorio (`TISMA_PLAY_CREDENTIALS`).
+- Pub/Sub: un tema, darle a `google-play-developer-notifications@system.gserviceaccount.com` permiso de publicar, una
+  suscripción **push** a `https://tismaservidores.net/v1/billing/play/notify` con autenticación (cuenta de servicio y
+  audiencia, que van en `TISMA_PLAY_PUSH_ACCOUNT` y `TISMA_PLAY_PUSH_AUDIENCE`), y poner el tema en Play Console >
+  Monetización > Notificaciones en tiempo real.
+- `.env`: `TISMA_PLAY_PACKAGE` (el paquete de la app) y `TISMA_PLAY_PRODUCTS` (`producto:plan,...`).
+
+El central llama a `androidpublisher.googleapis.com` y `oauth2.googleapis.com` por HTTPS: la salida a internet del
+central tiene que permitirlas.
+
 ## Protección contra ataques (DDoS) y privacidad
 
 Sin servicios externos: todo corre en el central, en cuatro capas.
@@ -201,6 +245,8 @@ La misma información está en la API de administración (`/v1/admin/...`, con e
 | todos | `GET /v1/health`, `GET /v1/plans` | estado, planes |
 | usuario | `POST /v1/auth/login` `{email, password, device}` | token del dispositivo |
 | usuario | `POST /v1/auth/logout`, `GET /v1/me` | cerrar sesión; plan, al día, horas, trabajos activos |
+| usuario | `GET /v1/billing/play/account`, `POST /v1/billing/play/purchase` `{purchase_token}` | suscripción de Google Play (app) |
+| Google | `POST /v1/billing/play/notify` | avisos de Google Play (Pub/Sub, con token de Google) |
 | usuario | `POST /v1/jobs` (multipart: `kind` slice\|fea, `params` JSON, `file` 3MF) | enviar un trabajo |
 | usuario | `GET /v1/jobs`, `GET /v1/jobs/{id}`, `GET /v1/jobs/{id}/result`, `POST /v1/jobs/{id}/cancel` | seguir, descargar, cancelar |
 | página web | `PUT /v1/site/plans/{nombre}`, `PUT /v1/site/users/{id_web}`, `GET /v1/site/users/{id_web}` | planes, usuarios, pagos |
@@ -223,9 +269,12 @@ TISMA_SLICER_BIN=.../tisma-slicer TISMA_FEA_BIN=.../tisma-fea pytest   # con los
 
 ## Pendiente
 
-- Elegir el medio de pago para la página (Mercado Pago tiene suscripciones en Uruguay según su documentación) y
-  agregarlo en `billing.py`. En la app del teléfono, las compras dentro de la app de servicios digitales tienen que usar
-  la facturación de Google Play (y la de Apple en iPhone): otro `Provider` que verifica esas compras.
+- Elegir el medio de pago para la página web (Google Play no cobra en páginas web) y agregarlo en `billing.py`. Para el
+  exterior, un «merchant of record» que cobra y paga los impuestos de cada país: Lemon Squeezy paga a bancos de Uruguay
+  según su [documentación](https://docs.lemonsqueezy.com/help/getting-started/supported-countries); Paddle está por
+  confirmar. Para la región, Mercado Pago (suscripciones en Uruguay). La app de iPhone usaría la compra dentro de la app de Apple (otro verificador como el de
+  Google Play).
+- La app de Android (compra con la biblioteca de facturación de Google Play y `/v1/billing/play/*`).
 - Entrar con Google desde Tisma de escritorio (hoy: correo y contraseña; Google en la página y en la app).
 - Medir en tus equipos (laminado y FEA) para fijar las horas de cada plan y el umbral de las placas grandes.
 - Laminado de resina en la nube.

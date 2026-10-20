@@ -292,7 +292,8 @@ function renderUsers(users, pays) {
       el("td", {}, u.email, u.is_admin ? el("span", { class: "muted" }, " (admin)") : null),
       el("td", {}, u.plan),
       el("td", { class: u.account.paid ? "status-done" : "status-failed" }, !u.enabled ? "deshabilitado" : u.account.paid ? "al día" : "sin pagar"),
-      el("td", {}, u.paid_until ? new Date(u.paid_until).toLocaleDateString() : "–"),
+      el("td", {}, u.access_until ? new Date(u.access_until).toLocaleDateString() : "–",
+        u.store_until && u.store_until === u.access_until ? el("span", { class: "muted" }, " (Google Play)") : null),
       el("td", {}, `${u.account.hours_used.toFixed(2)} / ${u.account.hours_included}`),
       el("td", {}, u.account.active_jobs),
       el("td", {}, el("button", { type: "button", onclick: () => recordPayment(u) }, "Registrar pago")))));

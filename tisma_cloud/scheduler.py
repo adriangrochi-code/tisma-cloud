@@ -67,8 +67,9 @@ def account(session: Session, user: User, grace_days: int, now: datetime | None 
     active = session.execute(
         select(func.count()).select_from(Job).where(Job.user_id == user.id, Job.status.in_(ACTIVE))
     ).scalar_one()
-    paid = user.is_admin or (user.paid_until is not None and now <= user.paid_until + timedelta(days=grace_days))
-    return Account(plan=plan.name, paid_until=user.paid_until, paid=paid, hours_included=plan.monthly_hours,
+    until = user.access_until
+    paid = user.is_admin or (until is not None and now <= until + timedelta(days=grace_days))
+    return Account(plan=plan.name, paid_until=until, paid=paid, hours_included=plan.monthly_hours,
                    hours_used=used_seconds(session, user.id, month_of(now)) / 3600., active_jobs=active,
                    max_concurrent=plan.max_concurrent, requests_per_minute=plan.requests_per_minute)
 

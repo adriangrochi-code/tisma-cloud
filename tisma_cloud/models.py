@@ -60,9 +60,20 @@ class User(Base):
     email_verified: Mapped[bool] = mapped_column(Boolean, default=True)
     # Google account linked for "Sign in with Google" (the "sub" of its ID tokens).
     google_sub: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    # Subscription bought in an app store (Google Play): access until then, apart from the payments of paid_until (a
+    # refund in the store takes back only this).
+    store_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Random id of the account given to Google Play with each purchase (obfuscatedAccountId), to know whose it is.
+    play_account: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     plan: Mapped[Plan] = relationship(lazy="joined")
+
+    @property
+    def access_until(self) -> datetime | None:
+        """End of the paid access: the later of the payments and the store subscription."""
+        dates = [d for d in (self.paid_until, self.store_until) if d is not None]
+        return max(dates) if dates else None
 
 
 class Payment(Base):
@@ -86,6 +97,28 @@ class Payment(Base):
     note: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PlaySubscription(Base):
+    """A Google Play subscription (a purchase token) and its state as Google last reported it."""
+
+    __tablename__ = "play_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # SHA-256 of the purchase token (the index; tokens are long) and the token itself (needed to ask Google).
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purchase_token: Mapped[str] = mapped_column(Text)
+    product_id: Mapped[str] = mapped_column(String(100))
+    plan_name: Mapped[str] = mapped_column(ForeignKey("plans.name"))
+    # subscriptionState of Google (SUBSCRIPTION_STATE_ACTIVE...), or REPLACED by a newer token (upgrade, resubscribe).
+    state: Mapped[str] = mapped_column(String(50), default="")
+    # The access it gives (expiryTime of Google while the state gives access), none otherwise.
+    entitled_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    order_id: Mapped[str] = mapped_column(String(100), default="")
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class EmailCode(Base):

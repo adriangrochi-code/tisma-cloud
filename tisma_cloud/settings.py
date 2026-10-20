@@ -65,6 +65,16 @@ class Settings:
     smtp_from: str = field(default_factory=lambda: os.environ.get("TISMA_SMTP_FROM", "Tisma Cloud <noreply@tisma.com.uy>"))
     # Client IDs of "Sign in with Google" (web page, phone app), comma separated. Empty: disabled.
     google_client_ids: str = field(default_factory=lambda: os.environ.get("TISMA_GOOGLE_CLIENT_IDS", ""))
+    # Google Play subscriptions (the phone app): package name of the app, JSON key file of the service account with access
+    # to the Play Console, and the products of Play with their plan ("tisma_basico:basico,tisma_pro:pro"). Empty package:
+    # disabled.
+    play_package: str = field(default_factory=lambda: os.environ.get("TISMA_PLAY_PACKAGE", ""))
+    play_credentials: str = field(default_factory=lambda: os.environ.get("TISMA_PLAY_CREDENTIALS", ""))
+    play_products: str = field(default_factory=lambda: os.environ.get("TISMA_PLAY_PRODUCTS", ""))
+    # Real-time developer notifications (Pub/Sub push to /v1/billing/play/notify): the audience set on the push
+    # subscription and its service account. Empty: notifications refused.
+    play_push_audience: str = field(default_factory=lambda: os.environ.get("TISMA_PLAY_PUSH_AUDIENCE", ""))
+    play_push_account: str = field(default_factory=lambda: os.environ.get("TISMA_PLAY_PUSH_ACCOUNT", ""))
     # Key of the web site for /v1/site (it creates the users and records their payments). Empty: disabled.
     site_key: str = field(default_factory=lambda: os.environ.get("TISMA_SITE_KEY", ""))
     # Days a user may keep computing after paid_until (a payment that arrives late).

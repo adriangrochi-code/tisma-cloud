@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from . import __version__, billing, codes, scheduler
+from . import __version__, billing, codes, google_play, scheduler
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, mailer_for
 from .db import Database
@@ -44,6 +44,9 @@ class Services:
         self.hourly = RateLimiter(3600.)
         self.mailer = mailer_for(settings)
         self.google = GoogleVerifier([c.strip() for c in settings.google_client_ids.split(",") if c.strip()])
+        self.play = google_play.store_for(settings.play_package, settings.play_credentials, settings.play_products)
+        self.play_push = (google_play.PushVerifier(settings.play_push_audience, settings.play_push_account)
+                          if settings.play_push_audience and settings.play_push_account else None)
 
     def sweep(self) -> None:
         """Requeues the jobs of lost nodes and removes the files of old jobs."""
@@ -105,7 +108,9 @@ PAGE_HEADERS = {
 
 def user_view(user: User) -> dict[str, Any]:
     return {"email": user.email, "external_id": user.external_id, "plan": user.plan_name,
-            "paid_until": user.paid_until.isoformat() + "Z" if user.paid_until else None, "enabled": user.enabled,
+            "paid_until": user.paid_until.isoformat() + "Z" if user.paid_until else None,
+            "store_until": user.store_until.isoformat() + "Z" if user.store_until else None,
+            "access_until": user.access_until.isoformat() + "Z" if user.access_until else None, "enabled": user.enabled,
             "is_admin": user.is_admin}
 
 
@@ -224,6 +229,10 @@ class GoogleBody(BaseModel):
 class CheckoutBody(BaseModel):
     plan: str = Field(min_length=1, max_length=50)
     months: int = Field(default=1, ge=1, le=12)
+
+
+class PlayPurchaseBody(BaseModel):
+    purchase_token: str = Field(min_length=1, max_length=2000)
 
 
 class ManualPaymentBody(BaseModel):
@@ -387,7 +396,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True, "service": "tisma-cloud", "version": __version__, "billing_url": billing_url,
                 "payments": bool(provider),
                 # The web client ID of "Sign in with Google" (the first one), for the account page.
-                "google_client_id": services.google.client_ids[0] if services.google.client_ids else ""}
+                "google_client_id": services.google.client_ids[0] if services.google.client_ids else "",
+                "play_payments": services.play is not None}
 
     @app.post("/v1/auth/login")
     def login(request: Request, body: LoginBody) -> dict:
@@ -421,7 +431,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The plans users can choose (the account page)."""
         with db.session() as s:
             rows = s.execute(select(Plan).where(Plan.public.is_(True)).order_by(Plan.price_cents)).scalars().all()
-            return {"plans": [plan_view(p) for p in rows], "classes": JOB_CLASS_DESCRIPTIONS}
+            # The product of Google Play of each plan, for the phone app.
+            products = {plan: product for product, plan in services.play.products.items()} if services.play else {}
+            return {"plans": [{**plan_view(p), "play_product": products.get(p.name)} for p in rows],
+                    "classes": JOB_CLASS_DESCRIPTIONS}
 
     # ---- accounts and payments on the master
     provider = billing.provider_for(cfg.billing_provider, cfg.public_url)
@@ -609,6 +622,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except billing.BillingError as ex:
             log.warning("Payment notice refused: %s", ex)
             raise HTTPException(400, str(ex)) from None
+        return {"ok": True}
+
+    # ---- Google Play subscriptions (phone app)
+    def play_store() -> google_play.Store:
+        if services.play is None:
+            raise HTTPException(503, "Google Play payments are not enabled")
+        return services.play
+
+    @app.get("/v1/billing/play/account")
+    def play_account(user: UserDep) -> dict:
+        """The obfuscatedAccountId the app passes to Google Play with each purchase."""
+        play_store()
+        with db.session() as s:
+            return {"account_id": google_play.play_account(s, s.get(User, user.id))}
+
+    @app.post("/v1/billing/play/purchase")
+    def play_purchase(user: UserDep, body: PlayPurchaseBody) -> dict:
+        """A purchase made in the app: verified with Google, acknowledged and applied to the account."""
+        store = play_store()
+        try:
+            with db.session() as s:
+                u = s.get(User, user.id)
+                sub = store.link(s, u, body.purchase_token)
+                result = {"state": sub.state, "plan": sub.plan_name,
+                          **scheduler.account(s, u, cfg.grace_days).as_dict()}
+        except google_play.PlayError as ex:
+            raise HTTPException(422, str(ex)) from None
+        except google_play.PlayUnavailable as ex:
+            log.warning("Google Play: %s", ex)
+            raise HTTPException(503, "Google Play is not available now, try again") from None
+        return result
+
+    @app.post("/v1/billing/play/notify")
+    async def play_notify(request: Request, authorization: Annotated[str | None, Header()] = None) -> dict:
+        """Real-time developer notifications of Google Play (Pub/Sub push). An error answer makes Pub/Sub send it again."""
+        if services.play is None or services.play_push is None:
+            raise HTTPException(404, "Not Found")
+        try:
+            await run_in_threadpool(services.play_push.verify, authorization)
+        except google_play.PlayError as ex:
+            raise HTTPException(401, str(ex)) from None
+        body = await request.body()
+        if len(body) > 64 * 1024:
+            raise HTTPException(413, "Too large")
+        try:
+            message_id, token = google_play.notification_token(body)
+        except google_play.PlayError as ex:
+            raise HTTPException(400, str(ex)) from None
+        if token is None:
+            return {"ok": True}
+
+        def refresh() -> None:
+            with db.session() as s:
+                if services.play.refresh(s, token) is None:
+                    log.info("Google Play notification %s for a purchase of no account", message_id)
+        try:
+            await run_in_threadpool(refresh)
+        except google_play.PlayError as ex:
+            # Not ours (another product, an unknown token): nothing to retry.
+            log.warning("Google Play notification %s refused: %s", message_id, ex)
+        except google_play.PlayUnavailable as ex:
+            log.warning("Google Play notification %s: %s", message_id, ex)
+            raise HTTPException(503, "Try again") from None
         return {"ok": True}
 
     if provider is not None and provider.name == "test":

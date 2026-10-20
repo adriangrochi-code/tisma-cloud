@@ -96,7 +96,7 @@
 <script>
 "use strict";
 const KEY = "tisma-account-token";
-let token = null, mode = "login", plans = [], payments = false, me = null;
+let token = null, mode = "login", plans = [], payments = false, playPayments = false, me = null;
 try { token = localStorage.getItem(KEY); } catch (e) {}
 const $ = (id) => document.getElementById(id);
 const STATUS = { approved: "aprobado", pending: "pendiente", rejected: "rechazado" };
@@ -234,12 +234,15 @@ function renderPlans() {
     el("button", { type: "button", class: "primary", disabled: !payments, onclick: () => pay(p) },
       me && me.plan === p.name && me.paid ? "Pagar un mes más" : "Pagar")))
     .concat(plans.length ? [] : [el("p", { class: "muted" }, "Todavía no hay planes publicados.")]));
-  $("pay-note").textContent = payments ? "" : "El pago en línea todavía no está abierto: escribinos para pagar por transferencia.";
+  $("pay-note").textContent = [payments ? "" : "El pago en línea todavía no está abierto: escribinos para pagar por transferencia.",
+    playPayments ? "También podés suscribirte desde la app de Android con Google Play: el plan vale en esta cuenta, en la app y en Tisma." : ""]
+    .filter(Boolean).join(" ");
 }
 
 async function show() {
   const health = await fetch("/v1/health").then((r) => r.json()).catch(() => ({}));
   payments = !!health.payments;
+  playPayments = !!health.play_payments;
   setupGoogle(health.google_client_id);
   plans = (await fetch("/v1/plans").then((r) => r.json()).catch(() => ({ plans: [] }))).plans || [];
   if (!token) { $("account").classList.add("hidden"); if ($("code").classList.contains("hidden")) $("auth").classList.remove("hidden"); return; }
