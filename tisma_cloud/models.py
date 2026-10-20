@@ -34,6 +34,10 @@ class Plan(Base):
     requests_per_minute: Mapped[int] = mapped_column(Integer, default=60)
     # Jobs of plans with a higher priority are taken first.
     priority: Mapped[int] = mapped_column(Integer, default=0)
+    # Monthly price in cents of the currency, and whether users can choose it on the account page.
+    price_cents: Mapped[int] = mapped_column(Integer, default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    public: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class User(Base):
@@ -54,6 +58,29 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     plan: Mapped[Plan] = relationship(lazy="joined")
+
+
+class Payment(Base):
+    """A payment of a plan: through a payment provider (the account page) or recorded by the administrator."""
+
+    __tablename__ = "payments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    plan_name: Mapped[str] = mapped_column(ForeignKey("plans.name"))
+    months: Mapped[int] = mapped_column(Integer, default=1)
+    # The amount expected (set by the master from the plan, never by the buyer) and its currency.
+    amount_cents: Mapped[int] = mapped_column(Integer, default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    # test, manual, or the name of the provider.
+    provider: Mapped[str] = mapped_column(String(30))
+    # Id of the payment at the provider (each one applied once).
+    provider_ref: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    # pending, approved, rejected
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    note: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ApiToken(Base):

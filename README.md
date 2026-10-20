@@ -59,27 +59,53 @@ Tisma / app / página web ──HTTPS──► MAESTRO (Caddy + API + PostgreSQL
   172.16–31.x.x). Se entra con `http://<central>:8000/admin` desde una PC conectada a la red del rack (Wi-Fi o
   cable). El puerto 8000 no se abre en el router.
 
-## Pagos con la página web (tisma.com.uy)
+## Cobro en el central
 
-La cuenta y el pago se hacen en la página web. Cuando el pago queda confirmado, el servidor de la página avisa al
-maestro con una llamada HTTPS (desde su programa, no desde el navegador del usuario, para que la clave no quede a la
-vista):
+Los usuarios crean su cuenta y pagan en **`https://tismaservidores.net/cuenta`** (la página «Mi cuenta» del propio
+maestro); tisma.com.uy y Tisma (Configuración > Cuenta de Tisma Cloud) tienen un enlace a ella. Así cada pago queda
+registrado directamente en el central, sin pasar por el servidor externo de la página.
 
-```
-# Alta del usuario (id de la página, correo, contraseña y plan) y cada pago (pagado hasta):
-curl -X PUT https://tismaservidores.net/v1/site/users/1234 \
-     -H "Authorization: Bearer $TISMA_SITE_KEY" -H "Content-Type: application/json" \
-     -d '{"email": "ana@correo.com", "password": "...", "plan": "basico", "paid_until": "2026-12-20T00:00:00Z"}'
-# Planes (horas por mes, trabajos a la vez, prioridad):
-curl -X PUT https://tismaservidores.net/v1/site/plans/basico -H "Authorization: Bearer $TISMA_SITE_KEY" \
-     -H "Content-Type: application/json" -d '{"monthly_hours": 3, "max_concurrent": 2, "priority": 1}'
-```
+- **Mi cuenta:** crear cuenta (correo y contraseña), entrar, ver el plan, si está al día, las horas usadas del mes, los
+  planes con su precio, pagar y el historial de pagos.
+- **Pago:** el botón «Pagar» le pide al medio de pago una página de pago (la tarjeta o la cuenta se ingresan allí, nunca
+  en el central) y el medio de pago le avisa al central cada cobro (`/v1/billing/webhook/<medio>`). Un pago aprobado
+  extiende el plan un mes desde la fecha en que vencía (o desde hoy si ya había vencido). El importe lo fija el central
+  con el precio del plan: si el aviso dice otro importe o moneda, no se aplica. Cada pago se aplica una sola vez.
+- **Medio de pago:** todavía sin elegir. `TISMA_BILLING_PROVIDER=test` activa un medio **de prueba** (botones
+  «Aprobar» y «Rechazar») para probar todo el circuito; **nunca en producción**. El medio real se agrega en
+  `tisma_cloud/billing.py` (clase `Provider`: crear el pago y verificar sus avisos).
+- **Pagos fuera de línea** (transferencia, efectivo): en el panel `/admin` > Usuarios > «Registrar pago».
+- **Planes con precio:** `PUT /v1/admin/plans/<nombre>` (desde la red interna) o `/v1/site/plans/<nombre>` con
+  `price_cents`, `currency` y `public: true` para que aparezca en Mi cuenta.
 
-- `paid_until` se corre un mes con cada pago; si un pago no llega, el usuario sigue `TISMA_GRACE_DAYS` días y después
-  Tisma le avisa que el plan no está pagado, con el enlace de `TISMA_BILLING_URL`.
-- `GET /v1/site/users/1234` devuelve el estado (al día, horas usadas), por ejemplo para mostrarlo en «Mi cuenta».
-- Si la página no puede hacer llamadas propias (un constructor de páginas sin programación), la alternativa es que el
-  medio de pago avise directo al maestro (webhook): eso depende del medio de pago y está pendiente.
+## Protección contra ataques (DDoS) y privacidad
+
+Sin servicios externos: todo corre en el central, en cuatro capas.
+
+1. **Firewall del central** (`deploy/firewall.nft`, nftables): bloquea 10 minutos una dirección que abre más de 20
+   conexiones por segundo, limita a 50 las conexiones abiertas por dirección, corta el puerto 8000 desde afuera y limita
+   el ping. Va antes de Docker, así que cubre los puertos publicados. Más `deploy/sysctl-tisma.conf` (SYN cookies contra
+   inundaciones de conexiones a medio abrir). Probado: un ataque de 300 conexiones queda en 40 y la dirección bloqueada,
+   y los usuarios normales siguen entrando.
+2. **Caddy:** tiempos máximos para leer encabezados y cuerpos (los clientes lentos no ocupan conexiones), encabezados de
+   16 KiB como máximo, proyectos de 210 MB como máximo, administración cortada desde afuera, encabezados de seguridad.
+3. **Antes de la aplicación** (`tisma_cloud/guard.py`): las subidas sin token válido, sin tamaño o demasiado grandes se
+   rechazan antes de leer un solo byte; pocas subidas a la vez (8 en total, 2 por cuenta); páginas sin cuenta limitadas a
+   120 por minuto por dirección; una dirección con 30 rechazos en un minuto queda bloqueada 10 minutos. La red interna
+   nunca se bloquea.
+4. **La aplicación:** trabajos simultáneos y peticiones por minuto según el plan, intentos de inicio de sesión
+   limitados, uvicorn con un máximo de 300 peticiones a la vez.
+
+Límite honesto: un ataque más grande que la conexión a internet (32 Mbps de subida, 220 de bajada) la satura antes de
+llegar al central; eso solo lo puede frenar el proveedor de internet. Todo lo demás (inundaciones de conexiones,
+peticiones, subidas, fuerza bruta de contraseñas) se frena en el central.
+
+**Privacidad:** el proyecto del usuario se borra del central apenas termina el trabajo (aprobado, fallado o cancelado);
+el resultado se borra a las 72 h. Contraseñas con scrypt y tokens con SHA-256 (no se guardan en claro). Los datos de las
+tarjetas nunca pasan por el central. Las páginas no cargan nada de otros sitios.
+
+**Transferencias:** el G-code y los resultados del análisis viajan comprimidos (Caddy con zstd o gzip; Tisma los pide y
+los descomprime): un G-code de 218 KB baja en 26 KB.
 
 ## Seguridad de los nodos
 
@@ -90,11 +116,16 @@ recibe entrada estándar. Con Docker el nodo corre sin privilegios y con el sist
 
 ## Instalar el maestro (i5)
 
-1. `cp .env.example .env` y completar `POSTGRES_PASSWORD`, `TISMA_DOMAIN` y `TISMA_SITE_KEY`.
-2. `docker compose --env-file .env -f deploy/compose.master.yaml up -d`
-3. En el router, abrir solo el 443 (y el 80 para el certificado) hacia el maestro. El 8000 es para los nodos de la
+1. `cp .env.example .env` y completar `POSTGRES_PASSWORD`, `TISMA_DOMAIN`, `TISMA_PUBLIC_URL` y `TISMA_SITE_KEY`.
+2. Firewall y kernel (en el central, una vez; ajustar `LAN` en `firewall.nft` a la red del rack):
+   `sudo cp deploy/firewall.nft /etc/nftables.d/tisma.nft && sudo nft -f /etc/nftables.d/tisma.nft` y
+   `sudo cp deploy/sysctl-tisma.conf /etc/sysctl.d/90-tisma.conf && sudo sysctl --system`.
+   Para que el firewall quede después de reiniciar, incluirlo desde `/etc/nftables.conf` y activar el servicio
+   `nftables` (`sudo systemctl enable nftables`).
+3. `docker compose --env-file .env -f deploy/compose.master.yaml up -d`
+4. En el router, abrir solo el 443 (y el 80 para el certificado) hacia el maestro. El 8000 es para los nodos de la
    red local: no abrirlo hacia internet.
-4. Planes y primer administrador:
+5. Planes y primer administrador:
 
 ```
 docker compose --env-file .env -f deploy/compose.master.yaml exec api python -m tisma_cloud.admin plan-set basico --hours 10 --concurrent 2 --rpm 120 --priority 1
@@ -175,6 +206,8 @@ TISMA_SLICER_BIN=.../tisma-slicer TISMA_FEA_BIN=.../tisma-fea pytest   # con los
 
 ## Pendiente
 
+- Elegir el medio de pago (Mercado Pago tiene suscripciones en Uruguay según su documentación) y agregarlo en
+  `billing.py`; verificación del correo al crear la cuenta.
 - Medir en tus equipos (laminado y FEA) para fijar las horas de cada plan y el umbral de las placas grandes.
 - Laminado de resina en la nube.
 - Materiales propios del usuario en el FEA en la nube (por ahora se usan los de la tabla incluida).

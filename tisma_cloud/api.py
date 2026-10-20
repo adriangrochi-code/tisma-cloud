@@ -1,13 +1,15 @@
 """The master server: the API of the users (Tisma, the app), of the computing nodes and of the administrator."""
 
 import asyncio
-import json
-import logging
 import hmac
 import ipaddress
+import json
+import logging
+import re
+import time
 from contextlib import asynccontextmanager
-from importlib import resources
 from datetime import datetime, timedelta, timezone
+from importlib import resources
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
@@ -16,10 +18,11 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from . import __version__, scheduler
+from . import __version__, billing, scheduler
 from .db import Database
 from .jobs import JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles, plan_job
-from .models import ApiToken, Job, Node, Plan, User, utcnow
+from .models import ApiToken, Job, Node, Payment, Plan, User, utcnow
+from .guard import Guard
 from .ratelimit import RateLimiter
 from .security import DUMMY_HASH, hash_password, hash_token, new_token, verify_password
 from .settings import Settings
@@ -40,6 +43,11 @@ class Services:
         """Requeues the jobs of lost nodes and removes the files of old jobs."""
         with self.db.session() as s:
             scheduler.requeue_stale(s, self.settings.node_timeout_s, self.settings.max_attempts)
+            # Jobs ended by the sweep itself (nodes lost): the recent ones are enough, the others were cleaned before.
+            ended = s.execute(select(Job.id).where(Job.status.in_(scheduler.FINAL), Job.files_removed.is_(False),
+                                                   Job.finished_at > utcnow() - timedelta(hours=1))).scalars()
+            for job_id in ended:
+                self.storage.remove_input(job_id)
         limit = utcnow() - timedelta(hours=self.settings.retention_h)
         with self.db.session() as s:
             old = s.execute(
@@ -81,6 +89,14 @@ def node_view(node: Node, running: int = 0, timeout_s: int = 90) -> dict[str, An
     }
 
 
+# The pages of the master load nothing from other sites, are not shown inside other pages and are not cached.
+PAGE_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; "
+                               "frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
+    "X-Frame-Options": "DENY", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+}
+
+
 def user_view(user: User) -> dict[str, Any]:
     return {"email": user.email, "external_id": user.external_id, "plan": user.plan_name,
             "paid_until": user.paid_until.isoformat() + "Z" if user.paid_until else None, "enabled": user.enabled,
@@ -89,7 +105,17 @@ def user_view(user: User) -> dict[str, Any]:
 
 def plan_view(plan: Plan) -> dict[str, Any]:
     return {"name": plan.name, "monthly_hours": plan.monthly_hours, "max_concurrent": plan.max_concurrent,
-            "requests_per_minute": plan.requests_per_minute, "priority": plan.priority}
+            "requests_per_minute": plan.requests_per_minute, "priority": plan.priority,
+            "price_cents": plan.price_cents, "currency": plan.currency, "public": plan.public}
+
+
+def payment_view(p: Payment) -> dict[str, Any]:
+    return {"id": p.id, "plan": p.plan_name, "months": p.months, "amount_cents": p.amount_cents, "currency": p.currency,
+            "provider": p.provider, "status": p.status, "note": p.note,
+            "created_at": p.created_at.isoformat() + "Z", "paid_at": p.paid_at.isoformat() + "Z" if p.paid_at else None}
+
+
+EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[A-Za-z]{2,}$")
 
 
 def parse_networks(text: str) -> list:
@@ -159,6 +185,28 @@ class PlanBody(BaseModel):
     max_concurrent: int = Field(ge=1, le=100)
     requests_per_minute: int = Field(default=60, ge=1, le=10000)
     priority: int = 0
+    price_cents: int = Field(default=0, ge=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    public: bool = False
+
+
+class RegisterBody(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    plan: str | None = None
+
+
+class CheckoutBody(BaseModel):
+    plan: str = Field(min_length=1, max_length=50)
+    months: int = Field(default=1, ge=1, le=12)
+
+
+class ManualPaymentBody(BaseModel):
+    plan: str | None = None
+    months: int = Field(default=1, ge=1, le=24)
+    amount_cents: int = Field(ge=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    note: str = Field(default="", max_length=200)
 
 
 class SiteUser(BaseModel):
@@ -205,6 +253,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # address of the connection (the local network reaches port 8000 directly).
         forwarded = request.headers.get("x-forwarded-for", "")
         return forwarded.split(",")[0].strip() or (request.client.host if request.client else "?")
+
+    def scope_ip(scope: dict) -> str:
+        for k, v in scope.get("headers", []):
+            if k == b"x-forwarded-for":
+                first = v.decode("latin-1").split(",")[0].strip()
+                if first:
+                    return first
+        client = scope.get("client")
+        return client[0] if client else "?"
+
+    owners: dict[str, tuple[str, float]] = {}
+
+    def token_owner(kind: str, token: str) -> str | None:
+        """The account or node of an upload token (valid ones remembered for a minute)."""
+        key = kind + hash_token(token)
+        hit = owners.get(key)
+        now = time.monotonic()
+        if hit and hit[1] > now:
+            return hit[0]
+        with db.session() as s:
+            if kind == "user":
+                row = s.execute(select(User.id).join(ApiToken, ApiToken.user_id == User.id)
+                                .where(ApiToken.token_hash == hash_token(token), User.enabled.is_(True))).first()
+                owner = f"u:{row[0]}" if row else None
+            else:
+                row = s.execute(select(Node.id).where(Node.token_hash == hash_token(token), Node.enabled.is_(True))).first()
+                owner = f"n:{row[0]}" if row else None
+        if owner:
+            if len(owners) > 10000:
+                owners.clear()
+            owners[key] = (owner, now + 60.)
+        return owner
+
+    app.add_middleware(Guard, settings=cfg, client_ip=scope_ip, is_local=lambda ip: address_in(ip, admin_networks),
+                       token_owner=token_owner, run_sync=run_in_threadpool)
 
     def local_only(request: Request) -> None:
         """The administration exists only for the local network: from internet it answers as an unknown page."""
@@ -273,7 +356,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- users
     @app.get("/v1/health")
     def health() -> dict:
-        return {"ok": True, "service": "tisma-cloud", "version": __version__, "billing_url": cfg.billing_url}
+        billing_url = cfg.billing_url or (cfg.public_url + "/cuenta" if cfg.public_url else "")
+        return {"ok": True, "service": "tisma-cloud", "version": __version__, "billing_url": billing_url,
+                "payments": bool(provider)}
 
     @app.post("/v1/auth/login")
     def login(request: Request, body: LoginBody) -> dict:
@@ -304,9 +389,110 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/plans")
     def plans() -> dict:
+        """The plans users can choose (the account page)."""
         with db.session() as s:
-            rows = s.execute(select(Plan).order_by(Plan.monthly_hours)).scalars().all()
+            rows = s.execute(select(Plan).where(Plan.public.is_(True)).order_by(Plan.price_cents)).scalars().all()
             return {"plans": [plan_view(p) for p in rows], "classes": JOB_CLASS_DESCRIPTIONS}
+
+    # ---- accounts and payments on the master
+    provider = billing.provider_for(cfg.billing_provider, cfg.public_url)
+
+    @app.post("/v1/auth/register", status_code=201)
+    def register(request: Request, body: RegisterBody) -> dict:
+        email = body.email.strip().lower()
+        if not limiter.allow(f"register-ip:{client_key(request)}", cfg.login_per_minute):
+            raise HTTPException(429, "Too many attempts: wait a minute", headers={"Retry-After": "60"})
+        if not EMAIL.match(email):
+            raise HTTPException(422, "Not an e-mail address")
+        with db.session() as s:
+            if s.execute(select(User.id).where(User.email == email)).first():
+                raise HTTPException(409, "That e-mail already has an account: log in")
+            plan = s.get(Plan, body.plan) if body.plan else None
+            if plan is None or not plan.public:
+                plan = s.execute(select(Plan).where(Plan.public.is_(True)).order_by(Plan.price_cents)).scalars().first() \
+                    or s.get(Plan, "trial")
+            # Not paid yet: the account can log in and pay, not compute.
+            user = User(email=email, plan_name=plan.name, password_hash=hash_password(body.password))
+            s.add(user)
+            s.flush()
+            token = new_token("tu")
+            s.add(ApiToken(user_id=user.id, token_hash=hash_token(token), label="Account page"))
+            return {"token": token, "email": email}
+
+    @app.post("/v1/billing/checkout")
+    def checkout(user: UserDep, body: CheckoutBody) -> dict:
+        if provider is None:
+            raise HTTPException(503, "Online payments are not open yet")
+        with db.session() as s:
+            plan = s.get(Plan, body.plan)
+            if plan is None or not plan.public or plan.price_cents <= 0:
+                raise HTTPException(422, "No such plan")
+            u = s.get(User, user.id)
+            payment = billing.start_payment(s, u, plan, provider.name, body.months)
+            return_url = (cfg.public_url or "") + "/cuenta"
+            return {"payment": payment_view(payment), "url": provider.checkout(payment, plan, u, return_url)}
+
+    @app.get("/v1/billing/payments")
+    def my_payments(user: UserDep) -> dict:
+        with db.session() as s:
+            rows = s.execute(select(Payment).where(Payment.user_id == user.id).order_by(Payment.created_at.desc())
+                             .limit(50)).scalars().all()
+            return {"payments": [payment_view(p) for p in rows]}
+
+    @app.post("/v1/billing/webhook/{name}")
+    async def webhook(name: str, request: Request) -> dict:
+        if provider is None or name != provider.name:
+            raise HTTPException(404, "Not Found")
+        body = await request.body()
+        if len(body) > 64 * 1024:
+            raise HTTPException(413, "Too large")
+        try:
+            notices = provider.notices({k.lower(): v for k, v in request.headers.items()}, dict(request.query_params), body)
+        except billing.BillingError as ex:
+            raise HTTPException(400, str(ex)) from None
+
+        def apply_all() -> None:
+            with db.session() as s:
+                for n in notices:
+                    billing.apply(s, n, provider.name)
+        try:
+            await run_in_threadpool(apply_all)
+        except billing.BillingError as ex:
+            log.warning("Payment notice refused: %s", ex)
+            raise HTTPException(400, str(ex)) from None
+        return {"ok": True}
+
+    if provider is not None and provider.name == "test":
+        @app.get("/billing/test/{payment_id}", response_class=HTMLResponse, include_in_schema=False)
+        def test_checkout(payment_id: str) -> HTMLResponse:
+            with db.session() as s:
+                p = s.get(Payment, payment_id)
+                if p is None or p.provider != "test":
+                    raise HTTPException(404, "Not Found")
+                amount = f"{p.currency} {p.amount_cents / 100:.2f}"
+                page = (f"<!doctype html><meta charset=utf-8><title>Pago de prueba</title><body style='font:16px system-ui;"
+                        f"max-width:420px;margin:60px auto'><h1>Pago de prueba</h1><p>Plan {p.plan_name}, {p.months} mes(es): "
+                        f"<b>{amount}</b>. No se cobra nada: es el proveedor de prueba.</p>"
+                        f"<form method=post action='/billing/test/{p.id}/approved'><button>Aprobar</button></form><br>"
+                        f"<form method=post action='/billing/test/{p.id}/rejected'><button>Rechazar</button></form></body>")
+            return HTMLResponse(page, headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+                                                                           "form-action 'self'"})
+
+        @app.post("/billing/test/{payment_id}/{status}", include_in_schema=False)
+        def test_pay(payment_id: str, status: str) -> Response:
+            if status not in ("approved", "rejected"):
+                raise HTTPException(404, "Not Found")
+            with db.session() as s:
+                p = s.get(Payment, payment_id)
+                if p is None or p.provider != "test":
+                    raise HTTPException(404, "Not Found")
+                billing.apply(s, billing.Notice(p.id, "test-" + p.id, status, p.amount_cents, p.currency), "test")
+            return Response(status_code=303, headers={"Location": "/cuenta?pago=" + status})
+
+    @app.get("/cuenta", response_class=HTMLResponse, include_in_schema=False)
+    def account_page() -> HTMLResponse:
+        page = resources.files("tisma_cloud").joinpath("static/cuenta.html").read_text(encoding="utf-8")
+        return HTMLResponse(page, headers=PAGE_HEADERS)
 
     @app.post("/v1/jobs", status_code=201)
     def submit(
@@ -372,13 +558,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path = services.storage.find_result(job.id)
             if path is None:
                 raise HTTPException(410, "The result was removed")
-            return FileResponse(path, filename=job.result_filename or path.name, media_type="application/octet-stream")
+            # Text G-code as text and the analysis results with their own type, so that the proxy compresses them (Caddy
+            # "encode"); binary G-code is already compressed.
+            media = {".gcode": "text/x.gcode", ".tfea": "application/x-tisma-fea"}.get(path.suffix, "application/octet-stream")
+            return FileResponse(path, filename=job.result_filename or path.name, media_type=media)
 
     @app.post("/v1/jobs/{job_id}/cancel")
     def cancel_job(user: UserDep, job_id: str) -> dict:
         with db.session() as s:
             job = own_job(s, user, job_id)
             scheduler.cancel(s, job)
+            if job.status in scheduler.FINAL:
+                services.storage.remove_input(job.id)
             return job_view(job)
 
     # ---- computing nodes
@@ -466,9 +657,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 services.storage.save_stream(file.file, services.storage.result_path(job.id, ext), cfg.max_result_mb << 20)
             except TooLarge:
                 scheduler.fail(s, job, f"The result is larger than {cfg.max_result_mb} MB")
+                services.storage.remove_input(job.id)
                 raise HTTPException(413, "The result is too large") from None
             stem = job.input_name.rsplit(".", 1)[0] if job.input_name else "result"
             scheduler.finish(s, job, safe_filename(stem + ext, "result" + ext), summary_dict)
+            services.storage.remove_input(job.id)
             return {"ok": True}
 
     @app.post("/v1/node/jobs/{job_id}/fail")
@@ -479,6 +672,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 scheduler.stopped_by_node(s, job)
             else:
                 scheduler.fail(s, job, body.error)
+            services.storage.remove_input(job.id)
             return {"ok": True}
 
     # ---- administrator
@@ -519,7 +713,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/admin/users")
     def admin_users(_admin: AdminDep) -> dict:
         with db.session() as s:
-            return {"users": [user_view(u) for u in s.execute(select(User).order_by(User.email)).scalars()]}
+            return {"users": [{**user_view(u), "account": scheduler.account(s, u, cfg.grace_days).as_dict()}
+                              for u in s.execute(select(User).order_by(User.email)).scalars()]}
+
+    @app.post("/v1/admin/users/{email}/payments", status_code=201)
+    def admin_manual_payment(_admin: AdminDep, email: str, body: ManualPaymentBody) -> dict:
+        """A payment received outside the provider (transfer, cash): the plan is paid body.months more."""
+        with db.session() as s:
+            user = s.execute(select(User).where(User.email == email.strip().lower())).scalar_one_or_none()
+            if user is None:
+                raise HTTPException(404, "No such user")
+            plan = s.get(Plan, body.plan or user.plan_name)
+            if plan is None:
+                raise HTTPException(422, "No such plan")
+            payment = billing.record_manual(s, user, plan, body.months, body.amount_cents, body.currency, body.note)
+            return {"payment": payment_view(payment), "user": user_view(user)}
+
+    @app.get("/v1/admin/payments")
+    def admin_payments(_admin: AdminDep, limit: int = 50) -> dict:
+        with db.session() as s:
+            rows = s.execute(select(Payment, User.email).join(User, User.id == Payment.user_id)
+                             .order_by(Payment.created_at.desc()).limit(max(1, min(limit, 500)))).all()
+            return {"payments": [{**payment_view(p), "user": email} for p, email in rows]}
 
     # ---- the web site: creates the users, sets their plan and records their payments
     def upsert_plan(s, name: str, body: PlanBody) -> Plan:  # noqa: ANN001
@@ -531,6 +746,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         plan.max_concurrent = body.max_concurrent
         plan.requests_per_minute = body.requests_per_minute
         plan.priority = body.priority
+        plan.price_cents = body.price_cents
+        plan.currency = body.currency.upper()
+        plan.public = body.public
         return plan
 
     @app.put("/v1/site/plans/{name}")
@@ -622,10 +840,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
     def admin_panel(_local: Annotated[None, Depends(local_only)]) -> HTMLResponse:
         page = resources.files("tisma_cloud").joinpath("static/admin.html").read_text(encoding="utf-8")
-        # The page loads nothing from other sites and is not shown inside other pages.
-        return HTMLResponse(page, headers={
-            "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; "
-                                       "frame-ancestors 'none'",
-            "X-Frame-Options": "DENY", "Cache-Control": "no-store"})
+        return HTMLResponse(page, headers=PAGE_HEADERS)
 
     return app

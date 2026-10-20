@@ -58,6 +58,10 @@ class Storage:
             tmp.unlink(missing_ok=True)
         return size
 
+    def remove_input(self, job_id: str) -> None:
+        """The project of the user is not kept once the job ended (privacy): only the result, until it is removed."""
+        self.input_path(job_id).unlink(missing_ok=True)
+
     def remove_job(self, job_id: str) -> None:
         shutil.rmtree(self.job_dir(job_id), ignore_errors=True)
 

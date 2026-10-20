@@ -102,6 +102,13 @@
 
     <h2>Últimos trabajos terminados</h2>
     <div class="table-wrap"><table id="ended"></table></div>
+
+    <h2>Usuarios</h2>
+    <p class="muted">«Registrar pago» es para pagos fuera de la página (transferencia, efectivo): el plan queda pago los meses indicados.</p>
+    <div class="table-wrap"><table id="users"></table></div>
+
+    <h2>Últimos pagos</h2>
+    <div class="table-wrap"><table id="payments"></table></div>
   </main>
 </div>
 
@@ -263,9 +270,46 @@ function jobTable(table, jobs, ended) {
   table.replaceChildren(head, ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Ninguno"))]));
 }
 
+function money(cents, cur) { return `${cur} ${(cents / 100).toFixed(2)}`; }
+
+async function recordPayment(u) {
+  const months = parseInt(prompt(`Meses pagados por ${u.email}:`, "1") || "", 10);
+  if (!(months >= 1 && months <= 24)) return;
+  const amount = parseFloat((prompt("Importe recibido (por ejemplo 10 o 10.50):", "") || "").replace(",", "."));
+  if (!(amount >= 0)) return;
+  const currency = (prompt("Moneda (USD, UYU…):", "USD") || "USD").trim().toUpperCase().slice(0, 3);
+  const note = prompt("Nota (transferencia, efectivo…):", "Transferencia") || "";
+  try {
+    await api(`/v1/admin/users/${encodeURIComponent(u.email)}/payments`, { method: "POST",
+      body: JSON.stringify({ months, amount_cents: Math.round(amount * 100), currency, note }) });
+    refresh();
+  } catch (e) { if (e.message !== "auth") $("app-error").textContent = `No se pudo registrar el pago: ${e.message}`; }
+}
+
+function renderUsers(users, pays) {
+  $("users").replaceChildren(el("tr", {}, ["Usuario", "Plan", "Estado", "Pagado hasta", "Horas del mes", "Trabajos", ""].map((h) => el("th", {}, h))),
+    ...users.map((u) => el("tr", {},
+      el("td", {}, u.email, u.is_admin ? el("span", { class: "muted" }, " (admin)") : null),
+      el("td", {}, u.plan),
+      el("td", { class: u.account.paid ? "status-done" : "status-failed" }, !u.enabled ? "deshabilitado" : u.account.paid ? "al día" : "sin pagar"),
+      el("td", {}, u.paid_until ? new Date(u.paid_until).toLocaleDateString() : "–"),
+      el("td", {}, `${u.account.hours_used.toFixed(2)} / ${u.account.hours_included}`),
+      el("td", {}, u.account.active_jobs),
+      el("td", {}, el("button", { type: "button", onclick: () => recordPayment(u) }, "Registrar pago")))));
+  $("payments").replaceChildren(el("tr", {}, ["Fecha", "Usuario", "Plan", "Importe", "Medio", "Estado", "Nota"].map((h) => el("th", {}, h))),
+    ...(pays.length ? pays.map((p) => el("tr", {},
+      el("td", { class: "muted" }, ago(p.created_at)), el("td", {}, p.user), el("td", {}, `${p.plan} · ${p.months} m`),
+      el("td", {}, money(p.amount_cents, p.currency)), el("td", {}, p.provider),
+      el("td", { class: p.status === "approved" ? "status-done" : p.status === "rejected" ? "status-failed" : "status-queued" }, p.status),
+      el("td", { class: "muted" }, p.note)))
+    : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Ninguno"))]));
+}
+
 async function refresh() {
   try {
-    const [nodes, queue, jobs] = await Promise.all([api("/v1/admin/nodes"), api("/v1/admin/queue"), api("/v1/admin/jobs?limit=20")]);
+    const [nodes, queue, jobs, users, pays] = await Promise.all([api("/v1/admin/nodes"), api("/v1/admin/queue"),
+      api("/v1/admin/jobs?limit=20"), api("/v1/admin/users"), api("/v1/admin/payments?limit=20")]);
+    renderUsers(users.users, pays.payments);
     classes = nodes.classes;
     last = { nodes: nodes.nodes, jobs };
     refreshNodes();

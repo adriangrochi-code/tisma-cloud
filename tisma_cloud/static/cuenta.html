@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Tisma Cloud · Mi cuenta</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --bg: #f4f3f7; --panel: #fff; --text: #1d1b22; --muted: #6b6775; --line: #e2dfe8; --accent: #7b2bd4;
+          --ok: #1f8a4c; --bad: #c0352b; --warn: #b26a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16151a; --panel: #211f27; --text: #ecebf0; --muted: #a39fae; --line: #34313d; --accent: #a76cf0;
+            --ok: #4cc27f; --bad: #f06a5f; --warn: #e0a238; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 28px 0 10px; }
+  .muted { color: var(--muted); } .error { color: var(--bad); min-height: 1.4em; } .ok { color: var(--ok); }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  input { font: inherit; width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); margin: 4px 0 10px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tabs button.on { border-color: var(--accent); color: var(--accent); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .plan { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+  .plan.current { border-color: var(--accent); }
+  .price { font-size: 24px; font-weight: 600; }
+  .stat { display: inline-block; margin-right: 22px; } .stat b { display: block; font-size: 20px; }
+  table { width: 100%; border-collapse: collapse; } th, td { text-align: left; padding: 6px 4px; border-top: 1px solid var(--line); font-size: 14px; }
+  th { color: var(--muted); font-weight: 500; border-top: 0; }
+  .hidden { display: none !important; }
+  #pay-error:empty, #pay-note:empty { display: none; }
+  #notice { margin-bottom: 12px; }
+  #auth { max-width: 380px; margin: 40px auto 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tisma Cloud</h1>
+  <p class="muted">Laminado y análisis estructural en nuestros servidores, desde Tisma Slicer.</p>
+
+  <div id="notice" class="box hidden"></div>
+
+  <section id="auth" class="box hidden">
+    <div class="tabs"><button type="button" id="tab-login" class="on">Entrar</button><button type="button" id="tab-register">Crear cuenta</button></div>
+    <form id="auth-form" autocomplete="on">
+      <label>Correo<input id="email" type="email" autocomplete="username" required maxlength="200"></label>
+      <label>Contraseña<input id="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
+      <label id="password2-label" class="hidden">Repetir contraseña<input id="password2" type="password" autocomplete="new-password" minlength="8" maxlength="200"></label>
+      <p class="error" id="auth-error"></p>
+      <button class="primary" type="submit" id="auth-submit">Entrar</button>
+    </form>
+  </section>
+
+  <section id="account" class="hidden">
+    <div class="box">
+      <div class="row"><div><b id="who"></b><div class="muted" id="state"></div></div><button type="button" id="logout">Salir</button></div>
+      <p style="margin:14px 0 0">
+        <span class="stat"><span class="muted">Plan</span><b id="plan"></b></span>
+        <span class="stat"><span class="muted">Horas este mes</span><b id="hours"></b></span>
+        <span class="stat"><span class="muted">Pagado hasta</span><b id="until"></b></span>
+      </p>
+    </div>
+    <h2>Planes</h2>
+    <p class="error" id="pay-error"></p>
+    <div class="plans" id="plans"></div>
+    <p class="muted" id="pay-note"></p>
+    <h2>Pagos</h2>
+    <div class="box"><table id="payments"></table></div>
+    <p class="muted" style="margin-top:24px">Tus proyectos se borran de nuestros servidores cuando termina cada trabajo, y los resultados a los 3 días.
+      Los datos de la tarjeta se ingresan en la página del medio de pago, nunca en la nuestra.</p>
+  </section>
+</main>
+<script>
+"use strict";
+const KEY = "tisma-account-token";
+let token = null, mode = "login", plans = [], payments = false, me = null;
+try { token = localStorage.getItem(KEY); } catch (e) {}
+const $ = (id) => document.getElementById(id);
+const STATUS = { approved: "aprobado", pending: "pendiente", rejected: "rechazado" };
+const ERRORS = { 401: "Correo o contraseña incorrectos.", 409: "Ese correo ya tiene una cuenta: entrá.", 429: "Demasiados intentos: esperá un minuto." };
+function money(cents, cur) { return `${cur} ${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString() : "—"; }
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) if (c != null) e.append(c instanceof Node ? c : String(c));
+  return e;
+}
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) } });
+  const body = await r.json().catch(() => ({}));
+  if (r.status === 401 && token) { setToken(null); show(); throw new Error("La sesión terminó: entrá de nuevo."); }
+  if (!r.ok) { const e = new Error(ERRORS[r.status] || (typeof body.detail === "string" ? body.detail : `Error ${r.status}`)); e.status = r.status; throw e; }
+  return body;
+}
+function setToken(t) { token = t; try { t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY); } catch (e) {} }
+
+function setMode(m) {
+  mode = m;
+  $("tab-login").classList.toggle("on", m === "login");
+  $("tab-register").classList.toggle("on", m === "register");
+  $("password2-label").classList.toggle("hidden", m === "login");
+  $("password").autocomplete = m === "login" ? "current-password" : "new-password";
+  $("auth-submit").textContent = m === "login" ? "Entrar" : "Crear cuenta";
+  $("auth-error").textContent = "";
+}
+$("tab-login").onclick = () => setMode("login");
+$("tab-register").onclick = () => setMode("register");
+$("auth-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("auth-error").textContent = "";
+  const email = $("email").value.trim(), password = $("password").value;
+  if (mode === "register" && password !== $("password2").value) { $("auth-error").textContent = "Las contraseñas no coinciden."; return; }
+  $("auth-submit").disabled = true;
+  try {
+    const r = await api(mode === "login" ? "/v1/auth/login" : "/v1/auth/register",
+      { method: "POST", body: JSON.stringify(mode === "login" ? { email, password, device: "Página de la cuenta" } : { email, password }) });
+    setToken(r.token);
+    $("password").value = $("password2").value = "";
+    show();
+  } catch (e) { $("auth-error").textContent = e.message; }
+  $("auth-submit").disabled = false;
+});
+$("logout").onclick = async () => { try { await api("/v1/auth/logout", { method: "POST" }); } catch (e) {} setToken(null); show(); };
+
+async function pay(plan) {
+  $("pay-error").textContent = "";
+  try {
+    const r = await api("/v1/billing/checkout", { method: "POST", body: JSON.stringify({ plan: plan.name, months: 1 }) });
+    // Only the pages of the payment provider (https) or the test provider of this server.
+    const url = new URL(r.url, location.href);
+    if (url.protocol !== "https:" && url.origin !== location.origin) throw new Error("Dirección de pago no válida.");
+    location.assign(url.href);
+  } catch (e) { $("pay-error").textContent = e.message; }
+}
+
+function renderPlans() {
+  $("plans").replaceChildren(...plans.map((p) => el("div", { class: "plan" + (me && me.plan === p.name ? " current" : "") },
+    el("b", {}, p.name), el("span", { class: "price" }, money(p.price_cents, p.currency), el("span", { class: "muted", style: "font-size:14px" }, " / mes")),
+    el("span", { class: "muted" }, `${p.monthly_hours} h de cálculo por mes · ${p.max_concurrent} trabajo${p.max_concurrent > 1 ? "s" : ""} a la vez`),
+    el("button", { type: "button", class: "primary", disabled: !payments, onclick: () => pay(p) },
+      me && me.plan === p.name && me.paid ? "Pagar un mes más" : "Pagar")))
+    .concat(plans.length ? [] : [el("p", { class: "muted" }, "Todavía no hay planes publicados.")]));
+  $("pay-note").textContent = payments ? "" : "El pago en línea todavía no está abierto: escribinos para pagar por transferencia.";
+}
+
+async function show() {
+  const health = await fetch("/v1/health").then((r) => r.json()).catch(() => ({}));
+  payments = !!health.payments;
+  plans = (await fetch("/v1/plans").then((r) => r.json()).catch(() => ({ plans: [] }))).plans || [];
+  if (!token) { $("account").classList.add("hidden"); $("auth").classList.remove("hidden"); return; }
+  try {
+    me = await api("/v1/me");
+    const pays = await api("/v1/billing/payments");
+    $("auth").classList.add("hidden"); $("account").classList.remove("hidden");
+    $("who").textContent = me.email;
+    $("state").textContent = me.paid ? "Plan al día." : "El plan no está pagado: pagalo para usar los servidores.";
+    $("state").className = me.paid ? "ok" : "error";
+    $("plan").textContent = me.plan;
+    $("hours").textContent = `${me.hours_used.toFixed(1)} de ${me.hours_included} h`;
+    $("until").textContent = fmtDate(me.paid_until);
+    renderPlans();
+    $("payments").replaceChildren(el("tr", {}, ["Fecha", "Plan", "Importe", "Estado"].map((h) => el("th", {}, h))),
+      ...(pays.payments.length ? pays.payments.map((p) => el("tr", {}, el("td", {}, fmtDate(p.created_at)), el("td", {}, `${p.plan} · ${p.months} mes${p.months > 1 ? "es" : ""}`),
+        el("td", {}, money(p.amount_cents, p.currency)), el("td", { class: p.status === "approved" ? "ok" : p.status === "rejected" ? "error" : "muted" }, STATUS[p.status] || p.status)))
+        : [el("tr", {}, el("td", { colspan: 4, class: "muted" }, "Sin pagos todavía."))]));
+  } catch (e) { $("auth-error").textContent = e.message; }
+}
+
+// Back from the payment page.
+const back = new URLSearchParams(location.search).get("pago");
+if (back) {
+  $("notice").classList.remove("hidden");
+  $("notice").textContent = back === "approved" ? "¡Pago recibido! Tu plan ya está al día." : back === "rejected" ? "El pago fue rechazado: probá de nuevo o con otro medio." : "Estamos confirmando el pago con el medio de pago.";
+  history.replaceState(null, "", location.pathname);
+}
+setMode("login");
+show();
+</script>
+</body>
+</html>

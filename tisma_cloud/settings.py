@@ -39,8 +39,21 @@ class Settings:
     # Addresses of the web site allowed to use /v1/site (comma separated, e.g. its server's public IP); empty: any address
     # with the site key.
     site_networks: str = field(default_factory=lambda: os.environ.get("TISMA_SITE_NETWORKS", ""))
-    # Page of the web site where users create their account and pay the plan (shown by Tisma).
+    # Page where users create their account and pay the plan (shown by Tisma); empty: public_url + "/cuenta".
     billing_url: str = field(default_factory=lambda: os.environ.get("TISMA_BILLING_URL", ""))
+    # Address of the master on internet (e.g. https://tismaservidores.net), for the pages and the payment provider.
+    public_url: str = field(default_factory=lambda: os.environ.get("TISMA_PUBLIC_URL", "").rstrip("/"))
+    # Payment provider of the account page: "" (none: payments recorded by the administrator) or "test" (a fake
+    # provider to try the whole flow; never in production).
+    billing_provider: str = field(default_factory=lambda: os.environ.get("TISMA_BILLING_PROVIDER", ""))
+    # Protection of the master (guard.py): an address with this many refused requests in a minute (bad tokens, unknown
+    # pages, limits) is blocked for ban_minutes; requests per minute of an address to the pages without account; uploads
+    # (projects and results) received at the same time, in all and per account.
+    ban_threshold: int = field(default_factory=lambda: _int("TISMA_BAN_THRESHOLD", 30))
+    ban_minutes: int = field(default_factory=lambda: _int("TISMA_BAN_MINUTES", 10))
+    anonymous_per_minute: int = field(default_factory=lambda: _int("TISMA_ANONYMOUS_PER_MINUTE", 120))
+    max_uploads: int = field(default_factory=lambda: _int("TISMA_MAX_UPLOADS", 8))
+    max_uploads_per_account: int = field(default_factory=lambda: _int("TISMA_MAX_UPLOADS_PER_ACCOUNT", 2))
     # Key of the web site for /v1/site (it creates the users and records their payments). Empty: disabled.
     site_key: str = field(default_factory=lambda: os.environ.get("TISMA_SITE_KEY", ""))
     # Days a user may keep computing after paid_until (a payment that arrives late).

@@ -376,6 +376,10 @@ def test_admin_api(client, f):
     assert [n["name"] for n in nodes] == ["i7-2"] and nodes[0]["last_seen"]
     r = client.put("/v1/admin/plans/maker", headers=admin, json={"monthly_hours": 3, "max_concurrent": 1})
     assert r.status_code == 200
+    # Only public plans are offered.
+    assert "maker" not in [p["name"] for p in client.get("/v1/plans").json()["plans"]]
+    client.put("/v1/admin/plans/maker", headers=admin, json={"monthly_hours": 3, "max_concurrent": 1, "public": True,
+                                                             "price_cents": 1000})
     assert "maker" in [p["name"] for p in client.get("/v1/plans").json()["plans"]]
     assert [u["email"] for u in client.get("/v1/admin/users", headers=admin).json()["users"]] == ["root@x.com"]
     f.submit(admin)
@@ -490,7 +494,7 @@ def test_administration_only_from_the_local_network(client, f):
 def test_site_api_only_from_the_site_address(settings):
     from fastapi.testclient import TestClient
 
-    from tisma_cloud.api import create_app
+    from conftest import new_app as create_app
 
     settings.site_networks = "190.64.1.10/32"
     settings.billing_url = "https://tisma.com.uy/planes"
@@ -500,3 +504,20 @@ def test_site_api_only_from_the_site_address(settings):
         assert site.put("/v1/site/plans/basico", headers=SITE, json=body).status_code == 200
         assert other.put("/v1/site/plans/basico", headers=SITE, json=body).status_code == 404
         assert other.get("/v1/health").json()["billing_url"] == "https://tisma.com.uy/planes"
+
+
+def test_projects_are_deleted_when_the_job_ends(client, f):
+    user = f.user()
+    node = f.node("n", "slice")
+    storage = client.app.state.services.storage
+    done, failed, cancelled = f.submit(user), f.submit(user), f.submit(user)
+    assert storage.input_path(done["id"]).exists()
+    f.claim(node)
+    client.post(f"/v1/node/jobs/{done['id']}/result", headers=node, files={"file": ("p.gcode", b"G1")})
+    f.claim(node)
+    client.post(f"/v1/node/jobs/{failed['id']}/fail", headers=node, json={"error": "x"})
+    client.post(f"/v1/jobs/{cancelled['id']}/cancel", headers=user)
+    for job in (done, failed, cancelled):
+        assert not storage.input_path(job["id"]).exists()
+    # The result stays for its download.
+    assert client.get(f"/v1/jobs/{done['id']}/result", headers=user).content == b"G1"

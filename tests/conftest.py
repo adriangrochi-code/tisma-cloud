@@ -42,16 +42,21 @@ def settings(tmp_path: Path) -> Settings:
                     site_key="site-secret")
 
 
-@pytest.fixture
-def client(settings: Settings):
+def new_app(settings: Settings):
+    """An app on an empty database (a shared PostgreSQL test database is emptied)."""
     app = create_app(settings)
     db = app.state.services.db
     if not db.is_sqlite:
-        # A shared PostgreSQL test database: start from empty tables.
         from tisma_cloud.db import Base
 
         Base.metadata.drop_all(db.engine)
         db.create_all()
+    return app
+
+
+@pytest.fixture
+def client(settings: Settings):
+    app = new_app(settings)
     # A computer of the local network (the administration is only for it).
     with TestClient(app, client=("192.168.1.20", 50000)) as c:
         yield c
