@@ -428,3 +428,38 @@ def test_usage_month(client, f):
         usage = s.execute(select(Usage)).scalar_one()
         assert usage.month == month_of(utcnow()) and 59 < usage.seconds < 62
         assert s.execute(select(User)).scalar_one().email == "ana@x.com"
+
+
+def test_admin_panel_and_jobs(client, f, settings):
+    page = client.get("/admin")
+    assert page.status_code == 200 and "Tisma Cloud" in page.text
+    assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+    admin = f.user("root@x.com", admin=True)
+    user = f.user()
+    i5 = f.node("i5", "fea,slice")
+    f.node("i7", "slice")
+    running = f.submit(user)
+    waiting = f.submit(user, kind="fea", params="{}")
+    done = f.submit(user)
+    assert f.claim(i5)["id"] == waiting["id"]
+    assert f.claim(i5)["id"] == running["id"]
+    client.post(f"/v1/node/jobs/{running['id']}/progress", headers=i5, json={"progress": 30})
+    client.post(f"/v1/node/jobs/{waiting['id']}/fail", headers=i5, json={"error": "bad"})
+    nodes = {n["name"]: n for n in client.get("/v1/admin/nodes", headers=admin).json()["nodes"]}
+    # The i5 claimed jobs just now; the i7 never.
+    assert nodes["i5"]["online"] is True and nodes["i5"]["running"] == 1
+    assert nodes["i7"]["online"] is False
+    jobs = client.get("/v1/admin/jobs", headers=admin).json()
+    active = {j["id"]: j for j in jobs["active"]}
+    assert active[running["id"]]["node"] == "i5" and active[running["id"]]["progress"] == 30
+    assert active[running["id"]]["user"] == "ana@x.com"
+    assert active[done["id"]]["status"] == "queued" and active[done["id"]]["node"] is None
+    assert [j["id"] for j in jobs["ended"]] == [waiting["id"]] and jobs["ended"][0]["error"] == "bad"
+    assert client.get("/v1/admin/jobs", headers=user).status_code == 403
+    # A node not seen for longer than the timeout is shown offline.
+    with f.db.session() as s:
+        from sqlalchemy import select as sel
+
+        s.execute(sel(Node).where(Node.name == "i5")).scalar_one().last_seen = utcnow() - timedelta(seconds=settings.node_timeout_s + 1)
+    nodes = {n["name"]: n for n in client.get("/v1/admin/nodes", headers=admin).json()["nodes"]}
+    assert nodes["i5"]["online"] is False

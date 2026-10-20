@@ -3,14 +3,15 @@
 import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
 import hmac
+from contextlib import asynccontextmanager
+from importlib import resources
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
@@ -66,13 +67,15 @@ def job_view(job: Job) -> dict[str, Any]:
     }
 
 
-def node_view(node: Node, running: int = 0) -> dict[str, Any]:
+def node_view(node: Node, running: int = 0, timeout_s: int = 90) -> dict[str, Any]:
     return {
         "name": node.name,
         "priorities": node.priority_list,
         "enabled": node.enabled,
         "info": node.info_dict,
         "last_seen": node.last_seen.isoformat() + "Z" if node.last_seen else None,
+        # Seen recently: the node is waiting for jobs or running them (it claims or beats every few seconds).
+        "online": node.last_seen is not None and utcnow() - node.last_seen < timedelta(seconds=timeout_s),
         "running": running,
     }
 
@@ -462,7 +465,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 select(Job.node_id, func.count()).where(Job.status == "running").group_by(Job.node_id)
             ).all())
             nodes = s.execute(select(Node).order_by(Node.name)).scalars().all()
-            return {"nodes": [node_view(n, running.get(n.id, 0)) for n in nodes], "classes": list(JOB_CLASSES)}
+            return {"nodes": [node_view(n, running.get(n.id, 0), cfg.node_timeout_s) for n in nodes],
+                    "classes": list(JOB_CLASSES), "descriptions": JOB_CLASS_DESCRIPTIONS}
 
     @app.post("/v1/admin/nodes", status_code=201)
     def admin_add_node(_admin: AdminDep, body: NodeCreate) -> dict:
@@ -474,7 +478,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             node = Node(name=body.name, token_hash=hash_token(token), priorities=priorities)
             s.add(node)
             s.flush()
-            return {"node": node_view(node), "token": token}
+            return {"node": node_view(node, 0, cfg.node_timeout_s), "token": token}
 
     @app.patch("/v1/admin/nodes/{name}")
     def admin_update_node(_admin: AdminDep, name: str, body: NodeUpdate) -> dict:
@@ -486,7 +490,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 node.priorities = check_priorities(body.priorities)
             if body.enabled is not None:
                 node.enabled = body.enabled
-            return {"node": node_view(node)}
+            return {"node": node_view(node, 0, cfg.node_timeout_s)}
 
     @app.get("/v1/admin/users")
     def admin_users(_admin: AdminDep) -> dict:
@@ -567,5 +571,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for job_class, status, count in rows:
             queue.setdefault(job_class, {"queued": 0, "running": 0})[status] = count
         return {"queue": queue}
+
+    @app.get("/v1/admin/jobs")
+    def admin_jobs(_admin: AdminDep, limit: int = 30) -> dict:
+        """The jobs waiting and running, and the last ones that ended."""
+        limit = max(1, min(limit, 200))
+        with db.session() as s:
+            active = s.execute(
+                select(Job, User.email, Node.name).join(User, User.id == Job.user_id)
+                .outerjoin(Node, Node.id == Job.node_id)
+                .where(Job.status.in_(scheduler.ACTIVE)).order_by(Job.created_at).limit(200)
+            ).all()
+            ended = s.execute(
+                select(Job, User.email, Node.name).join(User, User.id == Job.user_id)
+                .outerjoin(Node, Node.id == Job.node_id)
+                .where(Job.status.in_(scheduler.FINAL)).order_by(Job.finished_at.desc()).limit(limit)
+            ).all()
+
+            def view(row) -> dict:  # noqa: ANN001
+                job, email, node = row
+                return {**job_view(job), "user": email, "node": node}
+
+            return {"active": [view(r) for r in active], "ended": [view(r) for r in ended]}
+
+    # ---- the administration panel (a single page that uses the API above)
+    @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+    def admin_panel() -> HTMLResponse:
+        page = resources.files("tisma_cloud").joinpath("static/admin.html").read_text(encoding="utf-8")
+        # The page loads nothing from other sites and is not shown inside other pages.
+        return HTMLResponse(page, headers={
+            "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; "
+                                       "frame-ancestors 'none'",
+            "X-Frame-Options": "DENY", "Cache-Control": "no-store"})
 
     return app

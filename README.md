@@ -94,6 +94,15 @@ Sugerencia para tus equipos (a ajustar cuando se midan):
 
 ## Administración
 
+**Panel web:** `http://<central>:8000/admin` (o `https://<tu dominio>/admin`). Se entra con un usuario administrador
+con contraseña (`python -m tisma_cloud.admin user-add tu@correo.com --plan basico --admin --password`). Muestra cada
+servidor (en línea o sin señal, procesador, memoria, GPU, qué está haciendo y su progreso), la cola por tipo de
+trabajo con los servidores que lo atienden, y los trabajos en curso y los últimos terminados. Las prioridades de cada
+servidor se marcan y ordenan con ↑ ↓ y se guardan con «Guardar prioridades»; valen desde el próximo trabajo. Se
+actualiza cada 5 segundos.
+
+Por comandos:
+
 ```
 python -m tisma_cloud.admin node-list                     # nodos, prioridades, trabajos corriendo, última señal
 python -m tisma_cloud.admin node-set i7-1 --priorities fea,slice

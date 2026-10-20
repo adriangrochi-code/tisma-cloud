@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tisma Cloud · Panel</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f4f3f7; --panel: #ffffff; --text: #1d1b22; --muted: #6b6775; --line: #e2dfe8;
+    --accent: #7b2bd4; --accent-soft: #efe6fb; --ok: #1f8a4c; --warn: #b26a00; --bad: #c0352b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16151a; --panel: #211f27; --text: #ecebf0; --muted: #a39fae; --line: #34313d;
+            --accent: #a76cf0; --accent-soft: #2e2440; --ok: #4cc27f; --warn: #e0a238; --bad: #f06a5f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  header .spacer { flex: 1; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px 20px 40px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 24px 0 8px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  input { font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); width: 100%; }
+  .muted { color: var(--muted); }
+  .error { color: var(--bad); min-height: 1.4em; }
+  #app-error:empty { display: none; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 24px; }
+  .nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .card h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .pill { font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 99px; }
+  .pill.on { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+  .pill.off { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+  .pill.dis { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+  .info { margin: 4px 0 10px; color: var(--muted); font-size: 13px; }
+  .prio { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .prio-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-top: 1px solid var(--line); }
+  .prio-row:first-child { border-top: 0; }
+  .prio-row.off { color: var(--muted); }
+  .prio-row .n { width: 18px; text-align: center; font-weight: 600; color: var(--accent); }
+  .prio-row label { flex: 1; display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .prio-row button { padding: 1px 7px; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .running { margin: 8px 0 10px; }
+  .job-line { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 3px 0; }
+  .bar { flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; min-width: 60px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 7px 10px; border-top: 1px solid var(--line); font-size: 13px; }
+  th { border-top: 0; color: var(--muted); font-weight: 500; }
+  .table-wrap { overflow-x: auto; }
+  .status-done { color: var(--ok); } .status-failed { color: var(--bad); } .status-cancelled { color: var(--muted); }
+  .status-running { color: var(--accent); } .status-queued { color: var(--warn); }
+  #login { max-width: 340px; margin: 80px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  #login h1 { font-size: 18px; margin: 0 0 14px; }
+  #login p { margin: 0 0 10px; }
+  .hidden { display: none !important; }
+  @media (max-width: 600px) { main { padding: 12px; } .nodes { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<form id="login" class="hidden" autocomplete="on">
+  <h1>Tisma Cloud · Panel</h1>
+  <p><input id="email" type="email" placeholder="Correo del administrador" autocomplete="username" required></p>
+  <p><input id="password" type="password" placeholder="Contraseña" autocomplete="current-password" required></p>
+  <p class="error" id="login-error"></p>
+  <button class="primary" type="submit">Entrar</button>
+</form>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>Tisma Cloud · Panel</h1>
+    <span class="muted" id="updated"></span>
+    <span class="spacer"></span>
+    <button id="logout" type="button">Salir</button>
+  </header>
+  <main>
+    <p class="error" id="app-error"></p>
+    <div class="stats">
+      <div class="stat"><span class="muted">Servidores en línea</span><b id="s-online">–</b></div>
+      <div class="stat"><span class="muted">Trabajos esperando</span><b id="s-queued">–</b></div>
+      <div class="stat"><span class="muted">Trabajos corriendo</span><b id="s-running">–</b></div>
+    </div>
+
+    <h2>Servidores</h2>
+    <p class="muted">Cada servidor toma los tipos de trabajo marcados, en ese orden: primero el 1, si no hay, el 2… Un tipo sin marcar no lo hace nunca.</p>
+    <div class="nodes" id="nodes"></div>
+
+    <h2>Cola por tipo de trabajo</h2>
+    <div class="table-wrap"><table id="queue"></table></div>
+
+    <h2>Trabajos esperando y corriendo</h2>
+    <div class="table-wrap"><table id="active"></table></div>
+
+    <h2>Últimos trabajos terminados</h2>
+    <div class="table-wrap"><table id="ended"></table></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+const NAMES = { slice: "Laminar", slice_large: "Laminar placa grande", fea: "Análisis estructural",
+                fea_optimize: "Relleno mínimo / paredes de resina" };
+const STATUS = { queued: "esperando", running: "corriendo", done: "terminado", failed: "falló", cancelled: "cancelado" };
+const KEY = "tisma-admin-token";
+let token = null;
+try { token = sessionStorage.getItem(KEY); } catch (e) {}
+let classes = [];
+// Priority lists being edited (not saved yet): kept across refreshes.
+const drafts = {};
+let timer = null;
+
+const $ = (id) => document.getElementById(id);
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v !== null && v !== undefined) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c !== null && c !== undefined) e.append(c instanceof Node ? c : String(c));
+  return e;
+}
+function ago(iso) {
+  if (!iso) return "nunca";
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  if (s < 60) return `hace ${s} s`;
+  if (s < 3600) return `hace ${Math.round(s / 60)} min`;
+  if (s < 86400) return `hace ${Math.round(s / 3600)} h`;
+  return `hace ${Math.round(s / 86400)} d`;
+}
+function duration(sec) {
+  if (!sec) return "–";
+  if (sec < 60) return `${sec.toFixed(1)} s`;
+  return `${Math.floor(sec / 60)} min ${Math.round(sec % 60)} s`;
+}
+
+async function api(path, options = {}) {
+  const r = await fetch(path, { ...options, headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) } });
+  if (r.status === 401 || r.status === 403) { logout(r.status === 403 ? "Esta cuenta no es de administrador." : "La sesión terminó."); throw new Error("auth"); }
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Error ${r.status}`);
+  return body;
+}
+
+function showLogin(message) {
+  $("app").classList.add("hidden");
+  $("login").classList.remove("hidden");
+  $("login-error").textContent = message || "";
+}
+function logout(message) {
+  if (timer) clearInterval(timer);
+  timer = null;
+  if (token && !message) fetch("/v1/auth/logout", { method: "POST", headers: { "Authorization": `Bearer ${token}` } }).catch(() => {});
+  token = null;
+  try { sessionStorage.removeItem(KEY); } catch (e) {}
+  showLogin(message);
+}
+
+$("login").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("login-error").textContent = "";
+  try {
+    const r = await fetch("/v1/auth/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: $("email").value, password: $("password").value, device: "Panel de administración" }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      $("login-error").textContent = r.status === 401 ? "Correo o contraseña incorrectos." :
+        r.status === 429 ? "Demasiados intentos: esperá un minuto." : `Error ${r.status}`;
+      return;
+    }
+    token = body.token;
+    try { sessionStorage.setItem(KEY, token); } catch (e) {}
+    $("password").value = "";
+    start();
+  } catch (e) { $("login-error").textContent = "El servidor no responde."; }
+});
+$("logout").addEventListener("click", () => logout());
+
+// ---- servers
+function draftOf(node) { return drafts[node.name] || node.priorities.slice(); }
+function sameList(a, b) { return a.length === b.length && a.every((x, i) => x === b[i]); }
+
+function renderNode(node, jobs) {
+  const list = draftOf(node);
+  const dirty = !sameList(list, node.priorities);
+  const order = list.concat(classes.filter((c) => !list.includes(c)));
+  const state = !node.enabled ? ["dis", "Deshabilitado"] : node.online ? ["on", "En línea"] : ["off", "Sin señal"];
+  const i = node.info || {};
+  const facts = [i.host, i.cpus && `${i.cpus} hilos`, i.memory_gb && `${i.memory_gb} GB`,
+                 i.gpu === true ? "GPU sí" : i.gpu === false ? "sin GPU" : null, i.slots && `${i.slots} ranura${i.slots > 1 ? "s" : ""}`]
+                 .filter(Boolean).join(" · ");
+
+  const setDraft = (next) => { drafts[node.name] = next; refreshNodes(); };
+  const rows = order.map((c) => {
+    const on = list.includes(c);
+    const pos = list.indexOf(c);
+    return el("div", { class: "prio-row" + (on ? "" : " off") },
+      el("span", { class: "n" }, on ? pos + 1 : ""),
+      el("label", {},
+        el("input", { type: "checkbox", checked: on, style: "width:auto",
+          onchange: () => setDraft(on ? list.filter((x) => x !== c) : list.concat([c])) }),
+        NAMES[c] || c),
+      el("button", { type: "button", title: "Subir", disabled: !on || pos === 0,
+        onclick: () => { const n = list.slice(); [n[pos - 1], n[pos]] = [n[pos], n[pos - 1]]; setDraft(n); } }, "↑"),
+      el("button", { type: "button", title: "Bajar", disabled: !on || pos === list.length - 1,
+        onclick: () => { const n = list.slice(); [n[pos + 1], n[pos]] = [n[pos], n[pos + 1]]; setDraft(n); } }, "↓"));
+  });
+
+  const mine = jobs.filter((j) => j.node === node.name && j.status === "running");
+  return el("div", { class: "card" },
+    el("h3", {}, node.name, el("span", { class: "pill " + state[0] }, state[1])),
+    el("div", { class: "info" }, facts || "Todavía no informó sus datos", el("br"), `Última señal ${ago(node.last_seen)}`),
+    el("div", { class: "running" },
+      mine.length ? mine.map((j) => el("div", { class: "job-line" },
+        el("span", {}, NAMES[j.job_class] || j.job_class), el("span", { class: "bar" }, el("i", { style: `width:${j.progress}%` })),
+        el("span", { class: "muted" }, `${j.progress} %`)))
+      : el("span", { class: "muted" }, "Sin trabajos ahora")),
+    el("div", { class: "prio" }, rows),
+    el("div", { class: "actions" },
+      el("button", { type: "button", class: "primary", disabled: !dirty || list.length === 0, onclick: async (ev) => {
+        ev.target.disabled = true;
+        try { await api(`/v1/admin/nodes/${encodeURIComponent(node.name)}`, { method: "PATCH", body: JSON.stringify({ priorities: list }) });
+              delete drafts[node.name]; refresh(); }
+        catch (e) { if (e.message !== "auth") $("app-error").textContent = e.message; ev.target.disabled = false; }
+      } }, "Guardar prioridades"),
+      dirty ? el("button", { type: "button", onclick: () => { delete drafts[node.name]; refreshNodes(); } }, "Deshacer") : null,
+      el("span", { class: "spacer", style: "flex:1" }),
+      el("button", { type: "button", onclick: async () => {
+        const verb = node.enabled ? "deshabilitar" : "habilitar";
+        if (node.enabled && !confirm(`¿Deshabilitar ${node.name}? No va a tomar trabajos nuevos.`)) return;
+        try { await api(`/v1/admin/nodes/${encodeURIComponent(node.name)}`, { method: "PATCH", body: JSON.stringify({ enabled: !node.enabled }) }); refresh(); }
+        catch (e) { if (e.message !== "auth") $("app-error").textContent = `No se pudo ${verb}: ${e.message}`; }
+      } }, node.enabled ? "Deshabilitar" : "Habilitar")),
+    list.length === 0 ? el("div", { class: "error" }, "Marcá al menos un tipo de trabajo.") : null);
+}
+
+let last = { nodes: [], jobs: { active: [], ended: [] } };
+function refreshNodes() {
+  const box = $("nodes");
+  box.replaceChildren(...(last.nodes.length ? last.nodes.map((n) => renderNode(n, last.jobs.active))
+    : [el("p", { class: "muted" }, "No hay servidores registrados. En el central: python -m tisma_cloud.admin node-add NOMBRE --priorities …")]));
+}
+
+function jobTable(table, jobs, ended) {
+  const head = el("tr", {}, ["Usuario", "Tipo", "Estado", "Servidor", ended ? "Tiempo" : "Progreso", ended ? "Terminó" : "Enviado", ended ? "Error" : null]
+    .filter((h) => h !== null).map((h) => el("th", {}, h)));
+  const rows = jobs.map((j) => el("tr", {},
+    el("td", {}, j.user), el("td", {}, NAMES[j.job_class] || j.job_class),
+    el("td", { class: "status-" + j.status }, STATUS[j.status] || j.status),
+    el("td", {}, j.node || "–"),
+    el("td", {}, ended ? duration(j.seconds) : j.status === "running" ? `${j.progress} %` : "–"),
+    el("td", { class: "muted" }, ago(ended ? j.finished_at : j.created_at)),
+    ended ? el("td", { class: "muted" }, j.error ? j.error.slice(0, 120) : "") : null));
+  table.replaceChildren(head, ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Ninguno"))]));
+}
+
+async function refresh() {
+  try {
+    const [nodes, queue, jobs] = await Promise.all([api("/v1/admin/nodes"), api("/v1/admin/queue"), api("/v1/admin/jobs?limit=20")]);
+    classes = nodes.classes;
+    last = { nodes: nodes.nodes, jobs };
+    refreshNodes();
+    const q = queue.queue;
+    $("queue").replaceChildren(el("tr", {}, el("th", {}, "Tipo"), el("th", {}, "Esperando"), el("th", {}, "Corriendo"),
+      el("th", {}, "Servidores en línea que lo hacen")),
+      ...classes.map((c) => el("tr", {}, el("td", {}, NAMES[c] || c), el("td", {}, q[c].queued), el("td", {}, q[c].running),
+        el("td", {}, nodes.nodes.filter((n) => n.online && n.enabled && n.priorities.includes(c)).map((n) => n.name).join(", ")
+          || el("span", { class: "error" }, "ninguno")))));
+    jobTable($("active"), jobs.active, false);
+    jobTable($("ended"), jobs.ended, true);
+    $("s-online").textContent = `${nodes.nodes.filter((n) => n.online && n.enabled).length} / ${nodes.nodes.length}`;
+    $("s-queued").textContent = Object.values(q).reduce((a, x) => a + x.queued, 0);
+    $("s-running").textContent = Object.values(q).reduce((a, x) => a + x.running, 0);
+    $("updated").textContent = `actualizado ${new Date().toLocaleTimeString()}`;
+    $("app-error").textContent = "";
+  } catch (e) {
+    if (e.message !== "auth") $("app-error").textContent = `No se pudo actualizar: ${e.message}`;
+  }
+}
+
+function start() {
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  refresh();
+  if (timer) clearInterval(timer);
+  timer = setInterval(refresh, 5000);
+}
+
+if (token) start(); else showLogin();
+</script>
+</body>
+</html>

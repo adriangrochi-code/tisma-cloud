@@ -30,5 +30,8 @@ tisma-cloud-node = "tisma_cloud.node.__main__:main"
 [tool.setuptools.packages.find]
 include = ["tisma_cloud*"]
 
+[tool.setuptools.package-data]
+tisma_cloud = ["static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
