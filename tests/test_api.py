@@ -463,3 +463,40 @@ def test_admin_panel_and_jobs(client, f, settings):
         s.execute(sel(Node).where(Node.name == "i5")).scalar_one().last_seen = utcnow() - timedelta(seconds=settings.node_timeout_s + 1)
     nodes = {n["name"]: n for n in client.get("/v1/admin/nodes", headers=admin).json()["nodes"]}
     assert nodes["i5"]["online"] is False
+
+
+def test_administration_only_from_the_local_network(client, f):
+    from fastapi.testclient import TestClient
+
+    admin = f.user("root@x.com", admin=True)
+    user = f.user()
+    assert client.get("/v1/admin/nodes", headers=admin).status_code == 200
+    assert client.get("/admin").status_code == 200
+    with TestClient(client.app, client=("200.40.10.7", 40000)) as internet:
+        # From internet the administration does not exist, even with the token of an administrator.
+        assert internet.get("/admin").status_code == 404
+        for path in ("/v1/admin/nodes", "/v1/admin/jobs", "/v1/admin/queue", "/v1/admin/users"):
+            assert internet.get(path, headers=admin).status_code == 404
+        assert internet.patch("/v1/admin/nodes/x", headers=admin, json={"enabled": False}).status_code == 404
+        # The users keep using the service.
+        assert internet.get("/v1/me", headers=user).status_code == 200
+        f.submit(user)
+    # Through Caddy (a local address) with the address of an internet user: also 404.
+    assert client.get("/admin", headers={"X-Forwarded-For": "200.40.10.7"}).status_code == 404
+    assert client.get("/v1/admin/nodes", headers={**admin, "X-Forwarded-For": "200.40.10.7"}).status_code == 404
+    assert client.get("/v1/admin/nodes", headers={**admin, "X-Forwarded-For": "192.168.1.30"}).status_code == 200
+
+
+def test_site_api_only_from_the_site_address(settings):
+    from fastapi.testclient import TestClient
+
+    from tisma_cloud.api import create_app
+
+    settings.site_networks = "190.64.1.10/32"
+    settings.billing_url = "https://tisma.com.uy/planes"
+    app = create_app(settings)
+    body = {"monthly_hours": 3, "max_concurrent": 2}
+    with TestClient(app, client=("190.64.1.10", 1)) as site, TestClient(app, client=("200.40.10.7", 1)) as other:
+        assert site.put("/v1/site/plans/basico", headers=SITE, json=body).status_code == 200
+        assert other.put("/v1/site/plans/basico", headers=SITE, json=body).status_code == 404
+        assert other.get("/v1/health").json()["billing_url"] == "https://tisma.com.uy/planes"

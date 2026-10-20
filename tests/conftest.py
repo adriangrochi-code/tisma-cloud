@@ -52,7 +52,8 @@ def client(settings: Settings):
 
         Base.metadata.drop_all(db.engine)
         db.create_all()
-    with TestClient(app) as c:
+    # A computer of the local network (the administration is only for it).
+    with TestClient(app, client=("192.168.1.20", 50000)) as c:
         yield c
 
 

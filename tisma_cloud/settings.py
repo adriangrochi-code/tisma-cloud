@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+
+# Private networks (RFC 1918, loopback, IPv6 unique local and link local): the local network of the servers.
+PRIVATE_NETWORKS = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128,fc00::/7,fe80::/10"
 from pathlib import Path
 
 
@@ -30,6 +33,14 @@ class Settings:
     large_slice_triangles: int = field(default_factory=lambda: _int("TISMA_LARGE_SLICE_TRIANGLES", 300_000))
     # Results and projects older than this are deleted [h].
     retention_h: int = field(default_factory=lambda: _int("TISMA_RETENTION_H", 72))
+    # Networks from which the administration (/admin and /v1/admin) can be used: the local network only. From any other
+    # address those pages do not exist (404).
+    admin_networks: str = field(default_factory=lambda: os.environ.get("TISMA_ADMIN_NETWORKS", PRIVATE_NETWORKS))
+    # Addresses of the web site allowed to use /v1/site (comma separated, e.g. its server's public IP); empty: any address
+    # with the site key.
+    site_networks: str = field(default_factory=lambda: os.environ.get("TISMA_SITE_NETWORKS", ""))
+    # Page of the web site where users create their account and pay the plan (shown by Tisma).
+    billing_url: str = field(default_factory=lambda: os.environ.get("TISMA_BILLING_URL", ""))
     # Key of the web site for /v1/site (it creates the users and records their payments). Empty: disabled.
     site_key: str = field(default_factory=lambda: os.environ.get("TISMA_SITE_KEY", ""))
     # Days a user may keep computing after paid_until (a payment that arrives late).

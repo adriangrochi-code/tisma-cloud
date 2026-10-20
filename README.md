@@ -49,6 +49,38 @@ Tisma / app / página web ──HTTPS──► MAESTRO (Caddy + API + PostgreSQL
 - Protección: límite de peticiones por minuto por usuario (según su plan), por nodo y de intentos de inicio de sesión
   (por dirección y por correo). Las contraseñas se guardan con scrypt; los tokens, como SHA-256.
 
+## Qué se ve desde internet y qué no
+
+- **Desde internet** (`https://tismaservidores.net`, Caddy en el 443): la API de los usuarios (Tisma inicia sesión,
+  lamina y calcula) y la API de la página web (`/v1/site`, con su clave y, si se configura `TISMA_SITE_NETWORKS`,
+  solo desde la IP del servidor de la página).
+- **Solo desde la red interna:** el panel `/admin` y la API `/v1/admin`. Caddy los corta (404) y el maestro también los
+  niega a cualquier dirección fuera de `TISMA_ADMIN_NETWORKS` (por defecto, las redes privadas 192.168.x.x, 10.x.x.x,
+  172.16–31.x.x). Se entra con `http://<central>:8000/admin` desde una PC conectada a la red del rack (Wi-Fi o
+  cable). El puerto 8000 no se abre en el router.
+
+## Pagos con la página web (tisma.com.uy)
+
+La cuenta y el pago se hacen en la página web. Cuando el pago queda confirmado, el servidor de la página avisa al
+maestro con una llamada HTTPS (desde su programa, no desde el navegador del usuario, para que la clave no quede a la
+vista):
+
+```
+# Alta del usuario (id de la página, correo, contraseña y plan) y cada pago (pagado hasta):
+curl -X PUT https://tismaservidores.net/v1/site/users/1234 \
+     -H "Authorization: Bearer $TISMA_SITE_KEY" -H "Content-Type: application/json" \
+     -d '{"email": "ana@correo.com", "password": "...", "plan": "basico", "paid_until": "2026-12-20T00:00:00Z"}'
+# Planes (horas por mes, trabajos a la vez, prioridad):
+curl -X PUT https://tismaservidores.net/v1/site/plans/basico -H "Authorization: Bearer $TISMA_SITE_KEY" \
+     -H "Content-Type: application/json" -d '{"monthly_hours": 3, "max_concurrent": 2, "priority": 1}'
+```
+
+- `paid_until` se corre un mes con cada pago; si un pago no llega, el usuario sigue `TISMA_GRACE_DAYS` días y después
+  Tisma le avisa que el plan no está pagado, con el enlace de `TISMA_BILLING_URL`.
+- `GET /v1/site/users/1234` devuelve el estado (al día, horas usadas), por ejemplo para mostrarlo en «Mi cuenta».
+- Si la página no puede hacer llamadas propias (un constructor de páginas sin programación), la alternativa es que el
+  medio de pago avise directo al maestro (webhook): eso depende del medio de pago y está pendiente.
+
 ## Seguridad de los nodos
 
 Un 3MF puede traer un script de post-procesado (`post_process`) que el laminador ejecuta al terminar: **el nodo lo
@@ -59,14 +91,14 @@ recibe entrada estándar. Con Docker el nodo corre sin privilegios y con el sist
 ## Instalar el maestro (i5)
 
 1. `cp .env.example .env` y completar `POSTGRES_PASSWORD`, `TISMA_DOMAIN` y `TISMA_SITE_KEY`.
-2. `docker compose -f deploy/compose.master.yaml up -d`
+2. `docker compose --env-file .env -f deploy/compose.master.yaml up -d`
 3. En el router, abrir solo el 443 (y el 80 para el certificado) hacia el maestro. El 8000 es para los nodos de la
    red local: no abrirlo hacia internet.
 4. Planes y primer administrador:
 
 ```
-docker compose -f deploy/compose.master.yaml exec api python -m tisma_cloud.admin plan-set basico --hours 10 --concurrent 2 --rpm 120 --priority 1
-docker compose -f deploy/compose.master.yaml exec api python -m tisma_cloud.admin user-add tu@correo.com --plan basico --admin
+docker compose --env-file .env -f deploy/compose.master.yaml exec api python -m tisma_cloud.admin plan-set basico --hours 10 --concurrent 2 --rpm 120 --priority 1
+docker compose --env-file .env -f deploy/compose.master.yaml exec api python -m tisma_cloud.admin user-add tu@correo.com --plan basico --admin --password
 ```
 
 Sin Docker: `pip install ".[master]"`, `TISMA_DATABASE_URL=postgresql+psycopg://...` y

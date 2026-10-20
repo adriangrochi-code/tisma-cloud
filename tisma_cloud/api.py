@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import hmac
+import ipaddress
 from contextlib import asynccontextmanager
 from importlib import resources
 from datetime import datetime, timedelta, timezone
@@ -89,6 +90,18 @@ def user_view(user: User) -> dict[str, Any]:
 def plan_view(plan: Plan) -> dict[str, Any]:
     return {"name": plan.name, "monthly_hours": plan.monthly_hours, "max_concurrent": plan.max_concurrent,
             "requests_per_minute": plan.requests_per_minute, "priority": plan.priority}
+
+
+def parse_networks(text: str) -> list:
+    return [ipaddress.ip_network(n.strip(), strict=False) for n in text.split(",") if n.strip()]
+
+
+def address_in(address: str, networks: list) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return any(ip in n for n in networks)
 
 
 def bearer(authorization: str | None) -> str:
@@ -184,10 +197,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     limiter = services.limiter
 
+    admin_networks = parse_networks(cfg.admin_networks)
+    site_networks = parse_networks(cfg.site_networks)
+
     def client_key(request: Request) -> str:
-        # Behind Caddy the address of the user is in X-Forwarded-For (Caddy replaces what the user sends).
+        # Behind Caddy the address of the user is in X-Forwarded-For (Caddy replaces what the user sends). Without it, the
+        # address of the connection (the local network reaches port 8000 directly).
         forwarded = request.headers.get("x-forwarded-for", "")
         return forwarded.split(",")[0].strip() or (request.client.host if request.client else "?")
+
+    def local_only(request: Request) -> None:
+        """The administration exists only for the local network: from internet it answers as an unknown page."""
+        if not address_in(client_key(request), admin_networks):
+            raise HTTPException(404, "Not Found")
 
     # ---- authentication
     def current_user(request: Request, authorization: Annotated[str | None, Header()] = None) -> User:
@@ -208,7 +230,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request.state.token_hash = hash_token(token)
         return user
 
-    def current_admin(user: Annotated[User, Depends(current_user)]) -> User:
+    def current_admin(_local: Annotated[None, Depends(local_only)], user: Annotated[User, Depends(current_user)]) -> User:
         if not user.is_admin:
             raise HTTPException(403, "Only for administrators")
         return user
@@ -224,7 +246,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(429, "Too many requests", headers={"Retry-After": "10"})
         return node
 
-    def current_site(authorization: Annotated[str | None, Header()] = None) -> None:
+    def current_site(request: Request, authorization: Annotated[str | None, Header()] = None) -> None:
+        if site_networks and not address_in(client_key(request), site_networks):
+            raise HTTPException(404, "Not Found")
         token = bearer(authorization)
         if not cfg.site_key or not hmac.compare_digest(token.encode(), cfg.site_key.encode()):
             raise HTTPException(401, "Invalid site key", headers={"WWW-Authenticate": "Bearer"})
@@ -249,7 +273,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- users
     @app.get("/v1/health")
     def health() -> dict:
-        return {"ok": True, "service": "tisma-cloud", "version": __version__}
+        return {"ok": True, "service": "tisma-cloud", "version": __version__, "billing_url": cfg.billing_url}
 
     @app.post("/v1/auth/login")
     def login(request: Request, body: LoginBody) -> dict:
@@ -596,7 +620,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---- the administration panel (a single page that uses the API above)
     @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
-    def admin_panel() -> HTMLResponse:
+    def admin_panel(_local: Annotated[None, Depends(local_only)]) -> HTMLResponse:
         page = resources.files("tisma_cloud").joinpath("static/admin.html").read_text(encoding="utf-8")
         # The page loads nothing from other sites and is not shown inside other pages.
         return HTMLResponse(page, headers={
