@@ -1,0 +1,40 @@
+# HTTPS for the users and the payment pages (automatic certificate), e.g. tismaservidores.net. The administration is only
+# for the local network: http://<central>:8000/admin (the master refuses it from other addresses too).
+{
+	servers {
+		# Slow clients (one byte at a time) do not keep connections busy.
+		timeouts {
+			read_header 10s
+			read_body 5m
+			write 10m
+			idle 1m
+		}
+		max_header_size 16KiB
+	}
+}
+
+{$TISMA_DOMAIN} {
+	# Largest project accepted (TISMA_MAX_UPLOAD_MB plus the form).
+	request_body {
+		max_size 210MB
+	}
+	@admin path /admin /admin/* /v1/admin /v1/admin/*
+	respond @admin 404
+	# G-code and analysis results travel compressed (text G-code shrinks several times).
+	encode zstd gzip {
+		match {
+			header Content-Type text/*
+			header Content-Type application/json*
+			header Content-Type application/x-tisma-fea*
+		}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+	reverse_proxy {$TISMA_API:api:8000} {
+		header_up X-Forwarded-For {remote_host}
+	}
+}

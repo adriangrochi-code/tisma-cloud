@@ -1,0 +1,75 @@
+#!/usr/sbin/nft -f
+# Firewall of the master (Tisma Cloud): protection against floods, on the master itself (no external service).
+#
+# Install: sudo cp deploy/firewall.nft /etc/nftables.d/tisma.nft (or include it from /etc/nftables.conf) and
+#          sudo nft -f /etc/nftables.d/tisma.nft ; check with: sudo nft list table inet tisma
+# Remove:  sudo nft delete table inet tisma
+#
+# The rules run in "prerouting", before Docker redirects the published ports (80, 443, 8000) to its containers, so they
+# also cover them. Adjust LAN to the local network of the rack.
+
+define LAN = 192.168.1.0/24
+
+table inet tisma
+delete table inet tisma
+
+table inet tisma {
+	# Addresses blocked for a while (flood of new connections).
+	set blocked4 {
+		type ipv4_addr
+		flags dynamic, timeout
+		timeout 10m
+	}
+	set blocked6 {
+		type ipv6_addr
+		flags dynamic, timeout
+		timeout 10m
+	}
+	# Rate of new connections per address (measured here; only the ones over the limit go to blocked4/6).
+	set rate4 {
+		type ipv4_addr
+		flags dynamic, timeout
+		timeout 1m
+	}
+	set rate6 {
+		type ipv6_addr
+		flags dynamic, timeout
+		timeout 1m
+	}
+	# Open connections per address (to cap them).
+	set conns4 {
+		type ipv4_addr
+		flags dynamic
+	}
+	set conns6 {
+		type ipv6_addr
+		flags dynamic
+	}
+
+	chain prerouting {
+		type filter hook prerouting priority -150; policy accept;
+
+		# The local network (nodes, administration, SSH) is never limited.
+		ip saddr $LAN accept
+		iif "lo" accept
+
+		ip saddr @blocked4 drop
+		ip6 saddr @blocked6 drop
+
+		# The port of the nodes and of the administration only from the local network.
+		tcp dport 8000 drop
+
+		# Web (Caddy): more than 20 new connections per second from one address (40 at once) blocks it for 10 minutes.
+		tcp dport { 80, 443 } ct state new update @rate4 { ip saddr limit rate over 20/second burst 40 packets } add @blocked4 { ip saddr } drop
+		tcp dport { 80, 443 } ct state new update @rate6 { ip6 saddr limit rate over 20/second burst 40 packets } add @blocked6 { ip6 saddr } drop
+		# At most 50 open connections per address (slow clients that keep connections open).
+		tcp dport { 80, 443 } ct state new add @conns4 { ip saddr ct count over 50 } reject with tcp reset
+		tcp dport { 80, 443 } ct state new add @conns6 { ip6 saddr ct count over 50 } reject with tcp reset
+
+		# Packets that belong to no connection.
+		ct state invalid drop
+		# Ping, limited.
+		icmp type echo-request limit rate over 5/second drop
+		icmpv6 type echo-request limit rate over 5/second drop
+	}
+}

@@ -1,0 +1,76 @@
+# The master machine: HTTPS proxy, API and database. Run: docker compose --env-file .env -f deploy/compose.master.yaml up -d
+services:
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      TISMA_DOMAIN: ${TISMA_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [api]
+  api:
+    build: { context: .., dockerfile: deploy/Dockerfile.master }
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      TISMA_DATABASE_URL: postgresql+psycopg://tisma:${POSTGRES_PASSWORD}@db:5432/tisma
+    volumes: ["storage:/data"]
+    # Port 8000 only for the nodes of the local network: do not forward it in the router.
+    ports: ["8000:8000"]
+    # One open file per connection (TISMA_MAX_CONNECTIONS) and some more.
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    depends_on: [db]
+  # Antivirus for every file uploaded (threats.py). ClamAV needs 3 GiB of memory or more
+  # (https://docs.clamav.net/manual/Installing/Docker.html): only with --profile antivirus and TISMA_CLAMD=clamav:3310
+  # in .env. Its signatures are updated inside the container once a day.
+  clamav:
+    image: clamav/clamav:1.5
+    profiles: ["antivirus"]
+    restart: unless-stopped
+    volumes: ["clamav:/var/lib/clamav"]
+  # Translator of the problem reports, on this server (https://docs.libretranslate.com): only with --profile translate
+  # and TISMA_TRANSLATE_URL=http://libretranslate:5000 in .env. English, Spanish and Portuguese (about 700 MB of models,
+  # downloaded the first time); nothing leaves the server.
+  libretranslate:
+    image: libretranslate/libretranslate:v1.9.6
+    profiles: ["translate"]
+    restart: unless-stopped
+    environment:
+      LT_LOAD_ONLY: en,es,pt
+    volumes: ["libretranslate:/home/libretranslate/.local"]
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tisma
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: tisma
+    volumes: ["db:/var/lib/postgresql/data"]
+  # Daily copy of the database (accounts, payments) with rotation: backup.sh. BACKUP_DIR on the host should be another
+  # disk, or be copied to another machine (README, "Copias de seguridad").
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/backup.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: tisma
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: tisma
+      BACKUP_HOUR: ${BACKUP_HOUR:-3}
+      BACKUP_DAYS: ${BACKUP_DAYS:-14}
+      BACKUP_WEEKS: ${BACKUP_WEEKS:-8}
+    volumes:
+      - ./backup.sh:/usr/local/bin/backup.sh:ro
+      - ./restore.sh:/usr/local/bin/restore.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    depends_on: [db]
+volumes:
+  clamav:
+  libretranslate:
+  caddy-data:
+  storage:
+  db:

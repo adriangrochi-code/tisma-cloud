@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Tisma Cloud · Mi cuenta</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --bg: #f4f3f7; --panel: #fff; --text: #1d1b22; --muted: #6b6775; --line: #e2dfe8; --accent: #7b2bd4;
+          --ok: #1f8a4c; --bad: #c0352b; --warn: #b26a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16151a; --panel: #211f27; --text: #ecebf0; --muted: #a39fae; --line: #34313d; --accent: #a76cf0;
+            --ok: #4cc27f; --bad: #f06a5f; --warn: #e0a238; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 28px 0 10px; }
+  .muted { color: var(--muted); } .error { color: var(--bad); min-height: 1.4em; } .ok { color: var(--ok); }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  input { font: inherit; width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); margin: 4px 0 10px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tabs button.on { border-color: var(--accent); color: var(--accent); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .plan { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+  .plan.current { border-color: var(--accent); }
+  .price { font-size: 24px; font-weight: 600; }
+  .stat { display: inline-block; margin-right: 22px; } .stat b { display: block; font-size: 20px; }
+  table { width: 100%; border-collapse: collapse; } th, td { text-align: left; padding: 6px 4px; border-top: 1px solid var(--line); font-size: 14px; }
+  th { color: var(--muted); font-weight: 500; border-top: 0; }
+  .hidden { display: none !important; }
+  button.link { border: 0; background: none; color: var(--accent); padding: 8px 4px; }
+  #google-button { display: flex; justify-content: center; min-height: 44px; }
+  #pay-error:empty, #pay-note:empty { display: none; }
+  #notice { margin-bottom: 12px; }
+  #auth { max-width: 380px; margin: 40px auto 0; }
+  .sub { display: block; margin: 0 0 6px; } #password-form, #delete-form { margin-top: 20px; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  #sessions-error:empty, #pw-error:empty, #del-error:empty { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tisma Cloud</h1>
+  <p class="muted">Laminado y análisis estructural en nuestros servidores, desde Tisma Slicer.</p>
+
+  <div id="notice" class="box hidden"></div>
+
+  <section id="auth" class="box hidden">
+    <div class="tabs"><button type="button" id="tab-login" class="on">Entrar</button><button type="button" id="tab-register">Crear cuenta</button></div>
+    <div id="google-box" class="hidden"><div id="google-button"></div><p class="muted" style="text-align:center;margin:12px 0">o con tu correo</p></div>
+    <form id="auth-form" autocomplete="on">
+      <label>Correo<input id="email" type="email" autocomplete="username" required maxlength="200"></label>
+      <label>Contraseña<input id="password" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
+      <label id="password2-label" class="hidden">Repetir contraseña<input id="password2" type="password" autocomplete="new-password" minlength="8" maxlength="200"></label>
+      <p class="error" id="auth-error"></p>
+      <button class="primary" type="submit" id="auth-submit">Entrar</button>
+      <button type="button" id="forgot" class="link">Olvidé mi contraseña</button>
+    </form>
+  </section>
+
+  <section id="code" class="box hidden">
+    <h2 id="code-title" style="margin-top:0">Confirmá tu correo</h2>
+    <p class="muted" id="code-help"></p>
+    <form id="code-form" autocomplete="off">
+      <label>Código de 6 números<input id="code-input" inputmode="numeric" pattern="\d{6}" maxlength="6" required autocomplete="one-time-code"></label>
+      <label id="newpass-label" class="hidden">Contraseña nueva<input id="newpass" type="password" minlength="8" maxlength="200" autocomplete="new-password"></label>
+      <p class="error" id="code-error"></p>
+      <button class="primary" type="submit" id="code-submit">Confirmar</button>
+      <button type="button" id="code-resend">Mandar otro código</button>
+      <button type="button" id="code-back" class="link">Volver</button>
+    </form>
+  </section>
+
+  <section id="account" class="hidden">
+    <div class="box">
+      <div class="row"><div><b id="who"></b><div class="muted" id="state"></div></div><button type="button" id="logout">Salir</button></div>
+      <p style="margin:14px 0 0">
+        <span class="stat"><span class="muted">Plan</span><b id="plan"></b></span>
+        <span class="stat"><span class="muted">Horas este mes</span><b id="hours"></b></span>
+        <span class="stat"><span class="muted">Pagado hasta</span><b id="until"></b></span>
+        <span class="stat"><span class="muted">Impresoras remotas</span><b id="remote"></b></span>
+      </p>
+    </div>
+    <h2>Planes</h2>
+    <p class="error" id="pay-error"></p>
+    <div class="plans" id="plans"></div>
+    <p class="muted" id="pay-note"></p>
+    <h2>Pagos</h2>
+    <div class="box"><table id="payments"></table></div>
+    <h2>Privacidad y seguridad</h2>
+    <div class="box">
+      <div class="row"><b class="sub">Sesiones abiertas</b><button type="button" id="close-others">Cerrar las demás</button></div>
+      <table id="sessions"></table>
+      <p class="error" id="sessions-error"></p>
+      <form id="password-form" class="hidden" autocomplete="on">
+        <b class="sub">Cambiar la contraseña</b>
+        <label>Contraseña actual<input id="pw-current" type="password" autocomplete="current-password" required maxlength="200"></label>
+        <label>Contraseña nueva<input id="pw-new" type="password" autocomplete="new-password" required minlength="8" maxlength="200"></label>
+        <p class="error" id="pw-error"></p>
+        <button type="submit">Cambiar</button>
+      </form>
+      <div class="row" style="margin-top:12px"><b class="sub">Tus datos</b><button type="button" id="export">Descargar mis datos</button></div>
+      <form id="delete-form" autocomplete="off">
+        <b class="sub">Borrar mi cuenta</b>
+        <p class="muted">Se borran la cuenta, sus sesiones, trabajos, impresoras remotas y compras de la tienda. Solo quedan los pagos, sin tu correo ni ningún dato tuyo, para la contabilidad.</p>
+        <label id="del-password-label">Contraseña<input id="del-password" type="password" autocomplete="current-password" maxlength="200"></label>
+        <div id="del-code-box" class="hidden">
+          <button type="button" id="del-send-code">Mandarme un código</button>
+          <label>Código de 6 números<input id="del-code" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code"></label>
+        </div>
+        <p class="error" id="del-error"></p>
+        <button type="submit" id="del-submit" class="danger">Borrar mi cuenta</button>
+      </form>
+    </div>
+    <p class="muted" style="margin-top:24px">Tus proyectos se borran de nuestros servidores cuando termina cada trabajo, y los resultados a los 3 días.
+      La lista de tus trabajos se borra a los 90 días, y las imágenes de las cámaras nunca se guardan. Los datos de la tarjeta se ingresan
+      en la página del medio de pago, nunca en la nuestra. No registramos desde dónde te conectás.</p>
+  </section>
+</main>
+<script>
+"use strict";
+const KEY = "tisma-account-token";
+let token = null, mode = "login", plans = [], payments = false, playPayments = false, me = null;
+try { token = localStorage.getItem(KEY); } catch (e) {}
+const $ = (id) => document.getElementById(id);
+const STATUS = { approved: "aprobado", pending: "pendiente", rejected: "rechazado" };
+const ERRORS = { 401: "Correo o contraseña incorrectos.", 409: "Ese correo ya tiene una cuenta: entrá.", 429: "Demasiados intentos: esperá un minuto.", 503: "No pudimos mandar el correo: probá de nuevo en unos minutos." };
+function money(cents, cur) { return `${cur} ${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString() : "—"; }
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) if (c != null) e.append(c instanceof Node ? c : String(c));
+  return e;
+}
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) } });
+  const body = await r.json().catch(() => ({}));
+  if (r.status === 401 && token) { setToken(null); show(); throw new Error("La sesión terminó: entrá de nuevo."); }
+  if (!r.ok) { const e = new Error(ERRORS[r.status] || (typeof body.detail === "string" ? body.detail : `Error ${r.status}`)); e.status = r.status; throw e; }
+  return body;
+}
+function setToken(t) { token = t; try { t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY); } catch (e) {} }
+
+function setMode(m) {
+  mode = m;
+  $("tab-login").classList.toggle("on", m === "login");
+  $("tab-register").classList.toggle("on", m === "register");
+  $("password2-label").classList.toggle("hidden", m === "login");
+  $("password").autocomplete = m === "login" ? "current-password" : "new-password";
+  $("auth-submit").textContent = m === "login" ? "Entrar" : "Crear cuenta";
+  $("auth-error").textContent = "";
+}
+$("tab-login").onclick = () => setMode("login");
+$("tab-register").onclick = () => setMode("register");
+let codeEmail = "", codePurpose = "verify";
+function showCode(email, purpose) {
+  codeEmail = email; codePurpose = purpose;
+  $("auth").classList.add("hidden"); $("code").classList.remove("hidden");
+  $("code-title").textContent = purpose === "verify" ? "Confirmá tu correo" : "Elegí una contraseña nueva";
+  $("code-help").textContent = `Te mandamos un código de 6 números a ${email}. Vence en 15 minutos; si no llega, mirá en correo no deseado.`;
+  $("newpass-label").classList.toggle("hidden", purpose !== "reset");
+  $("newpass").required = purpose === "reset";
+  $("code-input").value = ""; $("code-error").textContent = "";
+  $("code-input").focus();
+}
+$("code-back").onclick = () => { $("code").classList.add("hidden"); $("auth").classList.remove("hidden"); };
+$("code-resend").onclick = async () => {
+  $("code-error").textContent = "";
+  try {
+    await api(codePurpose === "verify" ? "/v1/auth/resend" : "/v1/auth/password/forgot", { method: "POST", body: JSON.stringify({ email: codeEmail }) });
+    $("code-error").textContent = "Listo: te mandamos otro código.";
+  } catch (e) { $("code-error").textContent = e.status === 429 ? "Esperá un minuto antes de pedir otro código." : e.message; }
+};
+$("code-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("code-error").textContent = "";
+  $("code-submit").disabled = true;
+  try {
+    const code = $("code-input").value.trim();
+    const r = codePurpose === "verify"
+      ? await api("/v1/auth/verify", { method: "POST", body: JSON.stringify({ email: codeEmail, code, device: "Página de la cuenta" }) })
+      : await api("/v1/auth/password/reset", { method: "POST", body: JSON.stringify({ email: codeEmail, code, password: $("newpass").value, device: "Página de la cuenta" }) });
+    setToken(r.token);
+    $("code").classList.add("hidden");
+    show();
+  } catch (e) { $("code-error").textContent = e.status === 400 ? "Código incorrecto o vencido." : e.message; }
+  $("code-submit").disabled = false;
+});
+$("forgot").onclick = async () => {
+  const email = $("email").value.trim();
+  if (!email) { $("auth-error").textContent = "Escribí tu correo y tocá de nuevo «Olvidé mi contraseña»."; return; }
+  try { await api("/v1/auth/password/forgot", { method: "POST", body: JSON.stringify({ email }) }); showCode(email.toLowerCase(), "reset"); }
+  catch (e) { $("auth-error").textContent = e.status === 429 ? "Esperá un minuto antes de pedir otro código." : e.message; }
+};
+$("auth-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("auth-error").textContent = "";
+  const email = $("email").value.trim(), password = $("password").value;
+  if (mode === "register" && password !== $("password2").value) { $("auth-error").textContent = "Las contraseñas no coinciden."; return; }
+  $("auth-submit").disabled = true;
+  try {
+    const r = await api(mode === "login" ? "/v1/auth/login" : "/v1/auth/register",
+      { method: "POST", body: JSON.stringify(mode === "login" ? { email, password, device: "Página de la cuenta" } : { email, password }) });
+    $("password").value = $("password2").value = "";
+    if (r.verification_required) showCode(r.email, "verify");
+    else { setToken(r.token); show(); }
+  } catch (e) {
+    if (e.status === 403) {  // registered but not confirmed: a fresh code
+      try { await api("/v1/auth/resend", { method: "POST", body: JSON.stringify({ email }) }); } catch (x) {}
+      showCode(email.toLowerCase(), "verify");
+    } else $("auth-error").textContent = e.message;
+  }
+  $("auth-submit").disabled = false;
+});
+
+// Sign in with Google (Google Identity Services), when the server has a client ID.
+function setupGoogle(clientId) {
+  if (!clientId || window.__gsi) return;
+  window.__gsi = true;
+  const script = document.createElement("script");
+  script.src = "https://accounts.google.com/gsi/client";
+  script.async = true;
+  script.onload = () => {
+    google.accounts.id.initialize({ client_id: clientId, callback: async (resp) => {
+      $("auth-error").textContent = "";
+      try {
+        const r = await api("/v1/auth/google", { method: "POST", body: JSON.stringify({ id_token: resp.credential, device: "Página de la cuenta" }) });
+        if (r.verification_required) showCode(r.email, "verify"); else { setToken(r.token); show(); }
+      } catch (e) { $("auth-error").textContent = e.status === 409 ? "Ya hay una cuenta con ese correo: entrá con su contraseña." : e.message; }
+    } });
+    google.accounts.id.renderButton($("google-button"), { theme: "outline", size: "large", text: "continue_with", locale: "es" });
+    $("google-box").classList.remove("hidden");
+  };
+  document.head.appendChild(script);
+}
+
+$("logout").onclick = async () => { try { await api("/v1/auth/logout", { method: "POST" }); } catch (e) {} setToken(null); show(); };
+
+async function pay(plan, extra_printers) {
+  $("pay-error").textContent = "";
+  try {
+    const r = await api("/v1/billing/checkout", { method: "POST", body: JSON.stringify({ plan: plan.name, months: 1, extra_printers }) });
+    // Only the pages of the payment provider (https) or the test provider of this server.
+    const url = new URL(r.url, location.href);
+    if (url.protocol !== "https:" && url.origin !== location.origin) throw new Error("Dirección de pago no válida.");
+    location.assign(url.href);
+  } catch (e) { $("pay-error").textContent = e.message; }
+}
+
+// A plan card: its price, what it includes and, if it sells them, how many remote printers to add (the price follows).
+function planCard(p) {
+  const current = me && me.plan === p.name;
+  const extra = p.extra_printer_cents > 0 ? el("input", { type: "number", min: 0, max: 100, value: current ? me.extra_printers : 0,
+    style: "width:5em", "aria-label": "Impresoras remotas de más" }) : null;
+  const price = el("span", { class: "price" });
+  const update = () => {
+    const n = extra ? Math.max(0, Math.min(100, parseInt(extra.value || "0", 10) || 0)) : 0;
+    price.replaceChildren(money(p.price_cents + n * p.extra_printer_cents, p.currency), el("span", { class: "muted", style: "font-size:14px" }, " / mes"));
+    return n;
+  };
+  if (extra) extra.addEventListener("input", update);
+  update();
+  return el("div", { class: "plan" + (current ? " current" : "") },
+    el("b", {}, p.name), price,
+    p.monthly_hours > 0 ? el("span", { class: "muted" }, `${p.monthly_hours} h de cálculo por mes · ${p.max_concurrent} trabajo${p.max_concurrent > 1 ? "s" : ""} a la vez`) : null,
+    p.remote_printers > 0 ? el("span", { class: "muted" }, `Impresoras y cámaras a distancia: ${p.remote_printers} incluidas` +
+      (p.extra_printer_cents > 0 ? `, ${money(p.extra_printer_cents, p.currency)} por mes cada una más` : "")) : null,
+    extra ? el("label", { class: "muted" }, "Impresoras de más: ", extra) : null,
+    el("button", { type: "button", class: "primary", disabled: !payments, onclick: () => pay(p, update()) },
+      current && me.paid ? "Pagar un mes más" : "Pagar"));
+}
+
+function renderPlans() {
+  $("plans").replaceChildren(...plans.map(planCard)
+    .concat(plans.length ? [] : [el("p", { class: "muted" }, "Todavía no hay planes publicados.")]));
+  $("pay-note").textContent = [payments ? "" : "El pago en línea todavía no está abierto: escribinos para pagar por transferencia.",
+    playPayments ? "También podés suscribirte desde la app de Android con Google Play: el plan vale en esta cuenta, en la app y en Tisma." : ""]
+    .filter(Boolean).join(" ");
+}
+
+function renderSessions(list) {
+  $("sessions").replaceChildren(el("tr", {}, ["Dispositivo", "Último uso", ""].map((h) => el("th", {}, h))),
+    ...list.map((x) => el("tr", {}, el("td", {}, x.device || "Sin nombre", x.current ? el("span", { class: "muted" }, " (este)") : null),
+      el("td", {}, fmtDate(x.last_used || x.created_at)),
+      el("td", {}, x.current ? "" : el("button", { type: "button", onclick: async () => {
+        try { await api(`/v1/me/sessions/${x.id}`, { method: "DELETE" }); renderSessions((await api("/v1/me/sessions")).sessions); }
+        catch (e) { $("sessions-error").textContent = e.message; } } }, "Cerrar")))));
+}
+$("close-others").onclick = async () => {
+  try { await api("/v1/me/sessions/close-others", { method: "POST" }); renderSessions((await api("/v1/me/sessions")).sessions); }
+  catch (e) { $("sessions-error").textContent = e.message; }
+};
+$("password-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  try {
+    await api("/v1/me/password", { method: "POST", body: JSON.stringify({ current_password: $("pw-current").value, new_password: $("pw-new").value }) });
+    $("pw-error").className = "ok"; $("pw-error").textContent = "Contraseña cambiada. Se cerraron las otras sesiones.";
+    $("password-form").reset(); renderSessions((await api("/v1/me/sessions")).sessions);
+  } catch (e) { $("pw-error").className = "error"; $("pw-error").textContent = e.status === 403 ? "La contraseña actual no es esa." : e.message; }
+};
+$("export").onclick = async () => {
+  const r = await fetch("/v1/me/export", { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) return;
+  const a = el("a", { href: URL.createObjectURL(await r.blob()), download: "tisma-cloud-mis-datos.json" });
+  document.body.append(a); a.click(); a.remove();
+};
+$("del-send-code").onclick = async () => {
+  try { await api("/v1/me/delete/code", { method: "POST" }); $("del-error").className = "muted"; $("del-error").textContent = `Te mandamos un código a ${me.email}.`; }
+  catch (e) { $("del-error").className = "error"; $("del-error").textContent = e.message; }
+};
+$("delete-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  if (!confirm("¿Borrar tu cuenta y todos sus datos? No se puede deshacer.")) return;
+  const body = me.has_password ? { password: $("del-password").value } : { code: $("del-code").value };
+  try { await api("/v1/me/delete", { method: "POST", body: JSON.stringify(body) }); setToken(null); location.reload(); }
+  catch (e) { $("del-error").className = "error"; $("del-error").textContent = e.status === 403 ? "La contraseña o el código no son correctos." : e.message; }
+};
+
+async function show() {
+  const health = await fetch("/v1/health").then((r) => r.json()).catch(() => ({}));
+  payments = !!health.payments;
+  playPayments = !!health.play_payments;
+  setupGoogle(health.google_client_id);
+  plans = (await fetch("/v1/plans").then((r) => r.json()).catch(() => ({ plans: [] }))).plans || [];
+  if (!token) { $("account").classList.add("hidden"); if ($("code").classList.contains("hidden")) $("auth").classList.remove("hidden"); return; }
+  try {
+    me = await api("/v1/me");
+    const pays = await api("/v1/billing/payments");
+    $("auth").classList.add("hidden"); $("account").classList.remove("hidden");
+    $("who").textContent = me.email;
+    $("state").textContent = me.paid ? "Plan al día." : "El plan no está pagado: pagalo para usar los servidores.";
+    $("state").className = me.paid ? "ok" : "error";
+    $("plan").textContent = me.plan;
+    $("hours").textContent = `${me.hours_used.toFixed(1)} de ${me.hours_included} h`;
+    $("until").textContent = fmtDate(me.paid_until);
+    $("remote").textContent = String(me.remote_printers);
+    renderPlans();
+    renderSessions((await api("/v1/me/sessions")).sessions);
+    $("password-form").classList.toggle("hidden", !me.has_password);
+    $("del-password-label").classList.toggle("hidden", !me.has_password);
+    $("del-code-box").classList.toggle("hidden", me.has_password);
+    $("payments").replaceChildren(el("tr", {}, ["Fecha", "Plan", "Importe", "Estado"].map((h) => el("th", {}, h))),
+      ...(pays.payments.length ? pays.payments.map((p) => el("tr", {}, el("td", {}, fmtDate(p.created_at)), el("td", {}, `${p.plan} · ${p.months} mes${p.months > 1 ? "es" : ""}`),
+        el("td", {}, money(p.amount_cents, p.currency)), el("td", { class: p.status === "approved" ? "ok" : p.status === "rejected" ? "error" : "muted" }, STATUS[p.status] || p.status)))
+        : [el("tr", {}, el("td", { colspan: 4, class: "muted" }, "Sin pagos todavía."))]));
+  } catch (e) { $("auth-error").textContent = e.message; }
+}
+
+// Back from the payment page.
+const back = new URLSearchParams(location.search).get("pago");
+if (back) {
+  $("notice").classList.remove("hidden");
+  $("notice").textContent = back === "approved" ? "¡Pago recibido! Tu plan ya está al día." : back === "rejected" ? "El pago fue rechazado: probá de nuevo o con otro medio." : "Estamos confirmando el pago con el medio de pago.";
+  history.replaceState(null, "", location.pathname);
+}
+setMode("login");
+show();
+</script>
+</body>
+</html>

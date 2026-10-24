@@ -1,0 +1,14 @@
+# The master server: API, queue and accounts (no Tisma programs needed).
+FROM python:3.11-slim
+WORKDIR /app
+COPY pyproject.toml LICENSE ./
+COPY tisma_cloud ./tisma_cloud
+RUN pip install --no-cache-dir ".[master]" && useradd --system --home /data tisma && mkdir -p /data && chown tisma /data
+USER tisma
+ENV TISMA_STORAGE_DIR=/data/storage
+EXPOSE 8000
+# --limit-concurrency (TISMA_MAX_CONNECTIONS, as `tisma-cloud master`): past it, new connections get 503 at once instead
+# of piling up; each bridge and node waiting for work keeps one. Short keep-alive frees idle connections. The open files
+# for them: "ulimits" in compose.master.yaml. No log of the requests (the addresses of the visitors) unless
+# TISMA_ACCESS_LOG=1.
+CMD ["sh", "-c", "exec uvicorn tisma_cloud.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*' --limit-concurrency ${TISMA_MAX_CONNECTIONS:-4000} --timeout-keep-alive 5 --backlog 4096 --no-server-header $([ \"${TISMA_ACCESS_LOG:-0}\" = 1 ] || echo --no-access-log)"]
