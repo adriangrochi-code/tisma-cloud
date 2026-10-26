@@ -244,6 +244,10 @@ def test_auto_slots():
     assert auto_slots(16, 32.) == 8
     assert auto_slots(16, 8.) == 4
     assert auto_slots(1, None) == 1 and auto_slots(8, 1.) == 1
+    # tisma-engine: one job per core, and 1 GB of memory for each.
+    assert auto_slots(4, 15.5, engine=True) == 4
+    assert auto_slots(16, 8., engine=True) == 8
+    assert auto_slots(1, None, engine=True) == 1 and auto_slots(8, 0.5, engine=True) == 1
 
 
 def test_one_analysis_at_a_time(client, f, node_cfg):
@@ -355,6 +359,8 @@ def test_engine_node_config(tmp_path):
     p.write_text('master_url = "x"\ntisma_engine = "/opt/tisma/tisma-engine"\n')
     cfg = NodeConfig.load(p)
     assert cfg.tisma_engine == "/opt/tisma/tisma-engine" and cfg.tisma_slicer == "" and cfg.tisma_fea == ""
+    # Automatic slots: one job per core with the engine.
+    assert cfg.slots == auto_slots(os.cpu_count() or 1, memory_gb(), engine=True)
     p.write_text('master_url = "x"\ntisma_slicer = "s"\n')
     with pytest.raises(ValueError, match="tisma_fea"):
         NodeConfig.load(p)

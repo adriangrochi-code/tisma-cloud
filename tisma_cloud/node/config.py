@@ -20,12 +20,17 @@ def memory_gb() -> float | None:
     return None
 
 
-def auto_slots(cpus: int, memory: float | None) -> int:
+def auto_slots(cpus: int, memory: float | None, engine: bool = False) -> int:
     """Jobs at a time for a machine: one per two cores (measured on 4 cores: two at a time gave the shortest average
-    wait of a mixed queue, README), and 2 GB of memory for each (a plate of 225 000 triangles took 0.7 GB)."""
-    slots = max(1, cpus // 2)
+    wait of a mixed queue, README), and 2 GB of memory for each (a plate of 225 000 triangles took 0.7 GB).
+
+    With tisma-engine, one per core and 1 GB for each: a slicing job of the engine keeps about one core busy, so on 4
+    cores four at a time sliced 1737 Benchys per hour against 1113 with two (README, Capacity); its largest test plate
+    took 0.3 GB."""
+    per_job = 1 if engine else 2
+    slots = max(1, cpus if engine else cpus // 2)
     if memory is not None:
-        slots = min(slots, max(1, int(memory // 2)))
+        slots = min(slots, max(1, int(memory // per_job)))
     return slots
 
 
@@ -43,8 +48,9 @@ class NodeConfig:
     # The name it asks to join with (the name of the machine when empty).
     name: str = ""
     work_dir: Path = Path("./node-work")
-    # Jobs run at the same time; 0: automatic (auto_slots()). A slicing job keeps only about 3 of 4 cores busy, so
-    # two at a time finish a mixed queue sooner (README, Capacity).
+    # Jobs run at the same time; 0: automatic (auto_slots()). A slicing job of tisma-slicer keeps only about 3 of 4
+    # cores busy, so two at a time finish a mixed queue sooner; one of tisma-engine keeps about one, so one per core
+    # (README, Capacity).
     slots: int = 0
     # Structural analyses run at the same time (they take much memory and the graphics card).
     fea_slots: int = 1
@@ -76,7 +82,8 @@ class NodeConfig:
         # A relative folder is the one next to node.toml: the programs run inside the folder of each job, so the paths
         # given to them must not depend on the current folder.
         cfg.work_dir = (Path(path).parent / cfg.work_dir).resolve()
-        cfg.slots = int(cfg.slots) if int(cfg.slots) > 0 else auto_slots(os.cpu_count() or 1, memory_gb())
+        cfg.slots = int(cfg.slots) if int(cfg.slots) > 0 else auto_slots(os.cpu_count() or 1, memory_gb(),
+                                                                         engine=bool(cfg.tisma_engine))
         cfg.fea_slots = max(1, int(cfg.fea_slots))
         cfg.master_url = cfg.master_url.rstrip("/")
         return cfg

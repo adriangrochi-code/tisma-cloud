@@ -9,7 +9,8 @@ master_url = "http://192.168.1.10:8000"
 tisma_slicer = "/opt/tisma/tisma-slicer"       # Windows: C:/Program Files/TismaSlicer/tisma-slicer-console.exe
 tisma_fea = "/opt/tisma/tisma-fea"             # Windows: C:/Program Files/TismaSlicer/tisma-fea.exe
 work_dir = "/work"
-# Jobs at the same time; 0: automatic, one per two cores and 2 GB of memory (README, Capacity).
+# Jobs at the same time; 0: automatic, one per two cores and 2 GB of memory, or with tisma_engine one per core and
+# 1 GB of memory (README, Capacity).
 slots = 0
 # Structural analyses at the same time (much memory and the graphics card).
 fea_slots = 1
