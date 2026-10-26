@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 
 from tisma_cloud import remote
@@ -209,18 +210,25 @@ def test_a_waiting_bridge_costs_no_query(client, f):
     ana = f.user("ana@x.com")
     register(client, ana)
     client.get(f"/v1/bridges/{BRIDGE}/commands?wait=0", headers=ana)
-    engine = client.app.state.services.db.engine
+    services = client.app.state.services
+    engine = services.db.engine
     queries: list[str] = []
 
     def count(conn, cursor, statement, *args) -> None:  # noqa: ANN001
         queries.append(statement)
 
-    event.listen(engine, "before_cursor_execute", count)
-    try:
-        for _ in range(5):
-            assert client.get(f"/v1/bridges/{BRIDGE}/commands?wait=0", headers=ana).json()["commands"] == []
-    finally:
-        event.remove(engine, "before_cursor_execute", count)
+    # The sweep at start-up runs in the background and checks the alerts last: wait until it gets there, and hold the
+    # alerts back while counting, so that its queries are not counted as the bridge's (slower databases overlap).
+    deadline = time.monotonic() + 30
+    while services._alerts_checked is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    with services._alerts_lock:
+        event.listen(engine, "before_cursor_execute", count)
+        try:
+            for _ in range(5):
+                assert client.get(f"/v1/bridges/{BRIDGE}/commands?wait=0", headers=ana).json()["commands"] == []
+        finally:
+            event.remove(engine, "before_cursor_execute", count)
     assert queries == []
 
 
