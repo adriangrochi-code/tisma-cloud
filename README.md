@@ -563,7 +563,8 @@ Por eso:
 - **Cada nodo corre varios trabajos a la vez**: `slots = 0` (automático) es uno cada dos núcleos y 2 GB de memoria.
   En un nodo con `tisma_engine` es uno por núcleo y 1 GB de memoria: cada laminado del motor ocupa hoy un núcleo, y
   medido en 4 núcleos (Benchy de 225 000 triángulos), dos a la vez dan 1113 laminados por hora y cuatro a la vez,
-  1737 (con `tisma-slicer` y sus capas por defecto, el mejor caso es 1462). El laminado más grande de la prueba usó 0,3 GB.
+  1737 (con `tisma-slicer` y sus capas por defecto, el mejor caso es 1462). El laminado más grande de la prueba usó
+  0,3 GB.
 - **Un análisis estructural a la vez por nodo** (`fea_slots = 1`): usan mucha memoria y la placa de video; mientras
   corre uno, los otros lugares del nodo siguen laminando.
 
