@@ -4,6 +4,8 @@
 master_url = "http://192.168.1.10:8000"
 # token = "tn_..."
 # name = "i7-taller"                           # the name it asks to join with (the name of the machine without it)
+# The new slicer: with it set, the node runs every job with tisma-engine and does not need the two programs below.
+# tisma_engine = "/opt/tisma/tisma-engine"     # Windows: C:/Program Files/Tisma/tisma-engine.exe
 tisma_slicer = "/opt/tisma/tisma-slicer"       # Windows: C:/Program Files/TismaSlicer/tisma-slicer-console.exe
 tisma_fea = "/opt/tisma/tisma-fea"             # Windows: C:/Program Files/TismaSlicer/tisma-fea.exe
 work_dir = "/work"

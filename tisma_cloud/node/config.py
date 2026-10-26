@@ -34,8 +34,12 @@ class NodeConfig:
     master_url: str
     # Empty: the node asks the master to join (join.py) and writes the token it gets here.
     token: str
-    tisma_slicer: str
-    tisma_fea: str
+    # The programs of Tisma Slicer (tisma-slicer, tisma-fea), used when tisma_engine is empty.
+    tisma_slicer: str = ""
+    tisma_fea: str = ""
+    # The new slicer, tisma-engine: when set, it runs both the slicing and the analyses (its command line contract is
+    # docs/spec/features/cloud.md of the engine, rules 18 to 21) and tisma_slicer and tisma_fea are not needed.
+    tisma_engine: str = ""
     # The name it asks to join with (the name of the machine when empty).
     name: str = ""
     work_dir: Path = Path("./node-work")
@@ -61,7 +65,11 @@ class NodeConfig:
         unknown = set(data) - known
         if unknown:
             raise ValueError(f"Unknown settings in {path}: {', '.join(sorted(unknown))}")
-        for key in ("master_url", "tisma_slicer", "tisma_fea"):
+        if data.get("tisma_engine"):
+            required: tuple[str, ...] = ("master_url", "tisma_engine")
+        else:
+            required = ("master_url", "tisma_slicer", "tisma_fea")
+        for key in required:
             if not data.get(key):
                 raise ValueError(f"'{key}' is missing in {path}")
         cfg = NodeConfig(**data)

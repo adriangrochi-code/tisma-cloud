@@ -1,7 +1,7 @@
 # Tisma Cloud — servidor maestro y nodos de cómputo
 
 Software **propietario** (ver `LICENSE`), separado de Tisma Slicer (AGPL). No contiene código de PrusaSlicer ni de
-Tisma: ejecuta `tisma-slicer` y `tisma-fea` como programas aparte. La versión de Tisma que use el servicio tiene que
+Tisma: ejecuta `tisma-slicer` y `tisma-fea`, o el slicer nuevo `tisma-engine`, como programas aparte. La versión de Tisma que use el servicio tiene que
 estar publicada con todos sus cambios (AGPL §13).
 
 ## Cómo funciona
@@ -525,6 +525,12 @@ En la máquina del nodo:
   `tisma-slicer-console.exe`) y `tisma-fea`, y correr `TISMA_NODE_TOKEN=tn_... python -m tisma_cloud.node --config node.toml`.
 - **Con Docker** (Linux): copiar los programas de una compilación de Tisma para Linux a `deploy/tisma/`, crear
   `deploy/node.toml` y correr `TISMA_NODE_TOKEN=tn_... docker compose -f deploy/compose.node.yaml up -d`.
+
+**Con el slicer nuevo (`tisma-engine`):** poner su ruta en `tisma_engine` del `node.toml` (o en la ventana, «Programa
+tisma-engine»). Con eso el nodo corre todos los trabajos con el motor y no necesita `tisma-slicer` ni `tisma-fea`; sin
+ella, sigue usando los programas de Tisma Slicer. El nodo le pasa el proyecto, la salida y un resumen JSON, con
+`--sandbox` (sin scripts de posproceso ni complementos), y lee el avance de las líneas `progress N`: el contrato está en
+`docs/spec/features/cloud.md` del motor (reglas 18 a 21). El resultado de un análisis del motor es un archivo `.tea`.
 
 Sugerencia para tus equipos:
 

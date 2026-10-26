@@ -83,6 +83,41 @@ json.dump({"ok": "true", "mode": get("--mode"), "args": args}, open(get("--summa
 """
 
 
+FAKE_ENGINE = """\
+#!/usr/bin/env python3
+import json, sys, zipfile
+args = sys.argv[1:]
+get = lambda k: args[args.index(k) + 1]
+command, project = args[0], args[1]
+out, summary = get("-o"), get("--summary")
+assert "--sandbox" in args
+names = zipfile.ZipFile(project).namelist()
+if "Metadata/Slic3r_PE.config" in names and b"FAIL" in zipfile.ZipFile(project).read("Metadata/Slic3r_PE.config"):
+    json.dump({"error": "Object too large for the bed"}, open(summary, "w"))
+    sys.exit(4)
+for p in (0, 50, 100):
+    print(f"progress {p}", flush=True)
+if command == "slice":
+    open(out, "w").write("G1 X1\\n")
+    json.dump({"print_time": "10m 8s", "print_time_s": 608, "filament_mm": 921.48, "filament_g": 2.75,
+               "layers": 50, "names": names}, open(summary, "w"))
+else:
+    open(out, "wb").write(b"ANALYSIS")
+    json.dump({"verdict": "holds", "args": args}, open(summary, "w"))
+"""
+
+
+@pytest.fixture
+def engine_cfg(tmp_path):
+    bins = tmp_path / "bin-engine"
+    bins.mkdir()
+    p = bins / "tisma-engine"
+    p.write_text(FAKE_ENGINE.replace("/usr/bin/env python3", sys.executable))
+    p.chmod(p.stat().st_mode | stat.S_IXUSR)
+    return NodeConfig(master_url="http://testserver", token="", tisma_engine=str(p), work_dir=tmp_path / "work",
+                      gpu=False, timeout_s=30)
+
+
 @pytest.fixture
 def node_cfg(tmp_path):
     bins = tmp_path / "bin"
@@ -269,3 +304,57 @@ def test_real_programs(client, f, node_cfg, tmp_path):
     assert agent.run_once() == "failed"
     assert "resin printer" in client.get(f"/v1/jobs/{job['id']}", headers=user).json()["error"]
     shutil.rmtree(node_cfg.work_dir, ignore_errors=True)
+
+
+@posix_only
+def test_engine_slices(client, f, engine_cfg):
+    """With tisma_engine set, the node slices with the new slicer and its summary (cloud.md of the engine)."""
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), engine_cfg)
+    # A project of another slicer is accepted: the engine opens it itself.
+    job = f.submit(user, data=make_3mf(extra={"Metadata/project_settings.config": "{}"}))
+    assert agent.run_once() == "done"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["status"] == "done", view
+    summary = view["summary"]
+    assert summary["print_time"] == "10m 8s" and summary["filament_g"] == 2.75 and summary["layers"] == 50
+    assert "Metadata/project_settings.config" in summary["names"]
+    assert client.get(f"/v1/jobs/{job['id']}/result", headers=user).content.startswith(b"G1 X1")
+    assert list(engine_cfg.work_dir.iterdir()) == []
+
+
+@posix_only
+def test_engine_failure_uses_its_summary(client, f, engine_cfg):
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), engine_cfg)
+    job = f.submit(user, data=make_3mf(config="; FAIL\n"))
+    assert agent.run_once() == "failed"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["status"] == "failed" and view["error"] == "Object too large for the bed"
+    assert f.me(user)["hours_used"] == 0
+
+
+@posix_only
+def test_engine_runs_analyses(client, f, engine_cfg):
+    user = f.user()
+    agent = agent_for(client, f.node("n", "fea_optimize,fea"), engine_cfg)
+    job = f.submit(user, kind="fea", params=json.dumps({"mode": "lightest-infill", "quality": "fast", "object": 1,
+                                                        "zones": False, "ribs": True}))
+    assert agent.run_once() == "done"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    args = view["summary"]["args"]
+    assert args[0] == "analyze" and args[args.index("--mode") + 1] == "lightest-infill"
+    assert args[args.index("--object") + 1] == "1"
+    assert "--no-zones" in args and "--ribs" in args and "--no-gpu" in args and "--solid" not in args
+    assert view["result_filename"].endswith(".tea")
+    assert client.get(f"/v1/jobs/{job['id']}/result", headers=user).content == b"ANALYSIS"
+
+
+def test_engine_node_config(tmp_path):
+    p = tmp_path / "node.toml"
+    p.write_text('master_url = "x"\ntisma_engine = "/opt/tisma/tisma-engine"\n')
+    cfg = NodeConfig.load(p)
+    assert cfg.tisma_engine == "/opt/tisma/tisma-engine" and cfg.tisma_slicer == "" and cfg.tisma_fea == ""
+    p.write_text('master_url = "x"\ntisma_slicer = "s"\n')
+    with pytest.raises(ValueError, match="tisma_fea"):
+        NodeConfig.load(p)

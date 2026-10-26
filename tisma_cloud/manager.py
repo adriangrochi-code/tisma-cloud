@@ -64,6 +64,7 @@ NODE_FIELDS = [
     ("gpu", "Usar la placa de video (análisis estructural y laminado)", bool, False),
     ("verify_tls", "Verificar el certificado HTTPS", bool, False),
     ("name", "Nombre con el que pide unirse (vacío: el de la máquina)", str, False),
+    ("tisma_engine", "Programa tisma-engine (el slicer nuevo; vacío: usa tisma-slicer y tisma-fea)", str, False),
 ]
 # What a node can do (the job classes of jobs.py), as the window and the console name them.
 JOB_CLASS_NAMES = {
@@ -72,8 +73,8 @@ JOB_CLASS_NAMES = {
     "fea": "Análisis estructural",
     "fea_optimize": "Relleno mínimo / paredes de resina (muchos análisis)",
 }
-NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_slicer": "", "tisma_fea": "",
-                 "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,
+NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_engine": "", "tisma_slicer": "",
+                 "tisma_fea": "", "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,
                  "verify_tls": True}
 # The node of the master when it computes too (registered in its database by the service).
 MASTER_NODE = "maestro"
@@ -826,7 +827,9 @@ class Manager:
                                  "Tisma Cloud, junto al programa"))
         else:
             node = self.read_node()
-            for key, label in (("tisma_slicer", "Programa tisma-slicer"), ("tisma_fea", "Programa tisma-fea")):
+            programs = ((("tisma_engine", "Programa tisma-engine"),) if node.get("tisma_engine") else
+                        (("tisma_slicer", "Programa tisma-slicer"), ("tisma_fea", "Programa tisma-fea")))
+            for key, label in programs:
                 path = str(node.get(key) or "")
                 ok = bool(path) and Path(path).is_file()
                 out.append(Check(label, ok, path if ok else (f"No existe: {path}" if path else

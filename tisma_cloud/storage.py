@@ -7,7 +7,8 @@ import shutil
 from pathlib import Path
 from typing import BinaryIO
 
-ALLOWED_RESULTS = (".gcode", ".bgcode", ".tfea")
+# .tea: the result of an analysis of tisma-engine (its cloud.md, rule 19).
+ALLOWED_RESULTS = (".gcode", ".bgcode", ".tfea", ".tea")
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]")
 
 
