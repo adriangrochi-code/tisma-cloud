@@ -87,6 +87,9 @@ FAKE_ENGINE = """\
 #!/usr/bin/env python3
 import json, sys, zipfile
 args = sys.argv[1:]
+if args == ["--help"]:
+    print("usage: tisma-engine slice <project> -o <out> --summary <summary.json> [--sandbox] [--threads <n>]")
+    sys.exit(0)
 get = lambda k: args[args.index(k) + 1]
 command, project = args[0], args[1]
 out, summary = get("-o"), get("--summary")
@@ -397,3 +400,21 @@ def test_aero_needs_the_engine(client, f, node_cfg):
     assert agent.run_once() == "failed"
     assert "tisma_engine" in client.get(f"/v1/jobs/{job['id']}", headers=user).json()["error"]
     assert f.me(user)["hours_used"] == 0
+
+
+@posix_only
+def test_engine_without_threads_option(client, f, engine_cfg):
+    """An engine whose --help does not list --threads gets no --threads (it would refuse the whole command)."""
+    from tisma_cloud.node import runners
+
+    text = engine_cfg.tisma_engine and open(engine_cfg.tisma_engine).read()
+    with open(engine_cfg.tisma_engine, "w") as out:
+        out.write(text.replace(" [--threads <n>]", ""))
+    runners._ENGINE_HELP.pop(engine_cfg.tisma_engine, None)
+    user = f.user()
+    agent = agent_for(client, f.node("n", "aero"), engine_cfg)
+    job = f.submit(user, kind="aero")
+    assert agent.run_once() == "done"
+    args = client.get(f"/v1/jobs/{job['id']}", headers=user).json()["summary"]["args"]
+    assert "--threads" not in args
+    runners._ENGINE_HELP.pop(engine_cfg.tisma_engine, None)

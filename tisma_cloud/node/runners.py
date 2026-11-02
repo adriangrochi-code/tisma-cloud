@@ -188,6 +188,20 @@ def _engine_summary(path: Path) -> dict:
     return summary if isinstance(summary, dict) else {}
 
 
+_ENGINE_HELP: dict[str, str] = {}
+
+
+def _engine_has(engine: str, option: str) -> bool:
+    """Whether this tisma-engine lists the option in its --help (read once per program; any failure: no)."""
+    if engine not in _ENGINE_HELP:
+        try:
+            done = subprocess.run([engine, "--help"], capture_output=True, text=True, timeout=30)
+            _ENGINE_HELP[engine] = done.stdout + done.stderr
+        except (OSError, subprocess.SubprocessError):
+            _ENGINE_HELP[engine] = ""
+    return option in _ENGINE_HELP[engine]
+
+
 def _run_engine(cfg: NodeConfig, command: str, project: Path, out: Path, extra: list[str], work: Path,
                 progress: Progress, cancelled: Cancelled, params: dict | None = None) -> dict:
     """Runs tisma-engine with the contract of its cloud.md (rules 18 to 21) and returns its summary."""
@@ -195,7 +209,8 @@ def _run_engine(cfg: NodeConfig, command: str, project: Path, out: Path, extra: 
     cmd = [cfg.tisma_engine, command, str(project), "-o", str(out), "--summary", str(summary_path), "--sandbox"]
     cmd += extra
     threads = int(params.get("threads") or 0) if params else 0
-    if threads > 0:
+    # Only to an engine that has the option (cloud.md, rule 19d): an older one would refuse the whole command.
+    if threads > 0 and _engine_has(cfg.tisma_engine, "--threads"):
         cmd += ["--threads", str(threads)]
     if not cfg.gpu:
         cmd.append("--no-gpu")
