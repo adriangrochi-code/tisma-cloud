@@ -123,6 +123,13 @@
     <div class="table-wrap"><table id="plans"></table></div>
     <p><button type="button" id="plan-new">Plan nuevo</button></p>
 
+    <h2>Capacidad</h2>
+    <p class="muted">Cada trabajo de un plan ocupa sus núcleos de procesador y sus núcleos CUDA. Con los nodos habilitados:
+      «a la vez» son los usuarios que pueden tener todos sus trabajos corriendo juntos; «por mes», los que entran si los
+      nodos calculan el mes entero sin parar (es el techo). Los núcleos CUDA de cada nodo se escriben en su configuración.</p>
+    <p id="capacity-total" class="muted"></p>
+    <div class="table-wrap"><table id="capacity"></table></div>
+
     <h2>Últimos pagos</h2>
     <div class="table-wrap"><table id="payments"></table></div>
 
@@ -347,7 +354,7 @@ function jobTable(table, jobs, ended) {
     el("td", {}, ended ? duration(j.seconds) : j.status === "running" ? `${j.progress} %` : "–"),
     el("td", { class: "muted" }, ago(ended ? j.finished_at : j.created_at)),
     ended ? el("td", { class: "muted" }, j.error ? j.error.slice(0, 120) : "") : null));
-  table.replaceChildren(head, ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Ninguno"))]));
+  table.replaceChildren(head, ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 8, class: "muted" }, "Ninguno"))]));
 }
 
 function money(cents, cur) { return `${cur} ${(cents / 100).toFixed(2)}`; }
@@ -409,19 +416,31 @@ async function setEnabled(u) {
 const PLAN_FIELDS = [["monthly_hours", "Horas de cálculo por mes", parseFloat], ["max_concurrent", "Trabajos a la vez", parseInt],
   ["requests_per_minute", "Pedidos por minuto", parseInt], ["priority", "Prioridad en la cola (más alto, antes)", parseInt],
   ["price_cents", "Precio por mes, en centavos", parseInt], ["currency", "Moneda (USD, UYU…)", (v) => v.trim().toUpperCase().slice(0, 3)],
-  ["remote_printers", "Impresoras remotas incluidas", parseInt], ["extra_printer_cents", "Impresora remota extra, en centavos", parseInt]];
+  ["remote_printers", "Impresoras remotas incluidas", parseInt], ["extra_printer_cents", "Impresora remota extra, en centavos", parseInt],
+  ["cpu_cores", "Núcleos de procesador por trabajo", parseInt], ["cuda_cores", "Núcleos CUDA por trabajo (0 = no usa la placa)", parseInt]];
+
+// The job classes of the server (jobs.JOB_CLASSES), with the names the server window uses.
+const CLASS_NAMES = { slice: "Laminar", slice_large: "Laminar placas grandes", fea: "Análisis estructural",
+  fea_optimize: "Relleno mínimo / paredes de resina", aero: "Análisis aerodinámico (CFD)", orient: "Orientación automática" };
 
 async function editPlan(p) {
   const name = p ? p.name : (prompt("Nombre del plan nuevo:", "") || "").trim();
   if (!name) return;
   const body = {};
   for (const [key, label, parse] of PLAN_FIELDS) {
-    const text = prompt(`${name}: ${label}`, p ? String(p[key]) : key === "currency" ? "USD" : key === "max_concurrent" ? "1" : "0");
+    const text = prompt(`${name}: ${label}`, p ? String(p[key]) : key === "currency" ? "USD" : key === "max_concurrent" || key === "cpu_cores" ? "1" : "0");
     if (text === null) return;
     const v = parse(String(text).replace(",", "."));
     if (key !== "currency" && !Number.isFinite(v)) { alert(`${label}: no es un número.`); return; }
     body[key] = v;
   }
+  const all = Object.keys(CLASS_NAMES);
+  const current = p && p.classes && p.classes.length < all.length ? p.classes.join(",") : "";
+  const text = prompt(`${name}: cálculos que incluye, separados por comas (vacío: todos)\n${all.map((c) => `${c}: ${CLASS_NAMES[c]}`).join("\n")}`, current);
+  if (text === null) return;
+  body.classes = text.split(",").map((c) => c.trim()).filter(Boolean);
+  const unknown = body.classes.filter((c) => !all.includes(c));
+  if (unknown.length) { alert(`No existen: ${unknown.join(", ")}`); return; }
   body.public = confirm(`¿Mostrar «${name}» a los usuarios (plan público)?`);
   try {
     await api(`/v1/admin/plans/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(body) });
@@ -430,15 +449,26 @@ async function editPlan(p) {
 }
 
 function renderPlans(plans) {
-  $("plans").replaceChildren(el("tr", {}, ["Plan", "Horas/mes", "A la vez", "Precio", "Impresoras remotas", "Público", ""].map((h) => el("th", {}, h))),
+  $("plans").replaceChildren(el("tr", {}, ["Plan", "Horas/mes", "A la vez", "Precio", "Impresoras remotas", "Cálculos", "Público", ""].map((h) => el("th", {}, h))),
     ...(plans.length ? plans.map((p) => el("tr", {},
       el("td", {}, p.name), el("td", {}, p.monthly_hours), el("td", {}, p.max_concurrent),
       el("td", {}, money(p.price_cents, p.currency)), el("td", {}, p.remote_printers),
+      el("td", {}, p.classes.length === Object.keys(CLASS_NAMES).length ? "todos" : p.classes.map((c) => CLASS_NAMES[c] || c).join(", ")),
       el("td", { class: p.public ? "status-done" : "muted" }, p.public ? "sí" : "no"),
       el("td", {}, el("button", { type: "button", onclick: () => editPlan(p) }, "Editar"))))
-    : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Ninguno"))]));
+    : [el("tr", {}, el("td", { colspan: 8, class: "muted" }, "Ninguno"))]));
 }
 $("plan-new").onclick = () => editPlan(null);
+
+function renderCapacity(cap) {
+  const r = cap.resources;
+  $("capacity-total").textContent = `${r.nodes} nodos habilitados: ${r.cpu_cores} núcleos de procesador y ${r.cuda_cores} núcleos CUDA.`;
+  $("capacity").replaceChildren(el("tr", {}, ["Plan", "Núcleos por trabajo", "CUDA por trabajo", "A la vez", "Horas/mes",
+    "Usuarios a la vez", "Usuarios por mes (techo)"].map((h) => el("th", {}, h))),
+    ...cap.plans.map((p) => el("tr", {}, el("td", {}, p.plan), el("td", {}, p.cpu_cores_per_job),
+      el("td", {}, p.cuda_cores_per_job || "—"), el("td", {}, p.max_concurrent), el("td", {}, p.monthly_hours),
+      el("td", {}, p.users_at_once), el("td", {}, p.users_per_month ?? "sin límite de horas"))));
+}
 
 function renderUsers(users, pays) {
   $("users").replaceChildren(el("tr", {}, ["Usuario", "Plan", "Estado", "Pagado hasta", "Horas del mes", "Trabajos", ""].map((h) => el("th", {}, h))),
@@ -462,7 +492,7 @@ function renderUsers(users, pays) {
       el("td", {}, money(p.amount_cents, p.currency)), el("td", {}, p.provider),
       el("td", { class: p.status === "approved" ? "status-done" : p.status === "rejected" ? "status-failed" : "status-queued" }, p.status),
       el("td", { class: "muted" }, p.note)))
-    : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Ninguno"))]));
+    : [el("tr", {}, el("td", { colspan: 8, class: "muted" }, "Ninguno"))]));
 }
 
 const KINDS = { bug: "error", crash: "cierre", suggestion: "sugerencia" };
@@ -614,6 +644,7 @@ async function refresh() {
       api("/v1/admin/jobs?limit=20"), api("/v1/admin/users"), api("/v1/admin/payments?limit=20"), api("/v1/admin/alerts"),
       api("/v1/admin/node-requests"), api("/v1/admin/plans")]);
     renderPlans(plans.plans);
+    renderCapacity(await api("/v1/admin/capacity"));
     renderRequests(requests.requests);
     // Open problems on top (also sent by e-mail); the solved ones of the week, smaller.
     const open = alerts.alerts.filter((a) => !a.resolved_at);

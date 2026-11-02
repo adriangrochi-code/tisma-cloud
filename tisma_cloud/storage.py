@@ -7,8 +7,9 @@ import shutil
 from pathlib import Path
 from typing import BinaryIO
 
-# .tea: the result of an analysis of tisma-engine (its cloud.md, rule 19).
-ALLOWED_RESULTS = (".gcode", ".bgcode", ".tfea", ".tea")
+# .tea: the result of an analysis of tisma-engine (its cloud.md, rule 19); .taero: of an aerodynamic analysis (rule
+# 19b); .json: the orientation found (rule 19c).
+ALLOWED_RESULTS = (".gcode", ".bgcode", ".tfea", ".tea", ".taero", ".json")
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]")
 
 

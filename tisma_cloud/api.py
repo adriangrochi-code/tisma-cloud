@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from . import __version__, alerts, billing, codes, crypto, google_play, pairing, remote, reports, scheduler, triage
+from . import __version__, alerts, billing, capacity, codes, crypto, google_play, pairing, remote, reports, scheduler, triage
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
@@ -407,7 +407,9 @@ def plan_view(plan: Plan) -> dict[str, Any]:
     return {"name": plan.name, "monthly_hours": plan.monthly_hours, "max_concurrent": plan.max_concurrent,
             "requests_per_minute": plan.requests_per_minute, "priority": plan.priority,
             "price_cents": plan.price_cents, "currency": plan.currency, "public": plan.public,
-            "remote_printers": plan.remote_printers, "extra_printer_cents": plan.extra_printer_cents}
+            "remote_printers": plan.remote_printers, "extra_printer_cents": plan.extra_printer_cents,
+            "classes": [c for c in JOB_CLASSES if plan.allows(c)],
+            "cpu_cores": plan.cpu_cores or 1, "cuda_cores": plan.cuda_cores or 0}
 
 
 def payment_view(p: Payment) -> dict[str, Any]:
@@ -554,6 +556,11 @@ class PlanBody(BaseModel):
     public: bool = False
     remote_printers: int = Field(default=0, ge=0, le=remote.MAX_PRINTERS * remote.MAX_BRIDGES)
     extra_printer_cents: int = Field(default=0, ge=0)
+    # The share of a node each job takes (capacity.py).
+    cpu_cores: int = Field(default=1, ge=1, le=256)
+    cuda_cores: int = Field(default=0, ge=0, le=100_000)
+    # Job classes the plan includes (jobs.JOB_CLASSES); empty: all of them.
+    classes: list[str] = Field(default_factory=list, max_length=len(JOB_CLASSES))
 
 
 class RegisterBody(BaseModel):
@@ -1420,7 +1427,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with db.session() as s:
             u = s.get(User, user.id)
             try:
-                scheduler.admit(s, u, cfg.grace_days)
+                scheduler.admit(s, u, cfg.grace_days, plan.job_class)
             except scheduler.Refused as ex:
                 raise HTTPException(ex.status, str(ex)) from None
             now = utcnow()
@@ -1511,8 +1518,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             job = scheduler.claim(s, node, db.is_sqlite, exclude)
             if job is None:
                 return None
+            owner = s.get(User, job.user_id)
+            plan = owner.plan if owner is not None else None
             return {"id": job.id, "kind": job.kind, "job_class": job.job_class, "params": job.params_dict,
-                    "input_name": job.input_name}
+                    "input_name": job.input_name, "cpu_cores": (plan.cpu_cores or 1) if plan else 1}
 
     @app.post("/v1/node/claim")
     async def node_claim(node: NodeDep, body: ClaimBody, wait: int | None = None) -> Any:
@@ -2059,12 +2068,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         plan.public = body.public
         plan.remote_printers = body.remote_printers
         plan.extra_printer_cents = body.extra_printer_cents
+        plan.cpu_cores = body.cpu_cores
+        plan.cuda_cores = body.cuda_cores
+        unknown = [c for c in body.classes if c not in JOB_CLASSES]
+        if unknown:
+            raise HTTPException(422, f"Unknown job classes: {', '.join(unknown)} (known: {', '.join(JOB_CLASSES)})")
+        plan.classes = ",".join(c for c in JOB_CLASSES if c in body.classes)
         return plan
 
     @app.put("/v1/site/plans/{name}")
     def site_plan(_site: SiteDep, name: str, body: PlanBody) -> dict:
         with db.session() as s:
             return {"plan": plan_view(upsert_plan(s, name, body))}
+
+    @app.get("/v1/admin/capacity")
+    def admin_capacity(_admin: AdminDep) -> dict:
+        """How many users of each plan the enabled nodes can serve (capacity.py)."""
+        with db.session() as s:
+            nodes = s.execute(select(Node)).scalars().all()
+            plans = s.execute(select(Plan).order_by(Plan.price_cents)).scalars().all()
+            return capacity.report(nodes, plans)
 
     @app.put("/v1/admin/plans/{name}")
     def admin_plan(_admin: AdminDep, name: str, body: PlanBody) -> dict:

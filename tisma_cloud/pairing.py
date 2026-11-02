@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from .jobs import JOB_CLASSES
+from .jobs import DEFAULT_NODE_CLASSES, JOB_CLASSES
 from .models import Job, Node, NodeRequest, utcnow
 from .security import hash_token, new_token
 
@@ -112,7 +112,7 @@ def accept(s: Session, request_id: str, name: str = "", priorities: list[str] | 
     """Makes the node of a request: with the name asked (another one when it is taken) and all the job classes unless
     priorities. The machine takes its token the next time it asks."""
     req = _pending_request(s, request_id)
-    priorities = list(priorities or JOB_CLASSES)
+    priorities = list(priorities or DEFAULT_NODE_CLASSES)
     if not priorities or any(p not in JOB_CLASSES for p in priorities) or len(set(priorities)) != len(priorities):
         raise PairingError(f"A node does at least one of {', '.join(JOB_CLASSES)}, each once")
     token = new_token("tn")

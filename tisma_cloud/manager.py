@@ -62,6 +62,7 @@ NODE_FIELDS = [
     ("fea_slots", "Análisis estructurales a la vez", int, False),
     ("timeout_s", "Duración máxima de un trabajo [s]", int, False),
     ("gpu", "Usar la placa de video (análisis estructural y laminado)", bool, False),
+    ("cuda_cores", "Núcleos CUDA de la placa (los que publica NVIDIA; 0 = no contar)", int, False),
     ("verify_tls", "Verificar el certificado HTTPS", bool, False),
     ("name", "Nombre con el que pide unirse (vacío: el de la máquina)", str, False),
     ("tisma_engine", "Programa tisma-engine (el slicer nuevo; vacío: usa tisma-slicer y tisma-fea)", str, False),
@@ -72,10 +73,12 @@ JOB_CLASS_NAMES = {
     "slice_large": "Laminar placas grandes",
     "fea": "Análisis estructural",
     "fea_optimize": "Relleno mínimo / paredes de resina (muchos análisis)",
+    "aero": "Análisis aerodinámico (CFD)",
+    "orient": "Orientación automática",
 }
 NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_engine": "", "tisma_slicer": "",
                  "tisma_fea": "", "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,
-                 "verify_tls": True}
+                 "cuda_cores": 0, "verify_tls": True}
 # The node of the master when it computes too (registered in its database by the service).
 MASTER_NODE = "maestro"
 
@@ -224,7 +227,7 @@ class Manager:
         master-node.toml, connected to the master of this machine. None when Tisma Slicer is not on this machine."""
         from sqlalchemy import select
 
-        from .jobs import JOB_CLASSES
+        from .jobs import DEFAULT_NODE_CLASSES
         from .models import Node
         from .security import hash_token, new_token
 
@@ -241,7 +244,7 @@ class Manager:
             node = s.execute(select(Node).where(Node.name == MASTER_NODE)).scalar_one_or_none()
             if node is None:
                 token = new_token("tn")
-                s.add(Node(name=MASTER_NODE, token_hash=hash_token(token), priorities=",".join(JOB_CLASSES)))
+                s.add(Node(name=MASTER_NODE, token_hash=hash_token(token), priorities=",".join(DEFAULT_NODE_CLASSES)))
             elif not token or hash_token(token) != node.token_hash:
                 token = new_token("tn")
                 node.token_hash = hash_token(token)
@@ -418,7 +421,7 @@ class Manager:
         """A node made by hand (all the job classes unless priorities); returns its token, shown only now."""
         from sqlalchemy import select
 
-        from .jobs import JOB_CLASSES
+        from .jobs import DEFAULT_NODE_CLASSES
         from .models import Node
         from .pairing import clean_name
         from .security import hash_token, new_token
@@ -429,7 +432,7 @@ class Manager:
             if s.execute(select(Node).where(Node.name == name)).scalar_one_or_none():
                 raise ValueError(f"Ya hay un nodo {name}")
             token = new_token("tn")
-            s.add(Node(name=name, token_hash=hash_token(token), priorities=",".join(priorities or JOB_CLASSES)))
+            s.add(Node(name=name, token_hash=hash_token(token), priorities=",".join(priorities or DEFAULT_NODE_CLASSES)))
         return token
 
     def reject_join(self, request_id: str) -> None:

@@ -44,6 +44,17 @@ class Plan(Base):
     # in cents of each one more (0: the plan has no more).
     remote_printers: Mapped[int] = mapped_column(Integer, default=0)
     extra_printer_cents: Mapped[int] = mapped_column(Integer, default=0)
+    # The share of a node each job of the plan takes (capacity.py): processor cores (the engine runs with that many
+    # threads) and CUDA cores of the graphics card (0: none counted).
+    cpu_cores: Mapped[int | None] = mapped_column(Integer, default=1, nullable=True)
+    cuda_cores: Mapped[int | None] = mapped_column(Integer, default=0, nullable=True)
+    # The job classes (jobs.JOB_CLASSES) the plan lets submit, separated by commas; empty or NULL: all of them.
+    classes: Mapped[str | None] = mapped_column(String(200), default="", nullable=True)
+
+    def allows(self, job_class: str) -> bool:
+        """Whether the plan lets submit jobs of this class."""
+        allowed = [c for c in (self.classes or "").split(",") if c]
+        return not allowed or job_class in allowed
 
 
 class User(Base):

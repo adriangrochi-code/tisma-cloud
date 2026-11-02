@@ -23,7 +23,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from .models import HourAdjustment, Job, Node, Usage, User, month_of, utcnow
+from .jobs import JOB_CLASS_DESCRIPTIONS
+from .models import HourAdjustment, Job, Node, Plan, Usage, User, month_of, utcnow
 
 FINAL = ("done", "failed", "cancelled")
 ACTIVE = ("queued", "running")
@@ -99,12 +100,18 @@ class Refused(Exception):
         self.status = status
 
 
-def admit(session: Session, user: User, grace_days: int) -> None:
+def admit(session: Session, user: User, grace_days: int, job_class: str | None = None) -> None:
     """Raises Refused when the user may not submit a job now. The user row is locked (PostgreSQL) so that parallel
     submissions of one user are counted one after the other."""
     session.execute(select(User.id).where(User.id == user.id).with_for_update())
     if user.is_unlimited:
         return
+    if job_class is not None and user.plan is not None and not user.plan.allows(job_class):
+        names = [p.name for p in session.execute(select(Plan).where(Plan.public.is_(True))).scalars()
+                 if p.allows(job_class)]
+        where = f": it is in the plans {', '.join(sorted(names))}" if names else ""
+        raise Refused(402, f"The plan {user.plan.name} does not include {JOB_CLASS_DESCRIPTIONS[job_class].lower()}"
+                           f"{where}")
     acc = account(session, user, grace_days)
     if not acc.paid:
         raise Refused(402, "The subscription is not paid: renew it on the web site")

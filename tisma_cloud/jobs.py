@@ -6,23 +6,36 @@ node, not an estimate.
 
 from __future__ import annotations
 
+import math
 import zipfile
 from dataclasses import dataclass
 from typing import IO
 
 # The queues. A node takes the classes of its priority list (Node.priorities), in that order.
-JOB_CLASSES = ("slice", "slice_large", "fea", "fea_optimize")
-# The structural analyses: a node runs fea_slots of them at a time (they take much memory and the graphics card).
-FEA_CLASSES = ("fea", "fea_optimize")
+JOB_CLASSES = ("slice", "slice_large", "fea", "fea_optimize", "aero", "orient")
+# The heavy analyses: a node runs fea_slots of them at a time (they take much memory and the graphics card).
+FEA_CLASSES = ("fea", "fea_optimize", "aero")
 JOB_CLASS_DESCRIPTIONS = {
     "slice": "Slicing of a plate",
     "slice_large": "Slicing of a large plate (many triangles)",
     "fea": "Structural analysis",
     "fea_optimize": "Lightest infill / walls of a resin part (many analyses)",
+    "aero": "Aerodynamic analysis (air flow around the printed part)",
+    "orient": "Automatic orientation of a part (many candidates)",
 }
+# What a new node does when nobody chose: the classes every node can run. aero and orient need tisma-engine on the
+# node (node/runners.py), so they are added to a node by hand.
+DEFAULT_NODE_CLASSES = ("slice", "slice_large", "fea", "fea_optimize")
+# The kinds a user submits; each has its own parameters (plan_job) and gives one of the classes above.
+KINDS = ("slice", "fea", "aero", "orient")
 
 FEA_MODES = ("analyze", "lightest-infill", "resin-structure")
 FEA_QUALITIES = ("fast", "normal", "high", "ultra")
+# aerodynamics.md: cells across the frontal size (fast 16, normal 24, high 32); friction only does not simulate.
+AERO_QUALITIES = ("friction", "fast", "normal", "high")
+AERO_AXES = ("x", "-x", "y", "-y", "z", "-z")
+# Air speed in m/s: above about a third of the speed of sound the air is no longer incompressible.
+AERO_MAX_SPEED = 100.
 
 class JobError(ValueError):
     """A job that cannot be accepted (bad parameters or project)."""
@@ -77,7 +90,36 @@ def plan_job(kind: str, params: dict, triangles: int, large_slice_triangles: int
             "ribs": _bool(params, "ribs", False),
         }
         return JobPlan(kind, "fea" if mode == "analyze" else "fea_optimize", clean)
-    raise JobError("'kind' must be slice or fea")
+    if kind == "aero":
+        unknown = set(params) - {"object", "instance", "quality", "speed", "direction"}
+        if unknown:
+            raise JobError(f"Unknown parameters: {', '.join(sorted(unknown))}")
+        quality = params.get("quality", "normal")
+        if quality not in AERO_QUALITIES:
+            raise JobError(f"'quality' must be one of {', '.join(AERO_QUALITIES)}")
+        speed = params.get("speed", 10.)
+        if not isinstance(speed, (int, float)) or isinstance(speed, bool) or not 0. < speed <= AERO_MAX_SPEED:
+            raise JobError(f"'speed' must be a number of m/s above 0 and up to {AERO_MAX_SPEED:g}")
+        return JobPlan(kind, "aero", {"object": _index(params, "object"), "instance": _index(params, "instance"),
+                                      "quality": quality, "speed": float(speed),
+                                      "direction": _direction(params.get("direction", "x"))})
+    if kind == "orient":
+        unknown = set(params) - {"object", "instance"}
+        if unknown:
+            raise JobError(f"Unknown parameters: {', '.join(sorted(unknown))}")
+        return JobPlan(kind, "orient", {"object": _index(params, "object"), "instance": _index(params, "instance")})
+    raise JobError(f"'kind' must be one of {', '.join(KINDS)}")
+
+
+def _direction(value: object) -> str | list[float]:
+    """The air direction of an aerodynamic analysis: an axis ("x", "-y"…) or a vector of three numbers."""
+    if isinstance(value, str) and value in AERO_AXES:
+        return value
+    if (isinstance(value, list) and len(value) == 3
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in value)
+            and math.hypot(*value) > 1e-9):
+        return [float(v) for v in value]
+    raise JobError(f"'direction' must be one of {', '.join(AERO_AXES)} or a vector of three numbers, not zero")
 
 
 # Largest uncompressed size of a project read for the estimation (a zip bomb stops there and counts as large).
@@ -92,11 +134,18 @@ SLICE_BASE_S = 0.5
 SLICE_PER_TRIANGLE_S = 3.5e-5
 FEA_QUALITY_S = {"fast": 5., "normal": 15., "high": 60., "ultra": 240.}
 FEA_OPTIMIZE_FACTOR = 5.
+# Not measured yet on the nodes: a guess from the cells of each quality (only to order the queue).
+AERO_QUALITY_S = {"friction": 2., "fast": 20., "normal": 60., "high": 180.}
+ORIENT_S = 15.
 
 
 def estimate_seconds(plan: JobPlan, triangles: int) -> float:
     if plan.kind == "slice":
         return SLICE_BASE_S + SLICE_PER_TRIANGLE_S * triangles
+    if plan.kind == "aero":
+        return AERO_QUALITY_S[plan.params["quality"]]
+    if plan.kind == "orient":
+        return ORIENT_S
     return FEA_QUALITY_S[plan.params["quality"]] * (1. if plan.params["mode"] == "analyze" else FEA_OPTIMIZE_FACTOR)
 
 

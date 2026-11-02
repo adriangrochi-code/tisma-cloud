@@ -189,17 +189,20 @@ def _engine_summary(path: Path) -> dict:
 
 
 def _run_engine(cfg: NodeConfig, command: str, project: Path, out: Path, extra: list[str], work: Path,
-                progress: Progress, cancelled: Cancelled) -> dict:
+                progress: Progress, cancelled: Cancelled, params: dict | None = None) -> dict:
     """Runs tisma-engine with the contract of its cloud.md (rules 18 to 21) and returns its summary."""
     summary_path = work / "summary.json"
     cmd = [cfg.tisma_engine, command, str(project), "-o", str(out), "--summary", str(summary_path), "--sandbox"]
     cmd += extra
+    threads = int(params.get("threads") or 0) if params else 0
+    if threads > 0:
+        cmd += ["--threads", str(threads)]
     if not cfg.gpu:
         cmd.append("--no-gpu")
     code, err = _run(cmd, cfg, ENGINE_PROGRESS, progress, cancelled, work)
     summary = _engine_summary(summary_path)
     if code != 0 or not out.exists() or out.stat().st_size == 0:
-        what = "Slicing" if command == "slice" else "The analysis"
+        what = {"slice": "Slicing", "orient": "The orientation"}.get(command, "The analysis")
         raise JobFailed(str(summary.get("error") or "") or err.strip() or f"{what} failed (code {code})")
     summary.pop("error", None)
     return summary
@@ -211,7 +214,7 @@ def run_slice(cfg: NodeConfig, params: dict, project: Path, work: Path, progress
         clean = work / "project.3mf"
         sanitize_project(project, clean, for_slicing=True, engine=True)
         out = work / "plate.gcode"
-        summary = _run_engine(cfg, "slice", clean, out, [], work, progress, cancelled)
+        summary = _run_engine(cfg, "slice", clean, out, [], work, progress, cancelled, params)
         with open(out, "rb") as f:
             binary = f.read(4) == b"GCDE"
         if binary:
@@ -251,7 +254,7 @@ def run_fea(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: 
             extra.append("--no-zones")
         if params.get("ribs"):
             extra.append("--ribs")
-        return Outcome(out, _run_engine(cfg, "analyze", clean, out, extra, work, progress, cancelled))
+        return Outcome(out, _run_engine(cfg, "analyze", clean, out, extra, work, progress, cancelled, params))
     clean = work / "project.3mf"
     sanitize_project(project, clean, for_slicing=False)
     out = work / "result.tfea"
@@ -279,4 +282,35 @@ def run_fea(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: 
     return Outcome(out, summary)
 
 
-RUNNERS = {"slice": run_slice, "fea": run_fea}
+def _engine_only(cfg: NodeConfig, what: str) -> None:
+    """The aerodynamic analysis and the orientation exist only in tisma-engine (cloud.md, rules 19b and 19c)."""
+    if not cfg.tisma_engine:
+        raise JobFailed(f"This node cannot run {what}: it needs tisma_engine in its configuration")
+
+
+def run_aero(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
+             cancelled: Cancelled) -> Outcome:
+    _engine_only(cfg, "aerodynamic analyses")
+    clean = work / "project.3mf"
+    sanitize_project(project, clean, for_slicing=False, engine=True)
+    out = work / "result.taero"
+    direction = params.get("direction", "x")
+    if isinstance(direction, list):
+        direction = ",".join(f"{float(v):g}" for v in direction)
+    extra = ["--object", str(int(params.get("object", 0))), "--instance", str(int(params.get("instance", 0))),
+             "--quality", str(params.get("quality", "normal")), "--speed", f"{float(params.get('speed', 10.)):g}",
+             "--direction", str(direction)]
+    return Outcome(out, _run_engine(cfg, "aero", clean, out, extra, work, progress, cancelled, params))
+
+
+def run_orient(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
+               cancelled: Cancelled) -> Outcome:
+    _engine_only(cfg, "automatic orientations")
+    clean = work / "project.3mf"
+    sanitize_project(project, clean, for_slicing=False, engine=True)
+    out = work / "orientation.json"
+    extra = ["--object", str(int(params.get("object", 0))), "--instance", str(int(params.get("instance", 0)))]
+    return Outcome(out, _run_engine(cfg, "orient", clean, out, extra, work, progress, cancelled, params))
+
+
+RUNNERS = {"slice": run_slice, "fea": run_fea, "aero": run_aero, "orient": run_orient}

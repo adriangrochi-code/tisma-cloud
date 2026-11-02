@@ -31,7 +31,8 @@ PROGRESS_EVERY_S = 2.
 
 def machine_info(cfg: NodeConfig) -> dict:
     info = {"host": platform.node(), "os": platform.platform(), "cpus": os.cpu_count(), "slots": cfg.slots,
-            "fea_slots": cfg.fea_slots, "gpu": cfg.gpu, "version": __version__}
+            "fea_slots": cfg.fea_slots, "gpu": cfg.gpu, "cuda_cores": max(0, int(cfg.cuda_cores)),
+            "version": __version__}
     memory = memory_gb()
     if memory is not None:
         info["memory_gb"] = round(memory, 1)
@@ -107,7 +108,10 @@ class Agent:
             runner = RUNNERS.get(job["kind"])
             if runner is None:
                 raise JobFailed(f"This node does not run {job['kind']} jobs")
-            outcome = runner(self.cfg, job.get("params", {}), project, work, progress, cancel.is_set)
+            params = dict(job.get("params", {}))
+            # The processor cores of the job's plan (capacity.py): the engine runs with that many threads.
+            params["threads"] = int(job.get("cpu_cores") or 0)
+            outcome = runner(self.cfg, params, project, work, progress, cancel.is_set)
             with open(outcome.result, "rb") as f:
                 r = self.client.post(f"/v1/node/jobs/{job_id}/result",
                                      files={"file": (outcome.result.name, f, "application/octet-stream")},

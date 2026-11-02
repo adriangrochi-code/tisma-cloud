@@ -364,3 +364,36 @@ def test_engine_node_config(tmp_path):
     p.write_text('master_url = "x"\ntisma_slicer = "s"\n')
     with pytest.raises(ValueError, match="tisma_fea"):
         NodeConfig.load(p)
+
+
+@posix_only
+def test_engine_runs_aero_and_orient(client, f, engine_cfg):
+    """The aerodynamic analysis (CFD) and the automatic orientation run with the engine (cloud.md, 19b and 19c)."""
+    user = f.user()
+    agent = agent_for(client, f.node("n", "aero,orient"), engine_cfg)
+    job = f.submit(user, kind="aero", params=json.dumps({"quality": "fast", "speed": 12.5, "direction": [0, 1, 0],
+                                                         "object": 2}))
+    assert agent.run_once() == "done"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    args = view["summary"]["args"]
+    assert args[0] == "aero" and args[args.index("--quality") + 1] == "fast"
+    assert args[args.index("--speed") + 1] == "12.5" and args[args.index("--direction") + 1] == "0,1,0"
+    assert args[args.index("--object") + 1] == "2" and "--no-gpu" in args
+    # The processor cores of the user's plan (1 by default): the engine runs with that many threads.
+    assert args[args.index("--threads") + 1] == "1"
+    assert view["result_filename"].endswith(".taero")
+    job = f.submit(user, kind="orient", params=json.dumps({"instance": 1}))
+    assert agent.run_once() == "done"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["summary"]["args"][0] == "orient" and view["result_filename"].endswith(".json")
+
+
+@posix_only
+def test_aero_needs_the_engine(client, f, node_cfg):
+    """A node with only the programs of Tisma Slicer cannot run an aerodynamic analysis: the job fails and is free."""
+    user = f.user()
+    agent = agent_for(client, f.node("n", "aero"), node_cfg)
+    job = f.submit(user, kind="aero")
+    assert agent.run_once() == "failed"
+    assert "tisma_engine" in client.get(f"/v1/jobs/{job['id']}", headers=user).json()["error"]
+    assert f.me(user)["hours_used"] == 0

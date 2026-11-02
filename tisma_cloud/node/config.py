@@ -58,6 +58,9 @@ class NodeConfig:
     timeout_s: int = 3600
     # The graphics card may be used: the structural analysis (Vulkan) and the visibility of the seam when slicing (OpenCL).
     gpu: bool = True
+    # CUDA cores of the node's NVIDIA card, as NVIDIA publishes them for the model (0: none or not counted). Only for
+    # the capacity report of the master (capacity.py): there is no portable way to read it from the card.
+    cuda_cores: int = 0
     # Verify the HTTPS certificate of the master (disable only on a local network with a self-signed certificate).
     verify_tls: bool = True
 
