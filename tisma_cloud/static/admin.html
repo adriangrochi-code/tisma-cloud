@@ -112,8 +112,16 @@
     <div class="table-wrap"><table id="ended"></table></div>
 
     <h2>Usuarios</h2>
-    <p class="muted">«Registrar pago» es para pagos fuera de la página (transferencia, efectivo): el plan queda pago los meses indicados.</p>
+    <p class="muted">«Registrar pago» es para pagos fuera de la página (transferencia, efectivo): el plan queda pago los meses indicados.
+      «Horas ±» da horas de cálculo de este mes como premio, o las quita como castigo (con un número negativo).
+      «Deshabilitar» deja la cuenta sin entrar ni laminar hasta habilitarla de nuevo.</p>
     <div class="table-wrap"><table id="users"></table></div>
+
+    <h2>Planes</h2>
+    <p class="muted">Los planes públicos son los que se muestran en la página de la cuenta y en el programa. Un cambio rige desde ya
+      para todos los usuarios del plan.</p>
+    <div class="table-wrap"><table id="plans"></table></div>
+    <p><button type="button" id="plan-new">Plan nuevo</button></p>
 
     <h2>Últimos pagos</h2>
     <div class="table-wrap"><table id="payments"></table></div>
@@ -369,6 +377,69 @@ async function setUnlimited(u) {
   } catch (e) { if (e.message !== "auth") $("app-error").textContent = `No se pudo cambiar la cuenta: ${e.message}`; }
 }
 
+async function adjustHours(u) {
+  const text = prompt(`Horas de cálculo para ${u.email} este mes.\nPositivo: se le dan (premio). Negativo: se le quitan (castigo).`, "1");
+  if (text === null) return;
+  const hours = parseFloat(text.replace(",", "."));
+  if (!Number.isFinite(hours) || hours === 0) { alert("Escribí un número distinto de 0, por ejemplo 2 o -1,5."); return; }
+  const note = prompt("Motivo (lo ve solo la administración):", hours > 0 ? "Premio" : "Castigo") || "";
+  try {
+    await api(`/v1/admin/users/${encodeURIComponent(u.email)}/hours`, { method: "POST", body: JSON.stringify({ hours, note }) });
+    refresh();
+  } catch (e) { if (e.message !== "auth") $("app-error").textContent = `No se pudieron cambiar las horas: ${e.message}`; }
+}
+
+async function showHours(u) {
+  try {
+    const r = await api(`/v1/admin/users/${encodeURIComponent(u.email)}/hours`);
+    alert(r.adjustments.length ? r.adjustments.map((a) => `${new Date(a.created_at).toLocaleDateString()} · ${a.month} · ${a.hours > 0 ? "+" : ""}${a.hours} h · ${a.note}`).join("\n")
+                               : `${u.email} no tiene horas dadas ni quitadas.`);
+  } catch (e) { if (e.message !== "auth") $("app-error").textContent = `No se pudo leer el historial: ${e.message}`; }
+}
+
+async function setEnabled(u) {
+  const enable = !u.enabled;
+  if (!confirm(enable ? `¿Habilitar de nuevo a ${u.email}?` : `¿Deshabilitar a ${u.email}? No va a poder entrar ni laminar hasta que la habilites.`)) return;
+  try {
+    await api(`/v1/admin/users/${encodeURIComponent(u.email)}/enabled`, { method: "PUT", body: JSON.stringify({ enabled: enable }) });
+    refresh();
+  } catch (e) { if (e.message !== "auth") $("app-error").textContent = `No se pudo cambiar la cuenta: ${e.message}`; }
+}
+
+const PLAN_FIELDS = [["monthly_hours", "Horas de cálculo por mes", parseFloat], ["max_concurrent", "Trabajos a la vez", parseInt],
+  ["requests_per_minute", "Pedidos por minuto", parseInt], ["priority", "Prioridad en la cola (más alto, antes)", parseInt],
+  ["price_cents", "Precio por mes, en centavos", parseInt], ["currency", "Moneda (USD, UYU…)", (v) => v.trim().toUpperCase().slice(0, 3)],
+  ["remote_printers", "Impresoras remotas incluidas", parseInt], ["extra_printer_cents", "Impresora remota extra, en centavos", parseInt]];
+
+async function editPlan(p) {
+  const name = p ? p.name : (prompt("Nombre del plan nuevo:", "") || "").trim();
+  if (!name) return;
+  const body = {};
+  for (const [key, label, parse] of PLAN_FIELDS) {
+    const text = prompt(`${name}: ${label}`, p ? String(p[key]) : key === "currency" ? "USD" : key === "max_concurrent" ? "1" : "0");
+    if (text === null) return;
+    const v = parse(String(text).replace(",", "."));
+    if (key !== "currency" && !Number.isFinite(v)) { alert(`${label}: no es un número.`); return; }
+    body[key] = v;
+  }
+  body.public = confirm(`¿Mostrar «${name}» a los usuarios (plan público)?`);
+  try {
+    await api(`/v1/admin/plans/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(body) });
+    refresh();
+  } catch (e) { if (e.message !== "auth") $("app-error").textContent = `No se pudo guardar el plan: ${e.message}`; }
+}
+
+function renderPlans(plans) {
+  $("plans").replaceChildren(el("tr", {}, ["Plan", "Horas/mes", "A la vez", "Precio", "Impresoras remotas", "Público", ""].map((h) => el("th", {}, h))),
+    ...(plans.length ? plans.map((p) => el("tr", {},
+      el("td", {}, p.name), el("td", {}, p.monthly_hours), el("td", {}, p.max_concurrent),
+      el("td", {}, money(p.price_cents, p.currency)), el("td", {}, p.remote_printers),
+      el("td", { class: p.public ? "status-done" : "muted" }, p.public ? "sí" : "no"),
+      el("td", {}, el("button", { type: "button", onclick: () => editPlan(p) }, "Editar"))))
+    : [el("tr", {}, el("td", { colspan: 7, class: "muted" }, "Ninguno"))]));
+}
+$("plan-new").onclick = () => editPlan(null);
+
 function renderUsers(users, pays) {
   $("users").replaceChildren(el("tr", {}, ["Usuario", "Plan", "Estado", "Pagado hasta", "Horas del mes", "Trabajos", ""].map((h) => el("th", {}, h))),
     ...users.map((u) => el("tr", {},
@@ -381,7 +452,10 @@ function renderUsers(users, pays) {
       el("td", {}, `${u.account.hours_used.toFixed(2)} / ${u.account.hours_included}`),
       el("td", {}, u.account.active_jobs),
       el("td", {}, el("button", { type: "button", onclick: () => recordPayment(u) }, "Registrar pago"), " ",
-        el("button", { type: "button", onclick: () => setUnlimited(u) }, u.unlimited ? "Quitar sin límite" : "Hacer interna")))));
+        el("button", { type: "button", onclick: () => setUnlimited(u) }, u.unlimited ? "Quitar sin límite" : "Hacer interna"), " ",
+        el("button", { type: "button", onclick: () => adjustHours(u) }, "Horas ±"), " ",
+        el("button", { type: "button", onclick: () => showHours(u) }, "Historial"), " ",
+        u.is_admin ? null : el("button", { type: "button", onclick: () => setEnabled(u) }, u.enabled ? "Deshabilitar" : "Habilitar")))));
   $("payments").replaceChildren(el("tr", {}, ["Fecha", "Usuario", "Plan", "Importe", "Medio", "Estado", "Nota"].map((h) => el("th", {}, h))),
     ...(pays.length ? pays.map((p) => el("tr", {},
       el("td", { class: "muted" }, ago(p.created_at)), el("td", {}, p.user), el("td", {}, `${p.plan} · ${p.months} m`),
@@ -536,9 +610,10 @@ $("catalog-jsonl").onclick = () => downloadCatalog("jsonl");
 
 async function refresh() {
   try {
-    const [nodes, queue, jobs, users, pays, alerts, requests] = await Promise.all([api("/v1/admin/nodes"), api("/v1/admin/queue"),
+    const [nodes, queue, jobs, users, pays, alerts, requests, plans] = await Promise.all([api("/v1/admin/nodes"), api("/v1/admin/queue"),
       api("/v1/admin/jobs?limit=20"), api("/v1/admin/users"), api("/v1/admin/payments?limit=20"), api("/v1/admin/alerts"),
-      api("/v1/admin/node-requests")]);
+      api("/v1/admin/node-requests"), api("/v1/admin/plans")]);
+    renderPlans(plans.plans);
     renderRequests(requests.requests);
     // Open problems on top (also sent by e-mail); the solved ones of the week, smaller.
     const open = alerts.alerts.filter((a) => !a.resolved_at);

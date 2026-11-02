@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from .models import Job, Node, Usage, User, month_of, utcnow
+from .models import HourAdjustment, Job, Node, Usage, User, month_of, utcnow
 
 FINAL = ("done", "failed", "cancelled")
 ACTIVE = ("queued", "running")
@@ -67,6 +67,13 @@ def used_seconds(session: Session, user_id: int, month: str) -> float:
     return float(value or 0.)
 
 
+def adjusted_hours(session: Session, user_id: int, month: str) -> float:
+    """Hours the administration gave (positive) or took (negative) for the month, on top of the plan."""
+    value = session.execute(select(func.sum(HourAdjustment.hours)).where(HourAdjustment.user_id == user_id,
+                                                                         HourAdjustment.month == month)).scalar()
+    return float(value or 0.)
+
+
 def account(session: Session, user: User, grace_days: int, now: datetime | None = None) -> Account:
     now = now or utcnow()
     plan = user.plan
@@ -75,8 +82,11 @@ def account(session: Session, user: User, grace_days: int, now: datetime | None 
     ).scalar_one()
     until = user.access_until
     paid = user.is_unlimited or (until is not None and now <= until + timedelta(days=grace_days))
-    return Account(plan=plan.name, paid_until=until, paid=paid, hours_included=plan.monthly_hours,
-                   hours_used=used_seconds(session, user.id, month_of(now)) / 3600., active_jobs=active,
+    month = month_of(now)
+    # The adjustments of the month can take the hours below zero: then nothing is left until the next month.
+    included = max(0., plan.monthly_hours + adjusted_hours(session, user.id, month))
+    return Account(plan=plan.name, paid_until=until, paid=paid, hours_included=included,
+                   hours_used=used_seconds(session, user.id, month) / 3600., active_jobs=active,
                    max_concurrent=plan.max_concurrent, requests_per_minute=plan.requests_per_minute,
                    unlimited=user.is_unlimited)
 

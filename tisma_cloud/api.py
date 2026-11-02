@@ -33,8 +33,8 @@ from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
 from .jobs import (ESTIMATE_MAX_TRIANGLES, JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles,
                    estimate_seconds, plan_job)
-from .models import (Alert, ApiToken, Bridge, BugReport, EmailCode, Job, Node, Payment, Plan, PlaySubscription,
-                     RemoteCommand, Usage, User, utcnow)
+from .models import (Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job, Node, Payment, Plan,
+                     PlaySubscription, RemoteCommand, Usage, User, month_of, utcnow)
 from .guard import Guard
 from .presence import Presence
 from .publicip import CHECK_S as PUBLIC_ADDRESS_CHECK_S, PublicAddress
@@ -398,6 +398,11 @@ def user_view(user: User) -> dict[str, Any]:
             "is_admin": user.is_admin, "unlimited": user.unlimited}
 
 
+def adjustment_view(a: HourAdjustment) -> dict[str, Any]:
+    return {"id": a.id, "month": a.month, "hours": a.hours, "note": a.note,
+            "created_at": a.created_at.isoformat() + "Z"}
+
+
 def plan_view(plan: Plan) -> dict[str, Any]:
     return {"name": plan.name, "monthly_hours": plan.monthly_hours, "max_concurrent": plan.max_concurrent,
             "requests_per_minute": plan.requests_per_minute, "priority": plan.priority,
@@ -609,6 +614,16 @@ class ManualPaymentBody(BaseModel):
 
 class UnlimitedBody(BaseModel):
     unlimited: bool
+
+
+class HoursBody(BaseModel):
+    # Hours of computing given (positive, a reward) or taken (negative, a penalty) for the current month.
+    hours: float = Field(ge=-10000, le=10000)
+    note: str = Field(default="", max_length=200)
+
+
+class EnabledBody(BaseModel):
+    enabled: bool
 
 
 class SiteUser(BaseModel):
@@ -1959,6 +1974,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             user.unlimited = body.unlimited
             s.flush()
             return {"user": user_view(user), "account": scheduler.account(s, user, cfg.grace_days).as_dict()}
+
+    def admin_user(s, email: str) -> User:  # noqa: ANN001
+        user = s.execute(select(User).where(User.email_index == crypto.index(email))).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(404, "No such user")
+        return user
+
+    @app.post("/v1/admin/users/{email}/hours", status_code=201)
+    def admin_adjust_hours(_admin: AdminDep, email: str, body: HoursBody) -> dict:
+        """Gives (positive) or takes (negative) hours of computing of the current month: a reward or a penalty."""
+        if body.hours == 0:
+            raise HTTPException(422, "The hours cannot be 0")
+        with db.session() as s:
+            user = admin_user(s, email)
+            adj = HourAdjustment(user_id=user.id, month=month_of(utcnow()), hours=body.hours, note=body.note.strip())
+            s.add(adj)
+            s.flush()
+            return {"adjustment": adjustment_view(adj), "user": user_view(user),
+                    "account": scheduler.account(s, user, cfg.grace_days).as_dict()}
+
+    @app.get("/v1/admin/users/{email}/hours")
+    def admin_hours(_admin: AdminDep, email: str) -> dict:
+        """The hours given and taken from the user, newest first."""
+        with db.session() as s:
+            user = admin_user(s, email)
+            rows = s.execute(select(HourAdjustment).where(HourAdjustment.user_id == user.id)
+                             .order_by(HourAdjustment.created_at.desc(), HourAdjustment.id.desc())).scalars()
+            return {"adjustments": [adjustment_view(a) for a in rows]}
+
+    @app.put("/v1/admin/users/{email}/enabled")
+    def admin_enable_user(_admin: AdminDep, email: str, body: EnabledBody) -> dict:
+        """Disables an account (it cannot log in, and its devices are refused) or enables it again."""
+        with db.session() as s:
+            user = admin_user(s, email)
+            if user.is_admin and not body.enabled:
+                raise HTTPException(422, "An administrator cannot be disabled here")
+            user.enabled = body.enabled
+            s.flush()
+            return {"user": user_view(user), "account": scheduler.account(s, user, cfg.grace_days).as_dict()}
+
+    @app.get("/v1/admin/plans")
+    def admin_plans(_admin: AdminDep) -> dict:
+        """Every plan, public or not, for editing them."""
+        with db.session() as s:
+            return {"plans": [plan_view(p) for p in s.execute(select(Plan).order_by(Plan.price_cents, Plan.name)).scalars()]}
 
     @app.post("/v1/admin/users/{email}/payments", status_code=201)
     def admin_manual_payment(_admin: AdminDep, email: str, body: ManualPaymentBody) -> dict:

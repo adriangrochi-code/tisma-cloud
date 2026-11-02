@@ -199,6 +199,20 @@ class Usage(Base):
     seconds: Mapped[float] = mapped_column(Float, default=0.)
 
 
+class HourAdjustment(Base):
+    """Hours of computing the administration gave (positive) or took (negative) for one calendar month (UTC) of a user:
+    a reward or a penalty on top of the hours of the plan. Kept as a history, never edited."""
+
+    __tablename__ = "hour_adjustments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    month: Mapped[str] = mapped_column(String(7), index=True)
+    hours: Mapped[float] = mapped_column(Float)
+    note: Mapped[str] = mapped_column(Encrypted, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Node(Base):
     """A computing server. It takes the job classes of its priority list, in that order."""
 
