@@ -30,9 +30,10 @@ DEFAULT_NODE_CLASSES = ("slice", "slice_large", "fea", "fea_optimize")
 KINDS = ("slice", "fea", "aero", "orient")
 
 FEA_MODES = ("analyze", "lightest-infill", "resin-structure")
-FEA_QUALITIES = ("fast", "normal", "high", "ultra")
-# aerodynamics.md: cells across the frontal size (fast 16, normal 24, high 32); friction only does not simulate.
-AERO_QUALITIES = ("friction", "fast", "normal", "high")
+FEA_QUALITIES = ("fast", "normal", "high", "extreme", "ultra")
+# aerodynamics.md: cells across the frontal size (fast 16, normal 24, high 32, extreme 48); friction only
+# does not simulate.
+AERO_QUALITIES = ("friction", "fast", "normal", "high", "extreme")
 AERO_AXES = ("x", "-x", "y", "-y", "z", "-z")
 # Air speed in m/s: above about a third of the speed of sound the air is no longer incompressible.
 AERO_MAX_SPEED = 100.
@@ -132,10 +133,10 @@ ESTIMATE_MAX_TRIANGLES = 2_000_000
 # in 6 to 13 s depending on their size (README, Capacity). The analyses by quality, relative to each other.
 SLICE_BASE_S = 0.5
 SLICE_PER_TRIANGLE_S = 3.5e-5
-FEA_QUALITY_S = {"fast": 5., "normal": 15., "high": 60., "ultra": 240.}
+FEA_QUALITY_S = {"fast": 5., "normal": 15., "high": 60., "extreme": 240., "ultra": 240.}
 FEA_OPTIMIZE_FACTOR = 5.
 # Not measured yet on the nodes: a guess from the cells of each quality (only to order the queue).
-AERO_QUALITY_S = {"friction": 2., "fast": 20., "normal": 60., "high": 180.}
+AERO_QUALITY_S = {"friction": 2., "fast": 20., "normal": 60., "high": 180., "extreme": 600.}
 ORIENT_S = 15.
 
 

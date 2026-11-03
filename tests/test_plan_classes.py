@@ -67,3 +67,11 @@ def test_capacity_by_plan(client, f):
     assert plans["pro"]["users_at_once"] == 2 and plans["pro"]["users_per_month"] == 58
     assert client.get("/v1/admin/capacity", headers=f.user("eq@x.com")).status_code == 403
     assert client.put("/v1/admin/plans/x", headers=admin, json={**base, "monthly_hours": 1, "cpu_cores": 0}).status_code == 422
+
+
+def test_extreme_quality_is_accepted():
+    # The engine's finest level, for the structural analysis and the CFD (cloud.md, rules 19 and 19b).
+    from tisma_cloud.jobs import plan_job
+    assert plan_job("fea", {"quality": "extreme"}, 0, 10).params["quality"] == "extreme"
+    assert plan_job("aero", {"quality": "extreme"}, 0, 10).params["quality"] == "extreme"
+
