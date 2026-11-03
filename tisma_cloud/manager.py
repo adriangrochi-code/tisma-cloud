@@ -41,6 +41,8 @@ MASTER_FIELDS = [
     ("TISMA_DDNS_HOST", "DNS dinámico: nombre (No-IP, ej. tisma.ddns.net)", False),
     ("TISMA_DDNS_USER", "DNS dinámico: usuario (correo de No-IP)", False),
     ("TISMA_DDNS_PASSWORD", "DNS dinámico: contraseña", True),
+    ("TISMA_CLIENT_IP_HEADER", "Encabezado con la dirección del usuario (cf-connecting-ip detrás de Cloudflare Tunnel)", False),
+    ("TISMA_MAX_UPLOAD_MB", "Proyecto más grande aceptado [MB] (100 con el plan gratis de Cloudflare)", False),
     ("TISMA_DATABASE_URL", "Base de datos", False),
     ("TISMA_STORAGE_DIR", "Carpeta de los archivos", False),
     ("TISMA_INTERNAL_EMAILS", "Cuentas internas sin cobro (correos o @dominio)", False),

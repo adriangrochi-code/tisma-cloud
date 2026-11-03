@@ -302,6 +302,9 @@ docker compose --env-file .env -f deploy/compose.master.yaml exec api python -m 
 Sin Docker: `pip install ".[master]"`, `TISMA_DATABASE_URL=postgresql+psycopg://...` y
 `uvicorn tisma_cloud.main:app --host 0.0.0.0 --port 8000`.
 
+**Sin IP fija, en Windows:** `deploy/cloudflare-tunnel-windows.md` pone el maestro en `tismaservidores.net` con un
+túnel gratuito de Cloudflare, sin abrir puertos ni DNS dinámico.
+
 ### Programa tisma-cloud (Windows y Linux, sin Docker ni Python)
 
 Cada pull request y cada cambio en `main` que toca `server/` genera el programa **`tisma-cloud`** (`tisma-cloud.exe`

@@ -722,20 +722,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin_networks = parse_networks(cfg.admin_networks)
     site_networks = parse_networks(cfg.site_networks)
 
-    def client_key(request: Request) -> str:
-        # Behind Caddy the address of the user is in X-Forwarded-For (Caddy replaces what the user sends). Without it, the
-        # address of the connection (the local network reaches port 8000 directly).
-        forwarded = request.headers.get("x-forwarded-for", "")
-        return forwarded.split(",")[0].strip() or (request.client.host if request.client else "?")
+    ip_header = cfg.client_ip_header.encode("latin-1")
 
     def scope_ip(scope: dict) -> str:
+        # Behind a proxy the address of the user is in cfg.client_ip_header: X-Forwarded-For behind Caddy (which replaces
+        # what the user sends), CF-Connecting-IP behind a Cloudflare Tunnel. Without it, the address of the connection
+        # (the local network reaches port 8000 directly).
         for k, v in scope.get("headers", []):
-            if k == b"x-forwarded-for":
+            if k == ip_header:
                 first = v.decode("latin-1").split(",")[0].strip()
                 if first:
                     return first
         client = scope.get("client")
         return client[0] if client else "?"
+
+    def client_key(request: Request) -> str:
+        return scope_ip(request.scope)
 
     owners: dict[str, tuple[str, float]] = {}
 

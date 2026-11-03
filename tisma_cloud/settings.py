@@ -52,6 +52,12 @@ class Settings:
     # Networks from which the administration (/admin and /v1/admin) can be used: the local network only. From any other
     # address those pages do not exist (404).
     admin_networks: str = field(default_factory=lambda: os.environ.get("TISMA_ADMIN_NETWORKS", PRIVATE_NETWORKS))
+    # The header that carries the user's address when the master is behind a proxy. "x-forwarded-for" (default) for
+    # Caddy, which replaces what the user sends. "cf-connecting-ip" behind a Cloudflare Tunnel: Cloudflare appends to an
+    # X-Forwarded-For sent by the user, so its first entry could be forged (and pass as the local network), while
+    # CF-Connecting-IP is always set by Cloudflare. Without the header, the address of the connection is used.
+    client_ip_header: str = field(default_factory=lambda: os.environ.get("TISMA_CLIENT_IP_HEADER",
+                                                                         "x-forwarded-for").strip().lower())
     # Addresses of the web site allowed to use /v1/site (comma separated, e.g. its server's public IP); empty: any address
     # with the site key.
     site_networks: str = field(default_factory=lambda: os.environ.get("TISMA_SITE_NETWORKS", ""))

@@ -1,0 +1,16 @@
+# Cloudflare Tunnel for the Tisma Cloud master (guide: deploy/cloudflare-tunnel-windows.md).
+# Copy to C:\Windows\System32\config\systemprofile\.cloudflared\config.yml for the Windows service,
+# and replace <TUNNEL-ID> with the id that "cloudflared tunnel create tisma" printed.
+tunnel: <TUNNEL-ID>
+credentials-file: C:\Windows\System32\config\systemprofile\.cloudflared\<TUNNEL-ID>.json
+
+ingress:
+  # The administration and the node pairing are for the local network only: never through the tunnel.
+  - hostname: tismaservidores.net
+    path: ^/(admin|v1/admin|v1/node/join)(/.*)?$
+    service: http_status:404
+  # Everything else goes to the master on this machine.
+  - hostname: tismaservidores.net
+    service: http://localhost:8000
+  # Any other name: nothing.
+  - service: http_status:404
