@@ -98,6 +98,10 @@ names = zipfile.ZipFile(project).namelist()
 if "Metadata/Slic3r_PE.config" in names and b"FAIL" in zipfile.ZipFile(project).read("Metadata/Slic3r_PE.config"):
     json.dump({"error": "Object too large for the bed"}, open(summary, "w"))
     sys.exit(4)
+if command == "analyze" and get("--mode") == "resin-structure":
+    json.dump({"error": "this analysis (resin-structure) does not run in the cloud yet", "code": "not_in_cloud",
+               "error_es": "este análisis (estructura de resina) todavía no corre en la nube"}, open(summary, "w"))
+    sys.exit(3)
 for p in (0, 50, 100):
     print(f"progress {p}", flush=True)
 if command == "slice":
@@ -356,6 +360,24 @@ def test_engine_runs_analyses(client, f, engine_cfg):
     assert view["result_filename"].endswith(".tea")
     assert client.get(f"/v1/jobs/{job['id']}/result", headers=user).content == b"ANALYSIS"
 
+
+
+@posix_only
+def test_engine_analysis_quality_and_errors(client, f, engine_cfg):
+    user = f.user()
+    agent = agent_for(client, f.node("n", "fea_optimize,fea"), engine_cfg)
+    # Without a quality, none is passed: the engine uses the project's own, as the interface (FM25).
+    job = f.submit(user, kind="fea")
+    assert agent.run_once() == "done"
+    args = client.get(f"/v1/jobs/{job['id']}", headers=user).json()["summary"]["args"]
+    assert "--quality" not in args
+    # A refusal of the engine keeps its code and its Spanish text for the program.
+    job = f.submit(user, kind="fea", params=json.dumps({"mode": "resin-structure"}))
+    assert agent.run_once() == "failed"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["error"] == "this analysis (resin-structure) does not run in the cloud yet"
+    assert view["summary"] == {"code": "not_in_cloud",
+                               "error_es": "este análisis (estructura de resina) todavía no corre en la nube"}
 
 def test_engine_node_config(tmp_path):
     p = tmp_path / "node.toml"

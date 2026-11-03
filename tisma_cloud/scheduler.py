@@ -180,9 +180,13 @@ def finish(session: Session, job: Job, result_filename: str, summary: dict) -> N
     charge_time(session, job)
 
 
-def fail(session: Session, job: Job, error: str) -> None:
+def fail(session: Session, job: Job, error: str, details: dict | None = None) -> None:
     job.status = "failed"
     job.error = error[:4000]
+    # The engine's error code and its Spanish text, for the program to show in the user's language.
+    known = {k: str(v)[:1000] for k, v in (details or {}).items() if k in ("code", "error_es")}
+    if known:
+        job.summary = json.dumps(known)
     job.finished_at = utcnow()
 
 

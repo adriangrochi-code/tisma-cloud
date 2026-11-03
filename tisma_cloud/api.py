@@ -517,6 +517,8 @@ def report_view(r: BugReport, texts: bool = False) -> dict[str, Any]:
 class FailBody(BaseModel):
     error: str = Field(max_length=4000)
     cancelled: bool = False
+    # From the engine: its stable error "code" and "error_es", the text in Spanish (cloud.md, rule 18).
+    details: dict[str, str] = Field(default_factory=dict)
 
 
 class JoinBody(BaseModel):
@@ -1617,7 +1619,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if body.cancelled and job.cancel_requested:
                 scheduler.stopped_by_node(s, job)
             else:
-                scheduler.fail(s, job, body.error)
+                scheduler.fail(s, job, body.error, body.details)
             services.storage.remove_input(job.id)
             return {"ok": True}
 

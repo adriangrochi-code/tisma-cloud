@@ -358,6 +358,21 @@ def test_failure(client, f):
     assert view["status"] == "failed" and view["error"] == "No fixed faces" and view["seconds"] == 0
 
 
+
+def test_failure_keeps_the_engine_code_and_spanish_text(client, f):
+    user = f.user()
+    node = f.node("n", "fea_optimize")
+    # Without a quality the engine uses the project's own (FM25).
+    job = f.submit(user, kind="fea", params=json.dumps({"mode": "lightest-infill"}))
+    assert job["params"]["quality"] == ""
+    f.claim(node)
+    details = {"code": "not_in_cloud", "error_es": "este análisis todavía no corre en la nube", "other": "x"}
+    client.post(f"/v1/node/jobs/{job['id']}/fail", headers=node,
+                json={"error": "this analysis does not run in the cloud yet", "details": details})
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["error"] == "this analysis does not run in the cloud yet"
+    assert view["summary"] == {"code": "not_in_cloud", "error_es": "este análisis todavía no corre en la nube"}
+
 def test_cancel(client, f):
     user = f.user()
     node = f.node("n", "slice")

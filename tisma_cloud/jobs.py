@@ -76,10 +76,11 @@ def plan_job(kind: str, params: dict, triangles: int, large_slice_triangles: int
         if unknown:
             raise JobError(f"Unknown parameters: {', '.join(sorted(unknown))}")
         mode = params.get("mode", "analyze")
-        quality = params.get("quality", "normal")
+        # Without a quality the engine uses the project's own, as the interface does (cloud.md, rule 19; FM25).
+        quality = params.get("quality", "")
         if mode not in FEA_MODES:
             raise JobError(f"'mode' must be one of {', '.join(FEA_MODES)}")
-        if quality not in FEA_QUALITIES:
+        if quality and quality not in FEA_QUALITIES:
             raise JobError(f"'quality' must be one of {', '.join(FEA_QUALITIES)}")
         clean = {
             "mode": mode,
@@ -147,7 +148,7 @@ def estimate_seconds(plan: JobPlan, triangles: int) -> float:
         return AERO_QUALITY_S[plan.params["quality"]]
     if plan.kind == "orient":
         return ORIENT_S
-    return FEA_QUALITY_S[plan.params["quality"]] * (1. if plan.params["mode"] == "analyze" else FEA_OPTIMIZE_FACTOR)
+    return FEA_QUALITY_S[plan.params["quality"] or "normal"] * (1. if plan.params["mode"] == "analyze" else FEA_OPTIMIZE_FACTOR)
 
 
 def count_triangles(project: IO[bytes], stop_after: int) -> int:

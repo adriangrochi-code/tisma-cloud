@@ -30,7 +30,12 @@ FOREIGN_CONFIGS = ("Metadata/project_settings.config",)
 
 
 class JobFailed(Exception):
-    pass
+    """A job that could not be done. details: what the engine's summary adds to its error (its stable "code" and
+    "error_es", the text in Spanish), kept with the job so the program shows it in the user's language."""
+
+    def __init__(self, message: str, details: dict | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
 
 
 class JobCancelled(Exception):
@@ -218,8 +223,10 @@ def _run_engine(cfg: NodeConfig, command: str, project: Path, out: Path, extra: 
     summary = _engine_summary(summary_path)
     if code != 0 or not out.exists() or out.stat().st_size == 0:
         what = {"slice": "Slicing", "orient": "The orientation"}.get(command, "The analysis")
-        raise JobFailed(str(summary.get("error") or "") or err.strip() or f"{what} failed (code {code})")
-    summary.pop("error", None)
+        details = {k: str(summary[k])[:1000] for k in ("code", "error_es") if summary.get(k)}
+        raise JobFailed(str(summary.get("error") or "") or err.strip() or f"{what} failed (code {code})", details)
+    for k in ("error", "code", "error_es"):
+        summary.pop(k, None)
     return summary
 
 
@@ -261,8 +268,10 @@ def run_fea(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: 
         clean = work / "project.3mf"
         sanitize_project(project, clean, for_slicing=False, engine=True)
         out = work / "result.tea"
-        extra = ["--mode", params.get("mode", "analyze"), "--quality", params.get("quality", "normal"),
+        extra = ["--mode", params.get("mode", "analyze"),
                  "--object", str(int(params.get("object", 0))), "--instance", str(int(params.get("instance", 0)))]
+        if params.get("quality"):
+            extra += ["--quality", params["quality"]]
         if params.get("solid"):
             extra.append("--solid")
         if params.get("zones") is False:

@@ -124,7 +124,7 @@ class Agent:
             log.info("Job %s cancelled", job_id)
             return "cancelled"
         except JobFailed as ex:
-            self._report_failure(job_id, str(ex))
+            self._report_failure(job_id, str(ex), details=ex.details)
             log.info("Job %s failed: %s", job_id, ex)
             return "failed"
         except Exception as ex:  # noqa: BLE001 (a node error must not stop the node)
@@ -136,10 +136,12 @@ class Agent:
                 self._running.pop(job_id, None)
             shutil.rmtree(work, ignore_errors=True)
 
-    def _report_failure(self, job_id: str, error: str, cancelled: bool = False) -> None:
+    def _report_failure(self, job_id: str, error: str, cancelled: bool = False, details: dict | None = None) -> None:
+        body: dict = {"error": error[:4000], "cancelled": cancelled}
+        if details:
+            body["details"] = details
         try:
-            self.client.post(f"/v1/node/jobs/{job_id}/fail", json={"error": error[:4000], "cancelled": cancelled},
-                             timeout=30.)
+            self.client.post(f"/v1/node/jobs/{job_id}/fail", json=body, timeout=30.)
         except httpx.HTTPError:
             log.warning("Could not report the end of job %s", job_id)
 
