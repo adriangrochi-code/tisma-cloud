@@ -303,6 +303,10 @@ docker compose --env-file .env -f deploy/compose.master.yaml exec api python -m 
 docker compose --env-file .env -f deploy/compose.master.yaml exec api python -m tisma_cloud.admin user-add tu@correo.com --plan basico --admin --password
 ```
 
+`plan-set` también elige qué tipos de cómputo incluye el plan (`--classes slice,slice_large,orient`; `all`: todos; sin la
+opción, un plan que ya existe los conserva) y si aparece en la lista pública de planes, `GET /v1/plans` (`--public` o
+`--no-public`). Tisma y el teléfono leen de esa lista qué permite cada plan; lo que el plan no incluye se rechaza con 402.
+
 Sin Docker: `pip install ".[master]"`, `TISMA_DATABASE_URL=postgresql+psycopg://...` y
 `uvicorn tisma_cloud.main:app --host 0.0.0.0 --port 8000`.
 

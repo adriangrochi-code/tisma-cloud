@@ -1,6 +1,6 @@
 """Administration from the master machine (works on the database directly):
 
-    python -m tisma_cloud.admin plan-set basic --hours 10 --concurrent 2 [--rpm 120] [--priority 1]
+    python -m tisma_cloud.admin plan-set basic --hours 10 --concurrent 2 [--rpm 120] [--priority 1] [--classes slice,orient]
     python -m tisma_cloud.admin plan-list
     python -m tisma_cloud.admin user-add EMAIL --plan basic [--paid-until 2026-12-31] [--admin] [--password]
     python -m tisma_cloud.admin user-set EMAIL [--plan P] [--paid-until DATE] [--enable | --disable] [--password]
@@ -47,6 +47,22 @@ def parse_priorities(text: str) -> str:
     return ",".join(items)
 
 
+def parse_classes(text: str) -> str:
+    """The job classes a plan includes, in the order of JOB_CLASSES; "all" (or empty): all of them."""
+    if text.strip().lower() in ("", "all"):
+        return ""
+    items = {c.strip() for c in text.split(",") if c.strip()}
+    unknown = sorted(items - set(JOB_CLASSES))
+    if unknown:
+        raise SystemExit(f"Classes: unknown {', '.join(unknown)}; job classes separated by commas, or all, of: "
+                         f"{', '.join(JOB_CLASSES)}")
+    return ",".join(c for c in JOB_CLASSES if c in items)
+
+
+def classes_text(plan: Plan) -> str:
+    return plan.classes or "all"
+
+
 def parse_date(text: str) -> datetime:
     try:
         return datetime.fromisoformat(text)
@@ -74,6 +90,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--remote-printers", type=int, default=0, help="printers of the account usable from afar")
     p.add_argument("--extra-printer-cents", type=int, default=0,
                    help="monthly price in cents of each remote printer more (0: no more)")
+    p.add_argument("--classes", help="job classes the plan includes, comma separated, or all (a new plan: all; "
+                                     "a plan that exists: kept without it)")
+    p.add_argument("--public", action=argparse.BooleanOptionalAction, default=None,
+                   help="listed in GET /v1/plans, for users to choose (a new plan: not; a plan that exists: kept)")
     sub.add_parser("plan-list")
 
     for name in ("user-add", "user-set"):
@@ -139,15 +159,21 @@ def main(argv: list[str] | None = None) -> int:
             plan.monthly_hours, plan.max_concurrent = args.hours, max(1, args.concurrent)
             plan.requests_per_minute, plan.priority = max(1, args.rpm), args.priority
             plan.remote_printers, plan.extra_printer_cents = max(0, args.remote_printers), max(0, args.extra_printer_cents)
+            if args.classes is not None:
+                plan.classes = parse_classes(args.classes)
+            if args.public is not None:
+                plan.public = args.public
             s.add(plan)
             print(f"Plan {plan.name}: {plan.monthly_hours:g} h/month, {plan.max_concurrent} at a time, "
                   f"{plan.requests_per_minute} requests/min, priority {plan.priority}, "
-                  f"{plan.remote_printers} remote printers (+{plan.extra_printer_cents} cents each one more)")
+                  f"{plan.remote_printers} remote printers (+{plan.extra_printer_cents} cents each one more), "
+                  f"classes {classes_text(plan)}{', public' if plan.public else ''}")
         elif args.command == "plan-list":
             for plan in s.execute(select(Plan).order_by(Plan.monthly_hours)).scalars():
                 print(f"{plan.name:15} {plan.monthly_hours:8g} h/month  {plan.max_concurrent:3} at a time  "
                       f"{plan.requests_per_minute:5} req/min  priority {plan.priority}  "
-                      f"{plan.remote_printers} remote printers (+{plan.extra_printer_cents} cents)")
+                      f"{plan.remote_printers} remote printers (+{plan.extra_printer_cents} cents)  "
+                      f"classes {classes_text(plan)}")
         elif args.command in ("user-add", "user-set"):
             email = args.email.strip().lower()
             if args.plan and s.get(Plan, args.plan) is None:

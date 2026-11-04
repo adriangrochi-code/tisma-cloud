@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 
 def test_new_kinds_are_checked(client, f):
     user = f.user()
@@ -75,3 +77,29 @@ def test_extreme_quality_is_accepted():
     assert plan_job("fea", {"quality": "extreme"}, 0, 10).params["quality"] == "extreme"
     assert plan_job("aero", {"quality": "extreme"}, 0, 10).params["quality"] == "extreme"
 
+
+
+def test_plan_set_classes_command(settings, client, f, monkeypatch, capsys):
+    # The engine's plan lock reads "classes" from GET /v1/plans: plan-set --classes sets them from the command line.
+    from tisma_cloud import admin as admin_cli
+
+    monkeypatch.setenv("TISMA_DATABASE_URL", settings.database_url)
+    monkeypatch.setenv("TISMA_STORAGE_DIR", str(settings.storage_dir))
+    base = ["plan-set", "solo", "--hours", "5", "--concurrent", "2"]
+    assert admin_cli.main([*base, "--classes", "slice_large, slice", "--public"]) == 0
+    assert "classes slice,slice_large, public" in capsys.readouterr().out
+    plans = {p["name"]: p for p in client.get("/v1/plans").json()["plans"]}
+    assert plans["solo"]["classes"] == ["slice", "slice_large"]
+    user = f.user("solo@x.com", plan="solo")
+    f.submit(user)
+    r = client.post("/v1/jobs", headers=user, data={"kind": "aero", "params": "{}"},
+                    files={"file": ("part.3mf", _project(), "model/3mf")})
+    assert r.status_code == 402
+    # Without --classes a plan that exists keeps them; "all" gives back every class.
+    assert admin_cli.main([*base, "--hours", "6"]) == 0
+    assert "classes slice,slice_large" in capsys.readouterr().out
+    assert admin_cli.main([*base, "--classes", "all"]) == 0
+    assert "classes all" in capsys.readouterr().out
+    assert f.submit(user, kind="aero")["job_class"] == "aero"
+    with pytest.raises(SystemExit):
+        admin_cli.main([*base, "--classes", "slice,nope"])
