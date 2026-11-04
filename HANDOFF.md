@@ -78,3 +78,8 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   (cmd.exe). The scanner session fixes it on scanner/next (bin/colmap.exe with lib/ on PATH and QT_PLUGIN_PATH, also
   for a TISMA_COLMAP set to the .bat) and now owns server-windows.yml. After its green run: README «Nodo de escaneo
   en Windows», TISMA_COLMAP=C:\COLMAP\bin\colmap.exe instead of COLMAP.bat.
+- 19:02: scan-e2e.yml (be8ffee) green, run 41886937961: app-style upload -> master -> node (tisma_scan.py, CPU COLMAP
+  + OpenMVS) -> result zip (pieza.stl, informe, ply, log); 40.99 x 31.36 x 20.10 mm for 40 x 30 x 20; 25 min on CPU.
+  QA told. Untested: Windows, a real phone scan, an NVIDIA card. Test note: where httpx2 is installed, starlette's
+  TestClient uses it and test_a_removed_node_forgets_its_token_and_asks_again fails (the agent catches httpx's
+  errors); CI has no httpx2 and passes.
