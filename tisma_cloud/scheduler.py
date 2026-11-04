@@ -218,14 +218,34 @@ def requeue_stale(session: Session, timeout_s: int, max_attempts: int, now: date
         .where(Job.status == "running", (Node.last_seen.is_(None)) | (Node.last_seen < limit))
     ).scalars().all()
     for job in stale:
-        if job.cancel_requested:
-            job.status = "cancelled"
-            job.finished_at = now
-        elif job.attempts >= max_attempts:
-            fail(session, job, "The computing servers that ran the job stopped answering")
-        else:
-            job.status = "queued"
-            job.node_id = None
-            job.progress = 0
-            job.started_at = None
+        release(session, job, max_attempts, now)
     return len(stale)
+
+
+def release(session: Session, job: Job, max_attempts: int, now: datetime | None = None) -> None:
+    """A running job its node no longer runs goes back to the queue (cancelled if the user asked, failed after
+    max_attempts)."""
+    if job.cancel_requested:
+        job.status = "cancelled"
+        job.finished_at = now or utcnow()
+    elif job.attempts >= max_attempts:
+        fail(session, job, "The computing servers that ran the job stopped answering")
+    else:
+        job.status = "queued"
+        job.node_id = None
+        job.progress = 0
+        job.started_at = None
+
+
+def requeue_orphans(session: Session, node_id: int, running: list[str], max_attempts: int, grace_s: float,
+                    now: datetime | None = None) -> int:
+    """Jobs the master has as running on a node that says it does not run them (the node restarted and lost them)
+    go back to the queue. A job claimed less than grace_s ago may not be in the node's list yet. Returns how many."""
+    now = now or utcnow()
+    orphans = session.execute(
+        select(Job).where(Job.node_id == node_id, Job.status == "running", Job.id.not_in(running),
+                          Job.started_at < now - timedelta(seconds=grace_s))
+    ).scalars().all()
+    for job in orphans:
+        release(session, job, max_attempts, now)
+    return len(orphans)

@@ -405,6 +405,30 @@ def test_lost_node_jobs_are_requeued(client, f, settings):
     assert client.post(f"/v1/node/jobs/{job['id']}/progress", headers=lost, json={"progress": 9}).status_code == 404
 
 
+def test_restarted_node_jobs_are_requeued(client, f, settings):
+    # The node restarted and lost its job, but it is seen again at once: requeue_stale never takes the job. Its
+    # heartbeat says what it runs, and the job it no longer has goes back to the queue.
+    from tisma_cloud.api import ORPHAN_GRACE_S
+    from tisma_cloud.models import Job
+
+    user = f.user()
+    node = f.node("restarts", "slice")
+    job = f.submit(user)
+    assert f.claim(node)["id"] == job["id"]
+    # Just claimed: it may not be in the node's list yet.
+    assert client.post("/v1/node/heartbeat", headers=node, json={"running": []}).status_code == 200
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "running"
+    with f.db.session() as s:
+        s.get(Job, job["id"]).started_at = utcnow() - timedelta(seconds=ORPHAN_GRACE_S + 5)
+    # A heartbeat without the list (an older node) changes nothing.
+    assert client.post("/v1/node/heartbeat", headers=node, json={"info": {"cpu": 4}}).status_code == 200
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "running"
+    assert client.post("/v1/node/heartbeat", headers=node, json={"running": []}).status_code == 200
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["status"] == "queued"
+    assert f.claim(node)["id"] == job["id"]
+
+
 def test_requeue_gives_up_after_max_attempts(client, f, settings):
     user = f.user()
     job = f.submit(user)

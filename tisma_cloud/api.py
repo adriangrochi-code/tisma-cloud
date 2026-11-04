@@ -466,6 +466,10 @@ class ClaimBody(BaseModel):
     exclude: list[str] = Field(default_factory=list, max_length=len(JOB_CLASSES))
 
 
+# A job claimed this recently may not be in the heartbeat of its node yet (claimed between two heartbeats) [s].
+ORPHAN_GRACE_S = 60.
+
+
 class HeartbeatBody(BaseModel):
     running: list[str] = Field(default_factory=list)
     info: dict[str, Any] = Field(default_factory=dict)
@@ -1559,7 +1563,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Jobs to stop: cancelled by the user, or no longer this node's (requeued after a timeout).
                 known = {j.id for j in jobs if j.status == "running"}
                 cancel = [j.id for j in jobs if j.cancel_requested] + [i for i in body.running if i not in known]
-            return {"cancel": sorted(set(cancel)), "priorities": node.priority_list}
+            # Jobs this node had and no longer runs (it restarted while the master kept them as running): back to the
+            # queue now, not never (the node is seen, so requeue_stale does not take them). Only from a node that sends
+            # its whole list.
+            requeued = 0
+            if "running" in body.model_fields_set and len(body.running) <= 64:
+                requeued = scheduler.requeue_orphans(s, node.id, body.running, cfg.max_attempts, ORPHAN_GRACE_S)
+        if requeued:
+            services.wakeup.notify(JOBS)
+        return {"cancel": sorted(set(cancel)), "priorities": node.priority_list}
 
     @app.get("/v1/node/jobs/{job_id}/input")
     def node_input(node: NodeDep, job_id: str) -> FileResponse:

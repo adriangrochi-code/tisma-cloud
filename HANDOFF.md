@@ -2,7 +2,7 @@
 
 Branch `server/next` (from `ccr-7e2013d9-qwmclz`). Scope: `server/` only. Spec/QA contact: `session_01QadJfL7KViJEaJL92p8Swb`.
 
-Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (214 passed, 2 skipped
+Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (215 passed, 2 skipped
 at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extras).
 
 ## Work list (in order)
@@ -13,7 +13,8 @@ at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extr
 3. Cloudflare tunnel guide and Windows manager: d891fc8 (service ImagePath, cert.pem, ingress checks, log file,
    `config KEY --clear`; client IP header only from `TISMA_TRUSTED_PROXIES`). Not tested on Windows nor with a real
    cloudflared (downloading it was refused). Still to review: the Windows installer flow.
-4. Robustness (node reconnection, job retries, queue under load, backups/restore, uploads security): not started.
+4. Robustness: a node that restarts gets its lost jobs requeued from its heartbeat (orphans, 60 s grace). Next: queue
+   under load, backups/restore, uploads security.
 
 ## Done for QA
 
@@ -23,8 +24,9 @@ at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extr
 ## Open from QA (2026-11-04)
 
 - Content-Length on uploads (411): keep, make the error text clear (check against cloud.md once readable).
-- After a container restart the master logs «El nodo qa1 no responde hace 25 min»: check the alert clears and the jobs
-  go back to the queue.
+- After a container restart the master logs «El nodo qa1 no responde hace 25 min»: the alert closes on the node's next
+  request (any request updates last_seen) and its jobs are requeued after node_timeout_s; a node that comes back at
+  once had its jobs stuck as running: fixed (heartbeat orphans).
 - aero estimates for high/extreme not measured.
 - Owner decision relayed by QA: this session may read all of tisma_engine (never write it, never send it this repo's
   PrusaSlicer-derived details) and, here, only server/, qa/, docs and CLAUDE.md. Adding the repo still needs the
