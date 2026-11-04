@@ -492,7 +492,10 @@ Un escaneo necesita, además del nodo de Tisma Cloud, tres programas, y vienen j
 | COLMAP 3.9.1 | `colmap\` (`COLMAP-3.9.1-windows-cuda.zip` de <https://github.com/colmap/colmap/releases/tag/3.9.1>, sin cambios) | Fotogrametría; con CUDA y placa NVIDIA también la nube densa | BSD-3-Clause |
 | OpenMVS 2.4.0 | `openmvs\` (`OpenMVS_Windows_x64.zip` de <https://github.com/cdcseacave/openMVS/releases/tag/v2.4.0>, sin cambios) | Nube densa, malla y textura en el procesador | AGPL-3.0 (se usa sin cambios, como programa aparte) |
 
-Las licencias van en `tisma-scan\licenses` y el origen de cada uno en `LEEME.txt`. Es la versión 3.9.1 de COLMAP a
+Las licencias van en `tisma-scan\licenses` (también las de las ~40 librerías que traen COLMAP y OpenMVS,
+en `BUNDLED_DLLS.txt` y `third-party\`) y el origen de cada uno en `LEEME.txt`. **El paquete es para los nodos propios:**
+algunas de esas librerías son GPL o LGPL, y para dárselo a otra persona (nodos de terceros, una descarga pública) hay
+que entregar también su código fuente (ver `THIRD_PARTY_LICENSES.md`). Es la versión 3.9.1 de COLMAP a
 propósito: la 4.x cambió opciones de la línea de comandos que usa el pipeline. El CI de `openscanner` arma el
 paquete y lo prueba en Windows (`tisma_scan.exe --check` y un escaneo sintético completo hasta `pieza.stl`, en una
 máquina sin placa NVIDIA: la caja de 40 × 30 × 20 mm salió de 42,4 × 32,5 × 20,6 mm, cerrada, en 16 minutos; corrida
