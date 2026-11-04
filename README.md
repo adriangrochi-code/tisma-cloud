@@ -317,7 +317,7 @@ túnel gratuito de Cloudflare, sin abrir puertos ni DNS dinámico.
 
 ### Programa tisma-cloud (Windows y Linux, sin Docker ni Python)
 
-Cada pull request y cada cambio en `main` que toca `server/` genera el programa **`tisma-cloud`** (`tisma-cloud.exe`
+Cada pull request y cada cambio en `main` de este repositorio genera el programa **`tisma-cloud`** (`tisma-cloud.exe`
 en Windows) en la pestaña *Actions* del PR, artefactos `tisma-cloud-windows` y `tisma-cloud-linux` (se guardan 30
 días). Es el mismo programa para todas las máquinas: en cada una se elige si es el **maestro** (el servidor central)
 o un **nodo de cómputo** (esclavo).
@@ -404,8 +404,9 @@ Abrir el puerto 22 solo en la red local (no en el router). Después, desde otra 
 Probado por el CI en Windows Server 2022 (los equipos de GitHub Actions): tarea de arranque como SYSTEM, regla del
 firewall, supervisor que revive el maestro, arrancar y detener. Pasos en el servidor, con una cuenta de administrador:
 
-1. Copiar `tisma-cloud.exe` a una carpeta propia, por ejemplo `C:\TismaCloud\` (ahí quedan su configuración, la base
-   SQLite y los archivos). Abrirlo con clic derecho > *Ejecutar como administrador*.
+1. Descomprimir el paquete entero (el artefacto `tisma-cloud-windows`: `tisma-cloud.exe` con la carpeta
+   `tisma-slicer` al lado) en una carpeta propia, por ejemplo `C:\TismaCloud\` (ahí quedan su configuración, la base
+   SQLite y los archivos; sin `tisma-slicer` el maestro sirve pero no calcula). Abrirlo con clic derecho > *Ejecutar como administrador*.
 2. Elegir **Maestro**, revisar la configuración (puerto, base de datos, carpeta de archivos) e **Iniciar**.
 3. Marcar **Iniciar con la máquina** y **Abrir el puerto en el firewall** (Windows Server bloquea por defecto las
    conexiones entrantes: sin la regla, los nodos y los clientes no llegan).
@@ -482,23 +483,29 @@ si falla, `error`, `code` y `error_es` con código de salida distinto de 0.
 
 ### Nodo de escaneo en Windows (por ejemplo el i5 con la GTX 1060)
 
-Un escaneo necesita, además del nodo de Tisma Cloud, tres programas. Todos se bajan de sus páginas oficiales:
+Un escaneo necesita, además del nodo de Tisma Cloud, tres programas, y vienen juntos en un paquete: el artefacto
+**`TismaScan-windows`** del CI de `openscanner` («TismaServer.exe (Windows)»), que es la carpeta `tisma-scan`:
 
-| Programa | Archivo | Para qué | Licencia |
+| Programa | En `tisma-scan` | Para qué | Licencia |
 |---|---|---|---|
-| `tisma_scan.exe` | artefacto `TismaServer-windows` del CI de `openscanner` («TismaServer.exe (Windows)») | El pipeline del escaneo, con sus módulos de Python adentro | Del dueño (repositorio `openscanner`) |
-| COLMAP 3.9.1 | `COLMAP-3.9.1-windows-cuda.zip` de <https://github.com/colmap/colmap/releases/tag/3.9.1> | Fotogrametría; con CUDA también la nube densa | BSD-3-Clause |
-| OpenMVS (opcional con CUDA, obligatorio sin) | `OpenMVS_Windows_x64.zip` de <https://github.com/cdcseacave/openMVS/releases> | Nube densa, malla y textura en el procesador | AGPL-3.0 (se usa sin cambios, como programa aparte) |
+| `tisma_scan.exe` | `tisma_scan.exe` | El pipeline del escaneo, con sus módulos de Python adentro | Del dueño (repositorio `openscanner`) |
+| COLMAP 3.9.1 | `colmap\` (`COLMAP-3.9.1-windows-cuda.zip` de <https://github.com/colmap/colmap/releases/tag/3.9.1>, sin cambios) | Fotogrametría; con CUDA y placa NVIDIA también la nube densa | BSD-3-Clause |
+| OpenMVS 2.4.0 | `openmvs\` (`OpenMVS_Windows_x64.zip` de <https://github.com/cdcseacave/openMVS/releases/tag/v2.4.0>, sin cambios) | Nube densa, malla y textura en el procesador | AGPL-3.0 (se usa sin cambios, como programa aparte) |
 
-Es la versión 3.9.1 de COLMAP a propósito: es la que prueba el CI (la 4.x cambió opciones de la línea de comandos
-que usa el pipeline).
+Las licencias van en `tisma-scan\licenses` y el origen de cada uno en `LEEME.txt`. Es la versión 3.9.1 de COLMAP a
+propósito: la 4.x cambió opciones de la línea de comandos que usa el pipeline. El CI de `openscanner` arma el
+paquete y lo prueba en Windows (`tisma_scan.exe --check` y un escaneo sintético completo hasta `pieza.stl`, en una
+máquina sin placa NVIDIA). **Todavía sin probar en un Windows real ni con una placa NVIDIA.**
 
-1. Descomprimir COLMAP en `C:\COLMAP` y, si se usa, OpenMVS en `C:\OpenMVS`; `tisma_scan.exe` en `C:\TismaScan`.
-2. Las variables del sistema (Panel de control › Sistema › Variables de entorno, para que las vea el servicio):
-   `TISMA_COLMAP=C:\COLMAP\COLMAP.bat` (el zip trae ese `.bat`, que prepara las librerías de COLMAP antes de
-   arrancarlo) y, con OpenMVS, `TISMA_OPENMVS=C:\OpenMVS`. **Sin probar todavía en Windows:** si `tisma-cloud check`
-   no encuentra COLMAP, probar con `C:\COLMAP\bin\colmap.exe`.
-3. En el nodo: `tisma-cloud config tisma_scan C:\TismaScan\tisma_scan.exe` y reiniciar.
+1. Descomprimir `TismaScan-windows` en la carpeta de `tisma-cloud.exe`, de modo que quede `C:\TismaCloud\tisma-scan\`
+   junto a `tisma-cloud.exe` y `tisma-slicer\`. No hace falta ninguna variable de entorno: `tisma-cloud` encuentra
+   `tisma-scan\tisma_scan.exe` solo (al hacer el nodo, al iniciar y con «Buscar Tisma Slicer»), y `tisma_scan.exe`
+   encuentra su COLMAP y su OpenMVS al lado. Si `TISMA_COLMAP` o `TISMA_OPENMVS` están definidas en el sistema, se
+   usan esas.
+2. En un nodo: reiniciar el servicio (o `tisma-cloud config tisma_scan C:\TismaCloud\tisma-scan\tisma_scan.exe`). En
+   el maestro que calcula, su nodo «maestro» también lo toma al iniciar.
+3. Con COLMAP o OpenMVS en otra carpeta: `TISMA_COLMAP=C:\COLMAP\COLMAP.bat` y `TISMA_OPENMVS=C:\OpenMVS` como
+   variables del sistema (Panel de control › Sistema › Variables de entorno, para que las vea el servicio).
 4. `tisma-cloud check`: «Escaneos 3D» tiene que decir «Listo». Si no, dice qué falta (y el nodo no toma escaneos
    hasta que esté todo: nunca le falla un escaneo a una persona por un programa que falta).
 5. En el maestro: `tisma-cloud admin node-set <nodo> --priorities scan,fea,...` (un escaneo usa la placa de video,
