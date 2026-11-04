@@ -49,6 +49,10 @@ class Settings:
     job_history_days: int = field(default_factory=lambda: _int("TISMA_JOB_HISTORY_DAYS", 90))
     # Results and projects older than this are deleted [h].
     retention_h: int = field(default_factory=lambda: _int("TISMA_RETENTION_H", 72))
+    # The signed list of versions of Tisma that the master serves again at /v1/updates (updates.py; app_updates.md of
+    # the engine, rule 13): the address of updates.json, its signature at the same address + ".sig". Empty: not served.
+    updates_url: str = field(default_factory=lambda: os.environ.get(
+        "TISMA_UPDATES_URL", "https://github.com/adriangrochi-code/tisma_engine/releases/download/updates/updates.json"))
     # Daily backups of the database made by the master (backup.py): the folder; "off": none; empty: "backups" next to
     # the storage folder with SQLite, none with PostgreSQL (the backup service of compose.master.yaml makes them).
     backup_dir: str = field(default_factory=lambda: os.environ.get("TISMA_BACKUP_DIR", ""))

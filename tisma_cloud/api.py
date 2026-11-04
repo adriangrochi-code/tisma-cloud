@@ -45,6 +45,7 @@ from .storage import ALLOWED_RESULTS, Storage, TooLarge, safe_filename
 from .translate import TranslationError, Translator
 from .threats import PARALLEL_BYTES, Clamd, ScanUnavailable, Threat, ThreatLog, check_gcode, check_project
 from .twins import Twins
+from .updates import CHECK_S as UPDATES_CHECK_S, UpdateMirror
 from .wakeup import Wakeup
 
 log = logging.getLogger("tisma_cloud")
@@ -123,6 +124,7 @@ class Services:
         self.clamd = Clamd(settings.clamd) if settings.clamd else None
         self.refused = ThreatLog()
         self.twins = Twins()
+        self.updates = UpdateMirror(settings.updates_url, Path(settings.storage_dir) / "updates")
         # The last daily backup that failed (backup.py), for the alerts; None when the last one was good.
         self.backup_failed: str | None = None
         self._backup_lock = threading.Lock()
@@ -730,7 +732,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     log.exception("Checking the public address failed")
                 await pause(PUBLIC_ADDRESS_CHECK_S)
 
+        async def updater() -> None:
+            while not stopping.is_set():
+                try:
+                    await run_in_threadpool(services.updates.refresh)
+                except Exception:  # noqa: BLE001 (keep checking)
+                    log.exception("Updating the list of versions failed")
+                await pause(UPDATES_CHECK_S)
+
         tasks = [asyncio.create_task(sweeper()), asyncio.create_task(flusher())]
+        if services.updates.needed:
+            tasks.append(asyncio.create_task(updater()))
         if services.translator is not None:
             tasks.append(asyncio.create_task(translator()))
         if services.public_address.needed:
@@ -941,6 +953,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # The web client ID of "Sign in with Google" (the first one), for the account page.
                 "google_client_id": services.google.client_ids[0] if services.google.client_ids else "",
                 "play_payments": services.play is not None}
+
+    # The signed list of versions, byte for byte (updates.py): a second address for the programs and the app.
+    def update_file(index: int, media_type: str) -> Response:
+        pair = services.updates.current()
+        if pair is None:
+            raise HTTPException(503, "The list of versions is not available yet", headers={"Retry-After": "60"})
+        return Response(pair[index], media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/v1/updates")
+    def updates_list() -> Response:
+        return update_file(0, "application/json")
+
+    @app.get("/v1/updates.sig")
+    def updates_signature() -> Response:
+        return update_file(1, "application/octet-stream")
 
     @app.post("/v1/auth/login")
     def login(request: Request, body: LoginBody) -> dict:

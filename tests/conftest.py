@@ -65,7 +65,7 @@ def settings(tmp_path: Path) -> Settings:
     url = os.environ.get("TISMA_TEST_DATABASE_URL") or f"sqlite:///{tmp_path / 'test.db'}"
     # No public address asked to internet (publicip.py) in the tests.
     return Settings(database_url=url, storage_dir=tmp_path / "storage", claim_wait_s=0, large_slice_triangles=1000,
-                    backup_dir="off",
+                    backup_dir="off", updates_url="",
                     site_key="site-secret", public_ip_url="")
 
 

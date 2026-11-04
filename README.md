@@ -431,6 +431,15 @@ empezar, o PostgreSQL (instalador oficial para Windows) con `TISMA_DATABASE_URL`
 Los comandos sueltos de antes siguen: `tisma-cloud master [--port P] [--env .env]`, `tisma-cloud node [--config node.toml]`. Para armar el
 programa a mano: `pip install ".[master,exe]"` y `pyinstaller tisma-cloud.spec` (queda en `dist/`).
 
+## Lista de versiones de Tisma
+
+El maestro sirve la lista firmada de versiones del programa y de la app (`app_updates.md` del motor, regla 13) como
+segunda dirección, sin sesión: `GET /v1/updates` (`updates.json`) y `GET /v1/updates.sig` (su firma Ed25519, 64 bytes).
+Las baja cada hora de la release `updates` del motor en GitHub (`TISMA_UPDATES_URL`; vacía: no se sirve), las guarda
+en `storage/updates/` y las devuelve byte por byte: la firma es sobre los bytes exactos del JSON, así que el maestro
+nunca lo vuelve a escribir. No comprueba la firma (eso lo hacen los programas, con la clave del proyecto); solo cambia
+la lista guardada por una descarga entera (un JSON y una firma de 64 bytes). Hasta la primera descarga responde 503.
+
 ## Avisos de problemas
 
 El central revisa cada minuto y avisa por correo a los administradores (las cuentas con `--admin`, o las direcciones
