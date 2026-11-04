@@ -124,12 +124,12 @@ class Agent:
             log.info("Job %s cancelled", job_id)
             return "cancelled"
         except JobFailed as ex:
-            self._report_failure(job_id, str(ex), details=ex.details)
+            self._report_failure(job_id, _without_paths(str(ex), work), details=ex.details)
             log.info("Job %s failed: %s", job_id, ex)
             return "failed"
         except Exception as ex:  # noqa: BLE001 (a node error must not stop the node)
             log.exception("Job %s failed on the node", job_id)
-            self._report_failure(job_id, f"Error of the computing server: {ex}")
+            self._report_failure(job_id, _without_paths(f"Error of the computing server: {ex}", work))
             return "failed"
         finally:
             with self._lock:
@@ -236,3 +236,11 @@ def cleanup_work_dir(work_dir: Path) -> None:
                 shutil.rmtree(p, ignore_errors=True)
             else:
                 p.unlink(missing_ok=True)
+
+
+def _without_paths(text: str, work: Path) -> str:
+    """An error for the user without the node's folders: the programs name the files of the job by their full path
+    (/work/<job>/project.3mf), which says nothing to the user and shows how the node is laid out."""
+    for folder in {str(work), str(work.resolve())}:
+        text = text.replace(folder + os.sep, "").replace(folder, "")
+    return text

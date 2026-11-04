@@ -440,3 +440,11 @@ def test_engine_without_threads_option(client, f, engine_cfg):
     args = client.get(f"/v1/jobs/{job['id']}", headers=user).json()["summary"]["args"]
     assert "--threads" not in args
     runners._ENGINE_HELP.pop(engine_cfg.tisma_engine, None)
+
+
+def test_errors_do_not_show_the_node_folders(tmp_path):
+    from tisma_cloud.node.agent import _without_paths
+    work = tmp_path / "work" / "job1"
+    text = f"{work}{os.sep}project.3mf: project: settings: infill.density: must be a number (in {work})"
+    assert _without_paths(text, work) == "project.3mf: project: settings: infill.density: must be a number (in )"
+    assert str(tmp_path) not in _without_paths(text, work)
