@@ -2,7 +2,7 @@
 
 Branch `server/next` (from `ccr-7e2013d9-qwmclz`). Scope: `server/` only. Spec/QA contact: `session_01QadJfL7KViJEaJL92p8Swb`.
 
-Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (237 passed, 2 skipped
+Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (247 passed, 2 skipped
 at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extras).
 
 Dates (owner, relayed by QA 2026-11-04, corrected): closed beta in December 2026 on the owner's real server (tunnel,
@@ -47,3 +47,6 @@ Windows service), which must be up and stable for it; 1.0 in the second week of 
   program's list is trusted after 35 s.
 - app_updates.md rule 13 (spec/next ec3ee8a): GET /v1/updates and /v1/updates.sig, mirrored hourly byte for byte
   from the engine's `updates` release (updates.py). That release does not exist yet (404): the server answers 503.
+- Tisma Scanner in the cloud (owner 2026-11-04: inside Tisma Cloud, a plan of its own, this session also changes
+  openscanner): job kind/class `scan`, uploads in pieces at /v1/scans (scans.py, ScanUpload), node runner run_scan()
+  with `tisma_scan`. The openscanner side (tools/tisma_scan.py, the app's client) is on its own branch there.

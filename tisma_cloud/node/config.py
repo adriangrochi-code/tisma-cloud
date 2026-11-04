@@ -45,6 +45,12 @@ class NodeConfig:
     # The new slicer, tisma-engine: when set, it runs both the slicing and the analyses (its command line contract is
     # docs/spec/features/cloud.md of the engine, rules 18 to 21) and tisma_slicer and tisma_fea are not needed.
     tisma_engine: str = ""
+    # The 3D scans of Tisma Scanner (jobs of kind "scan"): the program that rebuilds a part from its photos (tisma_scan
+    # of the openscanner repository: COLMAP, OpenMVS and a graphics card): the program, or its tools/tisma_scan.py,
+    # which runs with the Python of the machine. Its contract is in node/runners.py, run_scan().
+    tisma_scan: str = ""
+    # Longest run of a 3D scan [s]: a few hundred photos take tens of minutes on a graphics card.
+    scan_timeout_s: int = 6 * 3600
     # The name it asks to join with (the name of the machine when empty).
     name: str = ""
     work_dir: Path = Path("./node-work")
@@ -76,6 +82,9 @@ class NodeConfig:
             raise ValueError(f"Unknown settings in {path}: {', '.join(sorted(unknown))}")
         if data.get("tisma_engine"):
             required: tuple[str, ...] = ("master_url", "tisma_engine")
+        elif data.get("tisma_scan") and not (data.get("tisma_slicer") or data.get("tisma_fea")):
+            # A node only for 3D scans.
+            required = ("master_url", "tisma_scan")
         else:
             required = ("master_url", "tisma_slicer", "tisma_fea")
         for key in required:

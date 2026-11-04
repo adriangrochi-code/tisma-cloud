@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from typing import IO
 
 # The queues. A node takes the classes of its priority list (Node.priorities), in that order.
-JOB_CLASSES = ("slice", "slice_large", "fea", "fea_optimize", "aero", "orient")
-# The heavy analyses: a node runs fea_slots of them at a time (they take much memory and the graphics card).
-FEA_CLASSES = ("fea", "fea_optimize", "aero")
+JOB_CLASSES = ("slice", "slice_large", "fea", "fea_optimize", "aero", "orient", "scan")
+# The heavy analyses: a node runs fea_slots of them at a time (they take much memory and the graphics card). A 3D scan
+# (photogrammetry with COLMAP) is one of them: it takes the graphics card for a long time.
+FEA_CLASSES = ("fea", "fea_optimize", "aero", "scan")
 JOB_CLASS_DESCRIPTIONS = {
     "slice": "Slicing of a plate",
     "slice_large": "Slicing of a large plate (many triangles)",
@@ -22,12 +23,13 @@ JOB_CLASS_DESCRIPTIONS = {
     "fea_optimize": "Lightest infill / walls of a resin part (many analyses)",
     "aero": "Aerodynamic analysis (air flow around the printed part)",
     "orient": "Automatic orientation of a part (many candidates)",
+    "scan": "3D scan of a part (photogrammetry from the photos of Tisma Scanner)",
 }
 # What a new node does when nobody chose: the classes every node can run. aero and orient need tisma-engine on the
-# node (node/runners.py), so they are added to a node by hand.
+# node (node/runners.py), and scan needs tisma_scan (COLMAP and a graphics card), so they are added to a node by hand.
 DEFAULT_NODE_CLASSES = ("slice", "slice_large", "fea", "fea_optimize")
 # The kinds a user submits; each has its own parameters (plan_job) and gives one of the classes above.
-KINDS = ("slice", "fea", "aero", "orient")
+KINDS = ("slice", "fea", "aero", "orient", "scan")
 
 FEA_MODES = ("analyze", "lightest-infill", "resin-structure")
 FEA_QUALITIES = ("fast", "normal", "high", "extreme", "ultra")
@@ -110,6 +112,11 @@ def plan_job(kind: str, params: dict, triangles: int, large_slice_triangles: int
         if unknown:
             raise JobError(f"Unknown parameters: {', '.join(sorted(unknown))}")
         return JobPlan(kind, "orient", {"object": _index(params, "object"), "instance": _index(params, "instance")})
+    if kind == "scan":
+        # The photos and their settings come in the scan's own zip (scan.json of Tisma Scanner).
+        if params:
+            raise JobError(f"Unknown parameters: {', '.join(sorted(params))}")
+        return JobPlan(kind, "scan", {})
     raise JobError(f"'kind' must be one of {', '.join(KINDS)}")
 
 
@@ -145,6 +152,10 @@ AERO_RESOLUTION_CHECK_FACTOR = 1.2
 AERO_QUALITY_S = {"friction": 2., **{q: s * AERO_RESOLUTION_CHECK_FACTOR for q, s in
                                      {"fast": 300., "normal": 1500., "high": 4800., "extreme": 24300.}.items()}}
 ORIENT_S = 15.
+# A 3D scan: not measured on the nodes yet; a guess to order the queue only (COLMAP and the dense cloud on a graphics
+# card take tens of minutes for a few hundred photos), by the size of the scan.
+SCAN_BASE_S = 600.
+SCAN_PER_GB_S = 1800.
 
 
 def estimate_seconds(plan: JobPlan, triangles: int) -> float:
@@ -154,6 +165,9 @@ def estimate_seconds(plan: JobPlan, triangles: int) -> float:
         return AERO_QUALITY_S[plan.params["quality"]]
     if plan.kind == "orient":
         return ORIENT_S
+    if plan.kind == "scan":
+        # Here "triangles" is the size of the scan in bytes (scans.py).
+        return SCAN_BASE_S + SCAN_PER_GB_S * triangles / (1 << 30)
     return FEA_QUALITY_S[plan.params["quality"] or "normal"] * (1. if plan.params["mode"] == "analyze" else FEA_OPTIMIZE_FACTOR)
 
 

@@ -27,14 +27,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from . import __version__, alerts, backup, billing, capacity, codes, crypto, google_play, pairing, remote, reports, scheduler, triage
+from . import (__version__, alerts, backup, billing, capacity, codes, crypto, google_play, pairing, remote, reports, scans,
+               scheduler, triage)
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
 from .jobs import (ESTIMATE_MAX_TRIANGLES, JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles,
                    estimate_seconds, plan_job)
 from .models import (Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job, Node, Payment, Plan,
-                     PlaySubscription, RemoteCommand, Usage, User, month_of, utcnow)
+                     PlaySubscription, RemoteCommand, ScanUpload, Usage, User, month_of, utcnow)
 from .guard import Guard
 from .presence import Presence
 from .publicip import CHECK_S as PUBLIC_ADDRESS_CHECK_S, PublicAddress
@@ -172,6 +173,12 @@ class Services:
         with self.db.session() as s:
             requeued = scheduler.requeue_stale(s, self.settings.node_timeout_s, self.settings.max_attempts)
             pairing.drop_old(s)
+            # Scans being sent and given up (scans.py): their pieces and their row. A complete one is the job's.
+            stale = utcnow() - timedelta(hours=scans.STALE_H)
+            for up in s.execute(select(ScanUpload).where(ScanUpload.updated_at < stale)).scalars().all():
+                if up.job_id is None:
+                    scans.upload_path(self.storage.root, up.id).unlink(missing_ok=True)
+                s.delete(up)
             # Jobs ended by the sweep itself (nodes lost): the recent ones are enough, the others were cleaned before.
             ended = s.execute(select(Job.id).where(Job.status.in_(scheduler.FINAL), Job.files_removed.is_(False),
                                                    Job.finished_at > utcnow() - timedelta(hours=1))).scalars()
@@ -496,6 +503,11 @@ class ClaimBody(BaseModel):
 
 # A job claimed this recently may not be in the heartbeat of its node yet (claimed between two heartbeats) [s].
 ORPHAN_GRACE_S = 60.
+
+
+class ScanStartBody(BaseModel):
+    size: int = Field(gt=0)
+    name: str = Field(default="", max_length=200)
 
 
 class HeartbeatBody(BaseModel):
@@ -1486,6 +1498,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             parsed = json.loads(params)
         except ValueError:
             raise HTTPException(422, "'params' is not JSON") from None
+        if kind == "scan":
+            raise HTTPException(422, "A 3D scan is sent in pieces to /v1/scans")
         try:
             file.file.seek(0)
             # The triangles choose the queue of slicing and estimate its duration; for an analysis it only checks
@@ -1562,6 +1576,141 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def join_allowed(request: Request) -> None:
         if not limiter.allow(f"join-ip:{client_key(request)}", JOIN_PER_MINUTE):
             raise HTTPException(429, "Too many requests", headers={"Retry-After": "10"})
+
+    # ---- 3D scans of Tisma Scanner, sent in pieces (scans.py)
+    def scan_view(up: ScanUpload) -> dict:
+        return {"id": up.id, "size": up.size, "received": up.received, "chunk_size": cfg.scan_chunk_mb << 20,
+                "job_id": up.job_id}
+
+    def own_scan(s, user: User, upload_id: str) -> ScanUpload:  # noqa: ANN001
+        up = s.get(ScanUpload, upload_id)
+        if up is None or up.user_id != user.id:
+            raise HTTPException(404, "No such scan")
+        return up
+
+    @app.post("/v1/scans", status_code=201)
+    def scan_start(user: UserDep, body: ScanStartBody) -> dict:
+        if body.size > cfg.max_scan_gb << 30:
+            raise HTTPException(413, f"The scan is larger than {cfg.max_scan_gb} GB")
+        with db.session() as s:
+            u = s.get(User, user.id)
+            try:
+                # Refused now, before gigabytes are sent: the plan does not include scans, it is not paid...
+                scheduler.admit(s, u, cfg.grace_days, "scan")
+            except scheduler.Refused as ex:
+                raise HTTPException(ex.status, str(ex)) from None
+            if s.execute(select(func.count()).select_from(ScanUpload).where(
+                    ScanUpload.user_id == u.id, ScanUpload.job_id.is_(None))).scalar_one() >= 3:
+                raise HTTPException(429, "Three scans are being sent already: finish or delete one")
+            up = ScanUpload(user_id=u.id, name=safe_filename(body.name, "scan.zip"), size=body.size)
+            s.add(up)
+            s.flush()
+            scans.upload_path(services.storage.root, up.id).parent.mkdir(parents=True, exist_ok=True)
+            scans.upload_path(services.storage.root, up.id).touch()
+            return scan_view(up)
+
+    @app.put("/v1/scans/{upload_id}/data")
+    async def scan_piece(user: UserDep, request: Request, upload_id: str, offset: int) -> Any:
+        chunk = cfg.scan_chunk_mb << 20
+
+        def where() -> ScanUpload:
+            with db.session() as s:
+                up = own_scan(s, user, upload_id)
+                s.expunge(up)
+                return up
+
+        up = await run_in_threadpool(where)
+        if up.job_id:
+            raise HTTPException(409, "The scan is complete already")
+        if offset != up.received:
+            return JSONResponse({"detail": "The piece does not go there", "received": up.received}, status_code=409)
+        path = scans.upload_path(services.storage.root, up.id)
+        data = bytearray()
+        async for part in request.stream():
+            data += part
+            if len(data) > chunk or offset + len(data) > up.size:
+                raise HTTPException(413, f"A piece is at most {cfg.scan_chunk_mb} MB and the scan {up.size} bytes")
+        if not data:
+            raise HTTPException(422, "The piece is empty")
+
+        def write() -> int:
+            with db.session() as s:
+                row = s.get(ScanUpload, up.id, with_for_update=True)
+                if row is None or row.received != offset:
+                    return -1 if row is None else row.received
+                with open(path, "r+b") as f:
+                    f.seek(offset)
+                    f.write(data)
+                    f.truncate()
+                row.received = offset + len(data)
+                row.updated_at = utcnow()
+                return row.received
+
+        received = await run_in_threadpool(write)
+        if received < 0:
+            raise HTTPException(404, "No such scan")
+        if received != offset + len(data):
+            return JSONResponse({"detail": "The piece does not go there", "received": received}, status_code=409)
+        return {"received": received}
+
+    @app.get("/v1/scans/{upload_id}")
+    def scan_state(user: UserDep, upload_id: str) -> dict:
+        with db.session() as s:
+            return scan_view(own_scan(s, user, upload_id))
+
+    @app.post("/v1/scans/{upload_id}/complete", status_code=201)
+    def scan_complete(user: UserDep, upload_id: str) -> dict:
+        refused: str | None = None
+        with db.session() as s:
+            up = own_scan(s, user, upload_id)
+            if not up.job_id and up.received == up.size:
+                try:
+                    scans.check_scan(scans.upload_path(services.storage.root, up.id), cfg.max_scan_unzipped_gb << 30)
+                except scans.ScanError as ex:
+                    # Not kept: removed in this transaction, the answer said after it.
+                    refused = str(ex)
+                    scans.upload_path(services.storage.root, up.id).unlink(missing_ok=True)
+                    s.delete(up)
+        if refused is not None:
+            raise HTTPException(422, refused)
+        with db.session() as s:
+            up = own_scan(s, user, upload_id)
+            if up.job_id:
+                # Asked again (the answer was lost): the same job.
+                job = s.get(Job, up.job_id)
+                if job is not None:
+                    return job_view(job)
+            if up.received != up.size:
+                raise HTTPException(409, f"The scan is not complete: {up.received} of {up.size} bytes")
+            path = scans.upload_path(services.storage.root, up.id)
+            u = s.get(User, user.id)
+            try:
+                scheduler.admit(s, u, cfg.grace_days, "scan")
+            except scheduler.Refused as ex:
+                raise HTTPException(ex.status, str(ex)) from None
+            plan = plan_job("scan", {}, 0, cfg.large_slice_triangles)
+            now = utcnow()
+            estimate = estimate_seconds(plan, up.size)
+            job = Job(user_id=u.id, kind=plan.kind, job_class=plan.job_class, params=json.dumps(plan.params),
+                      priority=u.plan.priority, input_name=up.name, created_at=now,
+                      order_at=now + timedelta(seconds=min(estimate, cfg.queue_size_wait_max_s)))
+            s.add(job)
+            s.flush()
+            target = services.storage.input_path(job.id)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(path, target)
+            up.job_id = job.id
+            view = job_view(job)
+        services.wakeup.notify(JOBS)
+        return view
+
+    @app.delete("/v1/scans/{upload_id}")
+    def scan_delete(user: UserDep, upload_id: str) -> dict:
+        with db.session() as s:
+            up = own_scan(s, user, upload_id)
+            scans.upload_path(services.storage.root, up.id).unlink(missing_ok=True)
+            s.delete(up)
+        return {"deleted": upload_id}
 
     @app.post("/v1/node/join", status_code=201, dependencies=[Depends(local_only), Depends(join_allowed)])
     def node_join(request: Request, body: JoinBody) -> dict:

@@ -421,7 +421,8 @@ const PLAN_FIELDS = [["monthly_hours", "Horas de cálculo por mes", parseFloat],
 
 // The job classes of the server (jobs.JOB_CLASSES), with the names the server window uses.
 const CLASS_NAMES = { slice: "Laminar", slice_large: "Laminar placas grandes", fea: "Análisis estructural",
-  fea_optimize: "Relleno mínimo / paredes de resina", aero: "Análisis aerodinámico (CFD)", orient: "Orientación automática" };
+  fea_optimize: "Relleno mínimo / paredes de resina", aero: "Análisis aerodinámico (CFD)", orient: "Orientación automática",
+  scan: "Escaneo 3D (Tisma Scanner)" };
 
 async function editPlan(p) {
   const name = p ? p.name : (prompt("Nombre del plan nuevo:", "") || "").trim();

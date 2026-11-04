@@ -8,7 +8,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .crypto import Encrypted, index
@@ -420,5 +420,21 @@ class BugReport(Base):
     # The team found the report useful and rewarded its author with days of their plan (by hand, once per report).
     rewarded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     reward_days: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ScanUpload(Base):
+    """A 3D scan of Tisma Scanner being sent in pieces (scans.py): too large for one request (Cloudflare cuts requests
+    of more than 100 MB) and sent from a phone, whose connection may drop. It becomes a job when complete."""
+    __tablename__ = "scan_uploads"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Encrypted, default="")
+    # Bytes (several GB: a 64-bit integer also in PostgreSQL).
+    size: Mapped[int] = mapped_column(BigInteger)
+    received: Mapped[int] = mapped_column(BigInteger, default=0)
+    # The job it became (when complete).
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

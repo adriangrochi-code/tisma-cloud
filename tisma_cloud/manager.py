@@ -68,6 +68,8 @@ NODE_FIELDS = [
     ("verify_tls", "Verificar el certificado HTTPS", bool, False),
     ("name", "Nombre con el que pide unirse (vacío: el de la máquina)", str, False),
     ("tisma_engine", "Programa tisma-engine (el slicer nuevo; vacío: usa tisma-slicer y tisma-fea)", str, False),
+    ("tisma_scan", "Programa tisma_scan de Tisma Scanner (escaneos 3D; vacío: no hace escaneos)", str, False),
+    ("scan_timeout_s", "Duración máxima de un escaneo 3D [s]", int, False),
 ]
 # What a node can do (the job classes of jobs.py), as the window and the console name them.
 JOB_CLASS_NAMES = {
@@ -77,6 +79,7 @@ JOB_CLASS_NAMES = {
     "fea_optimize": "Relleno mínimo / paredes de resina (muchos análisis)",
     "aero": "Análisis aerodinámico (CFD)",
     "orient": "Orientación automática",
+    "scan": "Escaneo 3D (fotogrametría de Tisma Scanner)",
 }
 NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_engine": "", "tisma_slicer": "",
                  "tisma_fea": "", "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,

@@ -21,6 +21,11 @@ class Settings:
     storage_dir: Path = field(default_factory=lambda: Path(os.environ.get("TISMA_STORAGE_DIR", "./storage")))
     # Largest project accepted [MB].
     max_upload_mb: int = field(default_factory=lambda: _int("TISMA_MAX_UPLOAD_MB", 200))
+    # 3D scans of Tisma Scanner (scans.py): largest scan [GB], uncompressed [GB], and the size of each piece [MB]
+    # (under the 100 MB of a request through Cloudflare's free plan).
+    max_scan_gb: int = field(default_factory=lambda: _int("TISMA_MAX_SCAN_GB", 8))
+    max_scan_unzipped_gb: int = field(default_factory=lambda: _int("TISMA_MAX_SCAN_UNZIPPED_GB", 12))
+    scan_chunk_mb: int = field(default_factory=lambda: _int("TISMA_SCAN_CHUNK_MB", 16))
     # Largest body of any other request (JSON of the API, notifications of the payment providers) [KB]: FastAPI reads a
     # body whole before it checks it, so without a limit anyone could fill the memory of the master (guard.py).
     max_body_kb: int = field(default_factory=lambda: _int("TISMA_MAX_BODY_KB", 1024))

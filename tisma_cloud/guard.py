@@ -28,11 +28,13 @@ Send = Callable
 
 # Uploads: (method, path) -> kind of token.
 UPLOADS = (
-    (re.compile(r"^/v1/jobs$"), "user"),
-    (re.compile(r"^/v1/node/jobs/[^/]+/result$"), "node"),
+    ("POST", re.compile(r"^/v1/jobs$"), "user"),
+    ("POST", re.compile(r"^/v1/node/jobs/[^/]+/result$"), "node"),
     # Remote printers: a G-code to print sent by the phone, an image of a camera sent by the bridge.
-    (re.compile(r"^/v1/remote/bridges/[^/]+/printers/[^/]+/print$"), "user"),
-    (re.compile(r"^/v1/bridges/[^/]+/printers/[^/]+/camera$"), "user"),
+    ("POST", re.compile(r"^/v1/remote/bridges/[^/]+/printers/[^/]+/print$"), "user"),
+    ("POST", re.compile(r"^/v1/bridges/[^/]+/printers/[^/]+/camera$"), "user"),
+    # A piece of a 3D scan (scans.py).
+    ("PUT", re.compile(r"^/v1/scans/[^/]+/data$"), "scan"),
 )
 # Pages that need no account (limited per address).
 ANONYMOUS = re.compile(r"^/(v1/(health|plans|auth/.*|billing/webhook/.*|billing/play/notify|billing/test/.*|reports)|cuenta.*|admin)?$")
@@ -185,7 +187,7 @@ class Guard:
             await _answer(send, 429, "Too many requests: wait a minute", [(b"retry-after", b"60")])
             return
 
-        upload = next((kind for rx, kind in UPLOADS if method == "POST" and rx.match(path)), None)
+        upload = next((kind for m, rx, kind in UPLOADS if method == m and rx.match(path)), None)
         small = next((kb for rx, kb in SMALL if method == "POST" and rx.match(path)), None)
         if upload is None and small is None:
             await self._limited(scope, receive, counted_send, refuse_counted, self.settings.max_body_kb << 10)
@@ -204,7 +206,8 @@ class Guard:
                 return
             await self.app(scope, receive, counted_send)
             return
-        limit = (self.settings.max_upload_mb if upload == "user" else self.settings.max_result_mb) << 20
+        limit = {"user": self.settings.max_upload_mb, "scan": self.settings.scan_chunk_mb}.get(
+            upload, self.settings.max_result_mb) << 20
         length = headers.get("content-length", "")
         if not length.isdigit():
             refuse_counted(411)
@@ -216,7 +219,7 @@ class Guard:
             return
         auth = headers.get("authorization", "")
         token = auth[7:].strip() if auth.startswith("Bearer ") else ""
-        who = await self.run_sync(self.token_owner, upload, token) if token else None
+        who = await self.run_sync(self.token_owner, "node" if upload == "node" else "user", token) if token else None
         if who is None:
             refuse_counted(401)
             await _answer(send, 401, "Invalid access token", [(b"www-authenticate", b"Bearer")])

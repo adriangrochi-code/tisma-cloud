@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import BinaryIO
 
 # .tea: the result of an analysis of tisma-engine (its cloud.md, rule 19); .taero: of an aerodynamic analysis (rule
-# 19b); .json: the orientation found (rule 19c).
-ALLOWED_RESULTS = (".gcode", ".bgcode", ".tfea", ".tea", ".taero", ".json")
+# 19b); .json: the orientation found (rule 19c); .zip: a 3D scan (the part in STL, its report, the cloud; scans.py).
+ALLOWED_RESULTS = (".gcode", ".bgcode", ".tfea", ".tea", ".taero", ".json", ".zip")
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]")
 
 

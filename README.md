@@ -433,6 +433,50 @@ empezar, o PostgreSQL (instalador oficial para Windows) con `TISMA_DATABASE_URL`
 Los comandos sueltos de antes siguen: `tisma-cloud master [--port P] [--env .env]`, `tisma-cloud node [--config node.toml]`. Para armar el
 programa a mano: `pip install ".[master,exe]"` y `pyinstaller tisma-cloud.spec` (queda en `dist/`).
 
+## Escaneos 3D (Tisma Scanner)
+
+La app Tisma Scanner (repositorio `openscanner`) manda sus escaneos (fotos y sensores, de decenas de MB a varios GB)
+a Tisma Cloud con la cuenta de la persona, y un nodo con placa de video arma la pieza (fotogrametría con COLMAP y
+OpenMVS). Es el tipo de cálculo `scan`, con su propio plan: solo lo puede mandar una cuenta cuyo plan lo incluya.
+
+**El plan:** por ejemplo
+`tisma-cloud admin plan-set escaneo --hours 10 --concurrent 1 --classes scan --public` (las horas, el precio y los
+nombres los decide la administración). Para sumarlo a un plan que ya existe, `--classes` con `scan` agregado.
+
+**La app** entra con su cuenta (`POST /v1/auth/login`) y manda el escaneo **en partes** de 16 MB
+(`TISMA_SCAN_CHUNK_MB`), porque Cloudflare corta los pedidos de más de 100 MB y el teléfono puede perder la conexión:
+
+```
+POST   /v1/scans                     {"size": bytes, "name": "pieza.zip"} -> {"id", "chunk_size", "received"}
+PUT    /v1/scans/{id}/data?offset=N  una parte, con Content-Length (409 con "received" si hay que seguir desde otro lugar)
+GET    /v1/scans/{id}                lo que llegó ("received") y el trabajo cuando terminó de llegar ("job_id")
+POST   /v1/scans/{id}/complete       revisa el zip y crea el trabajo: el mismo objeto de GET /v1/jobs/{id}
+DELETE /v1/scans/{id}                abandona un escaneo a medio mandar
+```
+
+Después sigue como cualquier trabajo: `GET /v1/jobs/{id}` (avance, `summary` con las medidas del informe, o `error`,
+`summary.code` y `summary.error_es`), `POST /v1/jobs/{id}/cancel` y `GET /v1/jobs/{id}/result`: un zip con
+`pieza.stl` (en mm), `pieza_informe.json` y, si se hicieron, `pieza.ply`, `textura.zip` y `log.txt`.
+
+- El plan se revisa al empezar (402 antes de subir gigas) y otra vez al completar.
+- Como mucho `TISMA_MAX_SCAN_GB` (8) por escaneo y `TISMA_MAX_SCAN_UNZIPPED_GB` (12) descomprimido; tres escaneos a
+  medio mandar por cuenta; los que nadie toca en un día se borran.
+- El zip tiene que ser de Tisma Scanner (`session.json` y fotos JPEG) y sin rutas peligrosas (`..`, absolutas).
+- El escaneo se borra cuando el trabajo termina; el resultado queda como los demás (`TISMA_RETENTION_H`).
+
+**El nodo** necesita `tisma_scan` en su `node.toml` (el programa de `openscanner`, o su `tools/tisma_scan.py`, que
+corre con el Python de la máquina) y `scan` en sus prioridades (`tisma-cloud admin node-set gpu-1 --priorities
+scan,fea`): un escaneo ocupa la placa de video, así que cuenta como un análisis (`fea_slots`). Puede durar horas:
+`scan_timeout_s` (6 h). Un nodo solo para escaneos no necesita `tisma_slicer` ni `tisma_fea`. El contrato de la línea
+de comandos está en `tisma_cloud/node/runners.py`, `run_scan()`:
+
+```
+tisma_scan <scan.zip> -o <carpeta> --summary <resumen.json> [--threads <n>] [--no-gpu]
+```
+
+con `progress N` en la salida, los archivos de arriba en `<carpeta>`, y en `<resumen.json>` lo que muestra la app o,
+si falla, `error`, `code` y `error_es` con código de salida distinto de 0.
+
 ## Lista de versiones de Tisma
 
 El maestro sirve la lista firmada de versiones del programa y de la app (`app_updates.md` del motor, regla 13) como

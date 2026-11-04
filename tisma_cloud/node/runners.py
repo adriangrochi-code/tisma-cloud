@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -337,4 +338,70 @@ def run_orient(cfg: NodeConfig, params: dict, project: Path, work: Path, progres
     return Outcome(out, _run_engine(cfg, "orient", clean, out, extra, work, progress, cancelled, params))
 
 
-RUNNERS = {"slice": run_slice, "fea": run_fea, "aero": run_aero, "orient": run_orient}
+# The files of a 3D scan the node sends back, in one zip (the result of the job).
+SCAN_RESULTS = ("pieza.stl", "pieza_informe.json", "pieza.ply", "textura.zip", "log.txt")
+
+
+def scan_command(cfg: NodeConfig) -> list[str]:
+    """The command of tisma_scan: the program, or a .py script with the Python of the machine (not the one of this
+    node, which may be the tisma-cloud program itself)."""
+    if not cfg.tisma_scan:
+        return []
+    if cfg.tisma_scan.lower().endswith(".py"):
+        python = shutil.which("python3") or shutil.which("python") or shutil.which("py")
+        if not python:
+            raise JobFailed("tisma_scan is a Python script, and this machine has no Python")
+        return [python, cfg.tisma_scan]
+    return [cfg.tisma_scan]
+
+
+def run_scan(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
+             cancelled: Cancelled) -> Outcome:
+    """A 3D scan of Tisma Scanner (scans.py of the master) rebuilt with tisma_scan. Its contract:
+
+        tisma_scan <scan.zip> -o <folder> --summary <summary.json> [--threads <n>] [--no-gpu]
+
+    - progress on the standard output, one line per change: "progress <0 to 100>";
+    - in <folder>: pieza.stl (the part in mm), pieza_informe.json (measures, volume, deviation, scale source) and, when
+      made, pieza.ply (the cloud), textura.zip (the textured mesh) and log.txt;
+    - <summary.json>: what the app shows (from the report) or, when it fails, "error" (English), "code" and
+      "error_es" (as the engine, cloud.md rule 19a); exit code other than 0.
+
+    The node sends back one zip with those files (the result of the job)."""
+    command = scan_command(cfg)
+    if not command:
+        raise JobFailed("This node cannot run 3D scans: it needs tisma_scan in its configuration")
+    scan = work / "scan.zip"
+    project.rename(scan)
+    out = work / "scan-out"
+    out.mkdir()
+    summary_path = work / "summary.json"
+    cmd = [*command, str(scan), "-o", str(out), "--summary", str(summary_path)]
+    threads = int(params.get("threads") or 0)
+    if threads > 0:
+        cmd += ["--threads", str(threads)]
+    if not cfg.gpu:
+        cmd.append("--no-gpu")
+    long_cfg = dataclasses.replace(cfg, timeout_s=max(cfg.timeout_s, cfg.scan_timeout_s))
+    code, err = _run(cmd, long_cfg, ENGINE_PROGRESS, progress, cancelled, work)
+    summary = _engine_summary(summary_path)
+    if code != 0 or not (out / "pieza.stl").is_file():
+        details = {k: str(summary[k])[:1000] for k in ("code", "error_es") if summary.get(k)}
+        raise JobFailed(str(summary.get("error") or "") or err.strip() or f"The 3D scan failed (code {code})", details)
+    for k in ("error", "code", "error_es"):
+        summary.pop(k, None)
+    result = work / "scan.zip.result"
+    with zipfile.ZipFile(result, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in SCAN_RESULTS:
+            path = out / name
+            if path.is_file():
+                # The texture and the cloud are compressed already or large: stored as they are.
+                z.write(path, name, compress_type=zipfile.ZIP_STORED if name.endswith((".zip", ".ply"))
+                        else zipfile.ZIP_DEFLATED)
+    final = work / "scan.zip"
+    scan.unlink(missing_ok=True)
+    result.rename(final)
+    return Outcome(final, summary)
+
+
+RUNNERS = {"slice": run_slice, "fea": run_fea, "aero": run_aero, "orient": run_orient, "scan": run_scan}
