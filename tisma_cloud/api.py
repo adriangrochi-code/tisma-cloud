@@ -44,6 +44,7 @@ from .settings import Settings
 from .storage import ALLOWED_RESULTS, Storage, TooLarge, safe_filename
 from .translate import TranslationError, Translator
 from .threats import PARALLEL_BYTES, Clamd, ScanUnavailable, Threat, ThreatLog, check_gcode, check_project
+from .twins import Twins
 from .wakeup import Wakeup
 
 log = logging.getLogger("tisma_cloud")
@@ -121,6 +122,7 @@ class Services:
         # Uploads checked before they are kept (threats.py), and the ones refused lately for the alerts.
         self.clamd = Clamd(settings.clamd) if settings.clamd else None
         self.refused = ThreatLog()
+        self.twins = Twins()
         # Processes that read large G-code in parts at the same time (made when first needed).
         self._scan_pool: ProcessPoolExecutor | None = None
         self._scan_pool_lock = threading.Lock()
@@ -334,7 +336,8 @@ class Services:
     def check_alerts(self, now: datetime | None = None) -> list[Alert]:
         """Opens, repeats and closes the alerts (one check at a time, so that an alert is never opened twice)."""
         with self._alerts_lock, self.db.session() as s:
-            return alerts.update(s, self.settings, self.storage.root, self.mailer, now, self.refused.recent())
+            return alerts.update(s, self.settings, self.storage.root, self.mailer, now, self.refused.recent(),
+                                 self.twins.twins(now or utcnow()))
 
 
 def job_view(job: Job) -> dict[str, Any]:
@@ -472,6 +475,8 @@ ORPHAN_GRACE_S = 60.
 
 class HeartbeatBody(BaseModel):
     running: list[str] = Field(default_factory=list)
+    # A random id of this run of the node program (twins.py); empty from an older node.
+    instance: str = Field(default="", max_length=64)
     info: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1567,7 +1572,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # queue now, not never (the node is seen, so requeue_stale does not take them). Only from a node that sends
             # its whole list.
             requeued = 0
-            if "running" in body.model_fields_set and len(body.running) <= 64:
+            # Two programs with this token: neither one's list says what the other runs, so nothing is requeued here,
+            # nor from a program that started a moment ago (an older one may still be alive).
+            twins, settled = services.twins.seen(node.id, body.instance, utcnow()) if body.instance else (False, True)
+            if twins:
+                log.warning("Node %s: two programs answer with its token (a copied node.toml or an old process)",
+                            node.name)
+            elif settled and "running" in body.model_fields_set and len(body.running) <= 64:
                 requeued = scheduler.requeue_orphans(s, node.id, body.running, cfg.max_attempts, ORPHAN_GRACE_S)
         if requeued:
             services.wakeup.notify(JOBS)

@@ -2,11 +2,11 @@
 
 Branch `server/next` (from `ccr-7e2013d9-qwmclz`). Scope: `server/` only. Spec/QA contact: `session_01QadJfL7KViJEaJL92p8Swb`.
 
-Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (224 passed, 2 skipped
+Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (226 passed, 2 skipped
 at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extras).
 
-Dates (owner, relayed by QA 2026-11-04): the roadmap closes in the second week of January 2027, when a closed beta
-starts on the owner's real server (tunnel, Windows service): it must be running and stable by then.
+Dates (owner, relayed by QA 2026-11-04, corrected): closed beta in December 2026 on the owner's real server (tunnel,
+Windows service), which must be up and stable for it; 1.0 in the second week of January 2027.
 
 ## Work list (in order)
 
@@ -40,6 +40,6 @@ starts on the owner's real server (tunnel, Windows service): it must be running 
 - Owner decision relayed by QA: this session may read all of tisma_engine (never write it, never send it this repo's
   PrusaSlicer-derived details) and, here, only server/, qa/, docs and CLAUDE.md. Adding the repo still needs the
   owner's own approval in this session.
-- 9711f1b: QA saw a requeued aero never taken again, and a stale job kept as running on qa1. Not reproduced here
-  (scratchpad e2e2/run.sh: requeued at ~66 s, taken again, attempts 2). Suspected: two agents with the same token.
-  Asked QA for processes, job rows and node logs.
+- 9711f1b: passes for QA on a clean run; its earlier failure was two node programs with one token. Now the master
+  spots them (twins.py: a random instance id in the heartbeat), requeues nothing from them and opens an alert; a new
+  program's list is trusted after 35 s.

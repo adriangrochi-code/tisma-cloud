@@ -14,6 +14,7 @@ import platform
 import shutil
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import httpx
@@ -47,6 +48,8 @@ class Agent:
         self.info = machine_info(cfg)
         self._lock = threading.Lock()
         self._running: dict[str, threading.Event] = {}
+        # This run of the node program: the master tells two programs with one token apart (twins.py).
+        self.instance = uuid.uuid4().hex
         # Taken by a slot while it may claim, or runs, a structural analysis.
         self._fea = threading.BoundedSemaphore(max(1, cfg.fea_slots))
         self._stop = threading.Event()
@@ -67,7 +70,8 @@ class Agent:
     def heartbeat(self) -> None:
         with self._lock:
             running = list(self._running)
-        r = self.client.post("/v1/node/heartbeat", json={"running": running, "info": self.info}, timeout=30.)
+        r = self.client.post("/v1/node/heartbeat", json={"running": running, "info": self.info,
+                                                                "instance": self.instance}, timeout=30.)
         r.raise_for_status()
         for job_id in r.json().get("cancel", []):
             with self._lock:

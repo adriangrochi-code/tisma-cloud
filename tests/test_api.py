@@ -429,6 +429,48 @@ def test_restarted_node_jobs_are_requeued(client, f, settings):
     assert f.claim(node)["id"] == job["id"]
 
 
+def test_two_programs_with_one_node_token(client, f, settings):
+    # A copied node.toml or an old process left running: two programs with one token. Neither one's heartbeat says
+    # what the other runs, so the master requeues nothing from them and opens an alert.
+    from tisma_cloud.api import ORPHAN_GRACE_S
+    from tisma_cloud.models import Job
+
+    user = f.user()
+    node = f.node("twin", "slice")
+    job = f.submit(user)
+    assert f.claim(node)["id"] == job["id"]
+    with f.db.session() as s:
+        s.get(Job, job["id"]).started_at = utcnow() - timedelta(seconds=ORPHAN_GRACE_S + 5)
+
+    def beat(instance: str, running: list[str]) -> None:
+        r = client.post("/v1/node/heartbeat", headers=node, json={"running": running, "instance": instance})
+        assert r.status_code == 200
+
+    beat("a" * 32, [job["id"]])
+    beat("b" * 32, [])
+    # The first one again: both are alive.
+    beat("a" * 32, [job["id"]])
+    beat("b" * 32, [])
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "running"
+    alerts = client.app.state.services.check_alerts()
+    assert any(a.key.startswith("twins:") and "twin" in a.message for a in alerts)
+
+
+def test_restart_is_not_twins():
+    from tisma_cloud.twins import Twins
+
+    t, now = Twins(), utcnow()
+    assert t.seen(1, "old", now) == (False, False)
+    assert t.seen(1, "old", now + timedelta(seconds=40)) == (False, True)
+    # Restarted: the old one never answers again; the new one is trusted after two heartbeats.
+    assert t.seen(1, "new", now + timedelta(seconds=45)) == (False, False)
+    assert t.seen(1, "new", now + timedelta(seconds=60)) == (False, False)
+    assert t.seen(1, "new", now + timedelta(seconds=81)) == (False, True)
+    assert not t.twins(now + timedelta(seconds=81))
+    # Another node is not counted.
+    assert t.seen(2, "x", now + timedelta(seconds=82)) == (False, False)
+
+
 def test_requeue_gives_up_after_max_attempts(client, f, settings):
     user = f.user()
     job = f.submit(user)
