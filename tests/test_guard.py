@@ -129,26 +129,26 @@ def test_any_other_body_is_limited(settings):
 
 def test_node_results_never_wait_for_the_users_places(settings):
     # Under load the users' projects took the 8 places of uploads and a node's result was refused (429), which failed
-    # a job already computed. A result does not use those places.
+    # a job already computed. A result does not use those places: here there are none at all for the users.
     import dataclasses
 
     from fastapi.testclient import TestClient
 
     from conftest import Factory, new_app
+    from tisma_cloud.models import Job, User
 
     full = dataclasses.replace(settings, max_uploads=0)
     with TestClient(new_app(full)) as c:
         f = Factory(c)
         user = f.user("full@x.com")
+        node = f.node("n", "slice")
         assert c.post("/v1/jobs", headers=user, data={"kind": "slice", "params": "{}"},
                       files={"file": ("p.3mf", b"x", "model/3mf")}).status_code == 429
-    with TestClient(new_app(settings)) as c:
-        f = Factory(c)
-        user = f.user("ana@x.com")
-        node = f.node("n", "slice")
-        job = f.submit(user)
-        assert f.claim(node)["id"] == job["id"]
-    with TestClient(new_app(full)) as c:
+        # A job already in the queue (sent before the places filled up).
+        with f.db.session() as s:
+            owner = s.query(User).one()
+            s.add(Job(user_id=owner.id, kind="slice", job_class="slice", params="{}", input_name="p.3mf"))
+        job = f.claim(node)
         r = c.post(f"/v1/node/jobs/{job['id']}/result", headers=node,
                    files={"file": ("plate.gcode", b"G1 X1\n", "text/plain")}, data={"summary": "{}"})
         assert r.status_code == 200, r.text
