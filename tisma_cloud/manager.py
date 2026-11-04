@@ -801,6 +801,41 @@ class Manager:
                      f"La última, hace {hours:.0f} h: {last} (guardá también una copia fuera de esta máquina)"
                      if hours < 48 else f"La última es de hace {hours / 24:.0f} días: {last}; mirá el registro")
 
+    def _scan_checks(self, tisma_scan: str) -> list[Check]:
+        """What a node needs for the 3D scans of Tisma Scanner (node/runners.py, run_scan): tisma_scan, and for its
+        .py the Python modules; COLMAP; an NVIDIA card (only a warning: COLMAP is much slower without one)."""
+        import shutil
+        import subprocess
+        from types import SimpleNamespace
+
+        from .node.runners import JobFailed, scan_command
+
+        out: list[Check] = []
+        if not Path(tisma_scan).is_file():
+            return [Check("Escaneos 3D: tisma_scan", False, f"No existe: {tisma_scan}")]
+        try:
+            command = scan_command(SimpleNamespace(tisma_scan=tisma_scan))
+        except JobFailed:
+            return [Check("Escaneos 3D: Python", False, "tisma_scan es un .py y esta máquina no tiene Python")]
+        out.append(Check("Escaneos 3D: tisma_scan", True, " ".join(command)))
+        if len(command) > 1:
+            # The same Python the node will run it with: numpy, OpenCV and Open3D (openscanner's README).
+            try:
+                run = subprocess.run([command[0], "-c", "import numpy, cv2, open3d"], capture_output=True, text=True,
+                                     timeout=60)
+                ok, detail = run.returncode == 0, (run.stderr.strip().splitlines() or ["?"])[-1]
+            except (OSError, subprocess.SubprocessError) as e:
+                ok, detail = False, str(e)
+            out.append(Check("Escaneos 3D: módulos de Python", ok, f"numpy, OpenCV y Open3D en {command[0]}" if ok else
+                             f"{detail}: pip install numpy opencv-contrib-python-headless open3d"))
+        colmap = os.environ.get("TISMA_COLMAP") or shutil.which("colmap") or ""
+        out.append(Check("Escaneos 3D: COLMAP", bool(colmap) and (Path(colmap).is_file() or bool(shutil.which(colmap))),
+                         colmap or "No está: instalalo (versión con CUDA) y ponelo en el PATH o en TISMA_COLMAP"))
+        gpu = shutil.which("nvidia-smi")
+        out.append(Check("Escaneos 3D: placa NVIDIA", True if gpu else None,
+                         "nvidia-smi encontrado" if gpu else "Sin nvidia-smi: COLMAP es mucho más lento sin placa NVIDIA"))
+        return out
+
     def checks(self) -> list[Check]:
         """What this machine needs to serve, checked one by one (the window, tisma-cloud check)."""
         out: list[Check] = []
@@ -866,8 +901,13 @@ class Manager:
                                  "Tisma Cloud, junto al programa"))
         else:
             node = self.read_node()
+            scan_only = bool(node.get("tisma_scan")) and not (node.get("tisma_engine") or node.get("tisma_slicer")
+                                                              or node.get("tisma_fea"))
             programs = ((("tisma_engine", "Programa tisma-engine"),) if node.get("tisma_engine") else
+                        () if scan_only else
                         (("tisma_slicer", "Programa tisma-slicer"), ("tisma_fea", "Programa tisma-fea")))
+            if node.get("tisma_scan"):
+                out += self._scan_checks(str(node["tisma_scan"]))
             for key, label in programs:
                 path = str(node.get(key) or "")
                 ok = bool(path) and Path(path).is_file()

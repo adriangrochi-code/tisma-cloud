@@ -213,6 +213,17 @@ def test_runner_runs_tisma_scan_and_zips_its_files(tmp_path):
     with pytest.raises(JobFailed) as ex:
         run_scan(cfg, {}, work2 / "input.3mf", work2, seen.append, lambda: False)
     assert str(ex.value) == "Not a scan" and ex.value.details == {"code": "bad_scan", "error_es": "No es un escaneo"}
+    # A crash before the summary (a missing module): a coded error, not the traceback.
+    crash = tmp_path / "crash.py"
+    crash.write_text("import no_such_module_for_scans\n")
+    work3 = tmp_path / "w3"
+    work3.mkdir()
+    (work3 / "input.3mf").write_bytes(make_scan())
+    with pytest.raises(JobFailed) as ex:
+        run_scan(dataclasses.replace(cfg, tisma_scan=str(crash)), {}, work3 / "input.3mf", work3, seen.append,
+                 lambda: False)
+    assert "Traceback" not in str(ex.value) and ex.value.details["code"] == "scan_error"
+    assert ex.value.details["error_es"] == "El escaneo falló en el servidor de cálculo"
     # Without tisma_scan the node refuses.
     with pytest.raises(JobFailed):
         run_scan(dataclasses.replace(cfg, tisma_scan=""), {}, work2 / "input.3mf", work2, seen.append, lambda: False)
@@ -225,3 +236,22 @@ def test_scan_only_node_config(tmp_path):
     toml.write_text(f'master_url = "http://m:8000"\ntoken = "tn_x"\ntisma_scan = "{sys.executable}"\n')
     cfg = NodeConfig.load(toml)
     assert cfg.tisma_scan == sys.executable and cfg.scan_timeout_s == 6 * 3600
+
+
+def test_check_of_a_scan_node(tmp_path, monkeypatch):
+    from tisma_cloud.manager import Manager
+
+    monkeypatch.setenv("TISMA_COLMAP", str(tmp_path / "no-colmap"))
+    script = tmp_path / "tisma_scan.py"
+    script.write_text("print('x')\n")
+    m = Manager(tmp_path)
+    m.set_role("node")
+    m.write_node({"tisma_scan": str(script), "tisma_slicer": "", "tisma_fea": "", "master_url": "http://127.0.0.1:9"})
+    checks = {c.name: c for c in m.checks()}
+    assert checks["Escaneos 3D: tisma_scan"].ok
+    assert "Escaneos 3D: módulos de Python" in checks
+    assert checks["Escaneos 3D: COLMAP"].ok is False
+    # A node only for scans: no complaint about tisma-slicer.
+    assert "Programa tisma-slicer" not in checks
+    m.write_node({"tisma_scan": str(tmp_path / "missing.exe")})
+    assert {c.name: c for c in m.checks()}["Escaneos 3D: tisma_scan"].ok is False

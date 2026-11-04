@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 import re
 import shutil
@@ -387,7 +388,14 @@ def run_scan(cfg: NodeConfig, params: dict, project: Path, work: Path, progress:
     summary = _engine_summary(summary_path)
     if code != 0 or not (out / "pieza.stl").is_file():
         details = {k: str(summary[k])[:1000] for k in ("code", "error_es") if summary.get(k)}
-        raise JobFailed(str(summary.get("error") or "") or err.strip() or f"The 3D scan failed (code {code})", details)
+        if summary.get("error") and details.get("code"):
+            raise JobFailed(str(summary["error"]), details)
+        # It ended without saying why (it crashed before its summary: a missing module, a broken install): what it
+        # printed is for the node's log, not for the person.
+        logging.getLogger("tisma_cloud").warning("tisma_scan ended with code %s without a summary:\n%s", code,
+                                                 err.strip())
+        raise JobFailed("The 3D scan failed on the computing server",
+                        {"code": "scan_error", "error_es": "El escaneo falló en el servidor de cálculo"})
     for k in ("error", "code", "error_es"):
         summary.pop(k, None)
     result = work / "scan.zip.result"

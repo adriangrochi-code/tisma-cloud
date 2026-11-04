@@ -8,6 +8,13 @@ master_url = "http://192.168.1.10:8000"
 # tisma_engine = "/opt/tisma/tisma-engine"     # Windows: C:/Program Files/Tisma/tisma-engine.exe
 tisma_slicer = "/opt/tisma/tisma-slicer"       # Windows: C:/Program Files/TismaSlicer/tisma-slicer-console.exe
 tisma_fea = "/opt/tisma/tisma-fea"             # Windows: C:/Program Files/TismaSlicer/tisma-fea.exe
+# 3D scans of Tisma Scanner (jobs "scan"; add "scan" to the priorities of this node on the master). tisma_scan.exe
+# (built by the CI of openscanner) needs nothing else; tools/tisma_scan.py runs with the first python3, python or py on
+# the PATH of the node (the venv's when the node runs inside an activated venv), which needs numpy,
+# opencv-contrib-python-headless and open3d. Both need COLMAP (TISMA_COLMAP or the PATH) and, much faster, an NVIDIA
+# card. "tisma-cloud check" checks all of it. A node only for scans needs neither tisma_slicer nor tisma_fea.
+# tisma_scan = "C:/TismaScan/tisma_scan.exe"
+# scan_timeout_s = 21600                       # longest 3D scan [s]
 work_dir = "/work"
 # Jobs at the same time; 0: automatic, one per two cores and 2 GB of memory, or with tisma_engine one per core and
 # 1 GB of memory (README, Capacity).
