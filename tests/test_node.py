@@ -187,6 +187,12 @@ def test_agent_runs_analyses(client, f, node_cfg):
     assert args[args.index("--object") + 1] == "1"
     assert "--no-zones" in args and "--ribs" in args and "--no-gpu" in args and "--solid" not in args
     assert client.get(f"/v1/jobs/{job['id']}/result", headers=user).content.startswith(b"TFEA")
+    # tisma-fea has no "the project's own quality" (an empty one, for tisma-engine) nor "extreme" (its "ultra").
+    for sent, given in (({"mode": "resin-structure"}, "normal"), ({"quality": "extreme"}, "ultra")):
+        job = f.submit(user, kind="fea", params=json.dumps(sent))
+        assert agent.run_once() == "done"
+        args = client.get(f"/v1/jobs/{job['id']}", headers=user).json()["summary"]["args"]
+        assert args[args.index("--quality") + 1] == given
 
 
 @posix_only

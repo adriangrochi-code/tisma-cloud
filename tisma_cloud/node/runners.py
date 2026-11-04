@@ -264,6 +264,13 @@ def run_slice(cfg: NodeConfig, params: dict, project: Path, work: Path, progress
     return Outcome(out, _gcode_summary(out))
 
 
+def _fea_quality(params: dict) -> str:
+    """The quality for tisma-fea, the program of Tisma Slicer: it has no "use the project's own" (an empty quality,
+    which only tisma-engine understands, cloud.md rule 19) and calls "extreme" by its old name, "ultra"."""
+    quality = params.get("quality") or "normal"
+    return "ultra" if quality == "extreme" else quality
+
+
 def run_fea(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
             cancelled: Cancelled) -> Outcome:
     if cfg.tisma_engine:
@@ -286,7 +293,7 @@ def run_fea(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: 
     out = work / "result.tfea"
     summary_path = work / "summary.json"
     cmd = [cfg.tisma_fea, "--input", str(clean), "--output", str(out), "--summary", str(summary_path),
-           "--mode", params.get("mode", "analyze"), "--quality", params.get("quality", "normal"),
+           "--mode", params.get("mode", "analyze"), "--quality", _fea_quality(params),
            "--object", str(int(params.get("object", 0))), "--instance", str(int(params.get("instance", 0)))]
     if params.get("solid"):
         cmd.append("--solid")
