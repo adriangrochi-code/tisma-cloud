@@ -74,3 +74,7 @@ TismaScan-windows artifact of openscanner's server-windows.yml: tisma_scan.exe w
 OpenMVS 2.4.0, found by tisma-cloud in tisma-scan/ next to the program, ec5be1f). The tisma_scan contract was sent to
 that session (command line, progress lines, files, summary and its codes, --check). Pending: the CI of openscanner
 cb85aef (the package and a synthetic scan on Windows) and whether scanner/next has 64d0c37 and cb85aef.
+- 18:54: the Windows run of cb85aef got to the scan; COLMAP.bat splits the commas of --ImageReader.camera_params
+  (cmd.exe). The scanner session fixes it on scanner/next (bin/colmap.exe with lib/ on PATH and QT_PLUGIN_PATH, also
+  for a TISMA_COLMAP set to the .bat) and now owns server-windows.yml. After its green run: README «Nodo de escaneo
+  en Windows», TISMA_COLMAP=C:\COLMAP\bin\colmap.exe instead of COLMAP.bat.
