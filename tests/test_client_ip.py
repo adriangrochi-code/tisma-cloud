@@ -21,6 +21,8 @@ def test_tunnel_ignores_a_forged_forwarded_for(settings):
         # From internet: Cloudflare sets CF-Connecting-IP and appends to whatever X-Forwarded-For the user sent.
         forged = {**admin, "x-forwarded-for": "192.168.1.5, 203.0.113.9", "cf-connecting-ip": "203.0.113.9"}
         assert _admin_status(c, forged) == 404
+        # Only CF-Connecting-IP with a public address (the setting as the guide writes it, any case): still 404.
+        assert _admin_status(c, {**admin, "cf-connecting-ip": "203.0.113.9"}) == 404
         # A computer of the local network reaching port 8000 directly carries no Cloudflare header.
         assert _admin_status(c, admin) == 200
 
