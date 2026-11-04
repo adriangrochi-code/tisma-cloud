@@ -144,6 +144,7 @@ def test_plan_without_scans_and_limits(c, small_chunks):
     (make_scan(session=False), "session.json"),
     (make_scan(photos=0), "no photos"),
     (make_scan(extra={"../evil.txt": b"x"}), "not allowed"),
+    (make_scan(extra={"scan_demo/gps.csv": b"t,provider,lat,lon\n1,gps,-34.9,-56.2\n"}), "absolute position"),
 ])
 def test_bad_scans_are_refused(c, data, error):
     f = Factory(c)

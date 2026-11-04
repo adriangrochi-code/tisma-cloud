@@ -20,6 +20,9 @@ from pathlib import Path, PurePosixPath
 
 # Pieces not touched for this long are removed with their upload [h].
 STALE_H = 24
+# The absolute position (latitude, longitude, altitude) never leaves the phone (owner, 2026-11-04): only the relative
+# poses between the photos. A scan that carries it is refused, and not kept.
+ABSOLUTE_POSITION = {"gps.csv"}
 # Entries of a scan at most (photos, depth maps, sensor logs).
 MAX_ENTRIES = 100_000
 
@@ -53,6 +56,9 @@ def check_scan(path: Path, max_unzipped: int) -> int:
                 if total > max_unzipped:
                     raise ScanError(f"The scan is larger than {max_unzipped >> 30} GB uncompressed")
                 lower = name.lower()
+                if PurePosixPath(lower).name in ABSOLUTE_POSITION:
+                    raise ScanError("The scan carries the absolute position of the phone (gps.csv): update Tisma "
+                                    "Scanner, which no longer sends it")
                 has_session = has_session or lower.endswith("session.json")
                 photos += lower.endswith((".jpg", ".jpeg"))
     except (zipfile.BadZipFile, OSError):

@@ -462,6 +462,9 @@ Después sigue como cualquier trabajo: `GET /v1/jobs/{id}` (avance, `summary` co
 - Como mucho `TISMA_MAX_SCAN_GB` (8) por escaneo y `TISMA_MAX_SCAN_UNZIPPED_GB` (12) descomprimido; tres escaneos a
   medio mandar por cuenta; los que nadie toca en un día se borran.
 - El zip tiene que ser de Tisma Scanner (`session.json` y fotos JPEG) y sin rutas peligrosas (`..`, absolutas).
+- **La posición absoluta nunca sale del teléfono** (decisión del dueño, 04-11-2026): la app no manda `gps.csv`
+  (latitud, longitud, altura), solo las poses relativas entre fotos de `frames.csv`. Un escaneo que la traiga (una
+  versión vieja de la app) se rechaza con 422 y se borra; el servidor no la guarda ni la necesita.
 - El escaneo se borra cuando el trabajo termina; el resultado queda como los demás (`TISMA_RETENTION_H`).
 
 **El nodo** necesita `tisma_scan` en su `node.toml` (el programa de `openscanner`, o su `tools/tisma_scan.py`, que
