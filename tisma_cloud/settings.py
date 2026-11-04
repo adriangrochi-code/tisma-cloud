@@ -21,6 +21,9 @@ class Settings:
     storage_dir: Path = field(default_factory=lambda: Path(os.environ.get("TISMA_STORAGE_DIR", "./storage")))
     # Largest project accepted [MB].
     max_upload_mb: int = field(default_factory=lambda: _int("TISMA_MAX_UPLOAD_MB", 200))
+    # Largest body of any other request (JSON of the API, notifications of the payment providers) [KB]: FastAPI reads a
+    # body whole before it checks it, so without a limit anyone could fill the memory of the master (guard.py).
+    max_body_kb: int = field(default_factory=lambda: _int("TISMA_MAX_BODY_KB", 1024))
     # Largest result a node may upload [MB] (G-code of big plates).
     max_result_mb: int = field(default_factory=lambda: _int("TISMA_MAX_RESULT_MB", 1024))
     # A node that has not been seen for this long has lost its running jobs: they go back to the queue.

@@ -99,3 +99,29 @@ def test_bans_expire():
     bans.refused("1.2.3.4", now=2.)
     assert bans.banned("1.2.3.4", now=3.)
     assert not bans.banned("1.2.3.4", now=3. + 60.)
+
+
+def test_any_other_body_is_limited(settings):
+    # FastAPI reads a JSON body whole before it checks it: without a limit an address without account could send
+    # gigabytes to the login and fill the memory of the master.
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from conftest import new_app
+
+    small = dataclasses.replace(settings, max_body_kb=64)
+    with TestClient(new_app(small), client=("203.0.113.7", 50000)) as c:
+        big = '{"email": "a@b.c", "password": "' + "x" * (100 << 10) + '"}'
+        r = c.post("/v1/auth/login", content=big, headers={"content-type": "application/json"})
+        assert r.status_code == 413 and r.json()["detail"] == "The request is too large"
+
+        def parts():
+            for _ in range(10):
+                yield b"x" * (16 << 10)
+
+        r = c.post("/v1/auth/login", content=parts(), headers={"content-type": "application/json"})
+        assert r.status_code == 413
+        # A normal request still works.
+        r = c.post("/v1/auth/login", json={"email": "a@b.c", "password": "wrong-password"})
+        assert r.status_code == 401

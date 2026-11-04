@@ -172,8 +172,10 @@ Sin servicios externos: todo corre en el central, en cuatro capas.
    16 KiB como máximo, proyectos de 210 MB como máximo, administración cortada desde afuera, encabezados de seguridad.
 3. **Antes de la aplicación** (`tisma_cloud/guard.py`): las subidas sin token válido, sin tamaño o demasiado grandes se
    rechazan antes de leer un solo byte; pocas subidas a la vez (8 en total, 2 por cuenta); páginas sin cuenta limitadas a
-   120 por minuto por dirección; una dirección con 30 rechazos en un minuto queda bloqueada 10 minutos. La red interna
-   nunca se bloquea.
+   120 por minuto por dirección; una dirección con 30 rechazos en un minuto queda bloqueada 10 minutos. Cualquier otro
+   pedido (el JSON de la API, los avisos de los cobros) tiene como mucho `TISMA_MAX_BODY_KB` (1024 KB), con su
+   `Content-Length` o mandado por partes: más es 413. Sin eso, con el túnel de Cloudflare (que no pasa por Caddy), un
+   pedido sin cuenta de cientos de MB a `/v1/auth/login` llenaba la memoria. La red interna nunca se bloquea.
 4. **La aplicación:** trabajos simultáneos y peticiones por minuto según el plan, intentos de inicio de sesión
    limitados, uvicorn con un máximo de 300 peticiones a la vez.
 

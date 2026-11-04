@@ -123,6 +123,43 @@ class Guard:
         self.uploads = Uploads(settings.max_uploads, settings.max_uploads_per_account)
         self.anonymous = RateLimiter(60.)
 
+    async def _limited(self, scope: Scope, receive: Receive, send: Send, refuse_counted: Callable[[int], None],
+                       limit: int) -> None:
+        """Any other request: its body, declared or sent in parts, at most `limit` bytes (413 beyond)."""
+        headers = dict(scope.get("headers", []))
+        length = headers.get(b"content-length", b"").decode("latin-1")
+        if length.isdigit() and int(length) > limit:
+            refuse_counted(413)
+            await _answer(send, 413, "The request is too large")
+            return
+        state = {"read": 0, "over": False, "started": False}
+
+        async def limited_receive() -> dict:
+            message = await receive()
+            if message["type"] == "http.request" and not state["over"]:
+                state["read"] += len(message.get("body", b""))
+                if state["read"] > limit:
+                    # The application sees the client gone and stops reading; the answer is given here.
+                    state["over"] = True
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def limited_send(message: dict) -> None:
+            if state["over"]:
+                return
+            if message["type"] == "http.response.start":
+                state["started"] = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, limited_send)
+        except Exception:
+            if not state["over"]:
+                raise
+        if state["over"] and not state["started"]:
+            refuse_counted(413)
+            await _answer(send, 413, "The request is too large")
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -151,7 +188,7 @@ class Guard:
         upload = next((kind for rx, kind in UPLOADS if method == "POST" and rx.match(path)), None)
         small = next((kb for rx, kb in SMALL if method == "POST" and rx.match(path)), None)
         if upload is None and small is None:
-            await self.app(scope, receive, counted_send)
+            await self._limited(scope, receive, counted_send, refuse_counted, self.settings.max_body_kb << 10)
             return
 
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
