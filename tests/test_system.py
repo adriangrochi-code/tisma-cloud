@@ -152,6 +152,15 @@ def test_programs_come_with_the_package(tmp_path, monkeypatch):
     m.write_node({"tisma_slicer": str(tmp_path / "old" / "tisma-slicer")})
     m.children()
     assert m.read_node()["tisma_slicer"] == str(linux / system.SLICER_NAMES[0])
+    # Without the folder of the scans the node makes none; with it (TismaScan-windows unpacked next to the program), it
+    # finds its tisma_scan.
+    assert system.find_scan_program() is None and not m.read_node().get("tisma_scan")
+    scan = exe.parent.resolve() / system.SCAN_FOLDER / system.SCAN_NAMES[0]
+    scan.parent.mkdir()
+    scan.write_text("")
+    assert system.find_scan_program() == str(scan)
+    assert m.detect_programs() == {"tisma_scan": str(scan)}
+    assert m.read_node()["tisma_scan"] == str(scan)
 
 
 def test_node_programs_are_found(tmp_path, monkeypatch):

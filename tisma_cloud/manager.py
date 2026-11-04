@@ -255,6 +255,10 @@ class Manager:
                 node.token_hash = hash_token(token)
         data = dict(NODE_DEFAULTS, master_url=f"http://127.0.0.1:{self.port()}", token=token, tisma_slicer=slicer,
                     tisma_fea=fea, work_dir="master-work")
+        scan = system.find_scan_program()
+        if scan:
+            # It takes scans when "scan" is among its priorities (admin node-set maestro --priorities scan,...).
+            data["tisma_scan"] = scan
         # The settings changed by hand (jobs at a time...) are kept.
         data.update({k: v for k, v in current.items() if k in ("slots", "fea_slots", "timeout_s", "gpu")})
         lines = ["# The node of the master (made by Tisma Cloud when the master computes too; master_computes in",
@@ -757,12 +761,13 @@ class Manager:
 
     # ---- the programs of a node
     def detect_programs(self, replace: bool = False) -> dict[str, str]:
-        """Fills tisma_slicer and tisma_fea of node.toml with the programs of Tisma Slicer found on this machine (only
-        the empty or wrong ones, unless replace). Returns what was set."""
+        """Fills tisma_slicer and tisma_fea of node.toml with the programs of Tisma Slicer found on this machine, and
+        tisma_scan with the one of the package's tisma-scan folder (only the empty or wrong ones, unless replace).
+        Returns what was set."""
         node = self.read_node()
         slicer, fea = system.find_tisma_programs()
         found = {}
-        for key, path in (("tisma_slicer", slicer), ("tisma_fea", fea)):
+        for key, path in (("tisma_slicer", slicer), ("tisma_fea", fea), ("tisma_scan", system.find_scan_program())):
             current = str(node.get(key) or "")
             if path and (replace or not current or not Path(current).is_file()):
                 found[key] = path

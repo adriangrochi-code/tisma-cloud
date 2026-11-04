@@ -29,11 +29,15 @@ FIREWALL_RULE = "Tisma Cloud"
 TISMA_SLICER_APP_ID = "{EF9BF87F-A56B-4EBB-B89B-4C957B7E3899}"
 WEBVIEW2_CLIENT = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 # Programs a node runs: the console slicer and the structural analysis.
-# They come with the package of Tisma Cloud, in this folder next to the executable (server.yml): the Windows package of
+# They come with the package of Tisma Cloud, in this folder next to the executable (ci.yml, job executable): the Windows package of
 # Tisma Slicer, or its AppImage extracted on Linux (usr/bin).
 BUNDLED_FOLDER = "tisma-slicer"
 SLICER_NAMES = ("tisma-slicer-console.exe", "tisma-slicer.exe") if os.name == "nt" else ("tisma-slicer",)
 FEA_NAMES = ("tisma-fea.exe",) if os.name == "nt" else ("tisma-fea",)
+# The 3D scans: the package of a scan node of Tisma Scanner (its artifact TismaScan-windows), the folder tisma-scan
+# unpacked next to the executable, with tisma_scan and the COLMAP and OpenMVS it finds by itself.
+SCAN_FOLDER = "tisma-scan"
+SCAN_NAMES = ("tisma_scan.exe",) if os.name == "nt" else ("tisma_scan",)
 
 # Windows: no console window for the helper programs.
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -308,6 +312,18 @@ def find_program(names: tuple[str, ...]) -> str | None:
         found = shutil.which(name)
         if found:
             return found
+    return None
+
+
+def find_scan_program() -> str | None:
+    """tisma_scan of the package (tisma-scan/ next to this program), or None. Only there: a scan node is one the
+    person made by unpacking that folder."""
+    if not getattr(sys, "frozen", False):
+        return None
+    folder = Path(sys.executable).resolve().parent / SCAN_FOLDER
+    for name in SCAN_NAMES:
+        if (folder / name).is_file():
+            return str(folder / name)
     return None
 
 

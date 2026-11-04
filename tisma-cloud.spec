@@ -1,5 +1,5 @@
 # PyInstaller spec of the tisma-cloud executable: master server, computing node and administration in one program.
-# Built by .github/workflows/server.yml for Windows and Linux: pip install ".[master,exe]" && pyinstaller tisma-cloud.spec
+# Built by .github/workflows/ci.yml (job executable) for Windows and Linux: pip install ".[master,exe]" && pyinstaller tisma-cloud.spec
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = [("tisma_cloud/static/*.html", "tisma_cloud/static")]
