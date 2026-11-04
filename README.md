@@ -495,7 +495,8 @@ Un escaneo necesita, además del nodo de Tisma Cloud, tres programas, y vienen j
 Las licencias van en `tisma-scan\licenses` y el origen de cada uno en `LEEME.txt`. Es la versión 3.9.1 de COLMAP a
 propósito: la 4.x cambió opciones de la línea de comandos que usa el pipeline. El CI de `openscanner` arma el
 paquete y lo prueba en Windows (`tisma_scan.exe --check` y un escaneo sintético completo hasta `pieza.stl`, en una
-máquina sin placa NVIDIA). **Todavía sin probar en un Windows real ni con una placa NVIDIA.**
+máquina sin placa NVIDIA: la caja de 40 × 30 × 20 mm salió de 42,4 × 32,5 × 20,6 mm, cerrada, en 16 minutos; corrida
+41903680499 de `scanner/next`). **Todavía sin probar en un Windows real ni con una placa NVIDIA.**
 
 1. Descomprimir `TismaScan-windows` en la carpeta de `tisma-cloud.exe`, de modo que quede `C:\TismaCloud\tisma-scan\`
    junto a `tisma-cloud.exe` y `tisma-slicer\`. No hace falta ninguna variable de entorno: `tisma-cloud` encuentra
@@ -504,8 +505,11 @@ máquina sin placa NVIDIA). **Todavía sin probar en un Windows real ni con una 
    usan esas.
 2. En un nodo: reiniciar el servicio (o `tisma-cloud config tisma_scan C:\TismaCloud\tisma-scan\tisma_scan.exe`). En
    el maestro que calcula, su nodo «maestro» también lo toma al iniciar.
-3. Con COLMAP o OpenMVS en otra carpeta: `TISMA_COLMAP=C:\COLMAP\COLMAP.bat` y `TISMA_OPENMVS=C:\OpenMVS` como
-   variables del sistema (Panel de control › Sistema › Variables de entorno, para que las vea el servicio).
+3. Con COLMAP o OpenMVS en otra carpeta: `TISMA_COLMAP=C:\COLMAP\bin\colmap.exe` y `TISMA_OPENMVS=C:\OpenMVS`
+   como variables del sistema (Panel de control › Sistema › Variables de entorno, para que las vea el servicio).
+   `tisma_scan` le pone a COLMAP lo que prepararía su `COLMAP.bat` (las librerías de `lib` y sus complementos de Qt).
+   El `.bat` no sirve para arrancarlo: cmd.exe corta en las comas los parámetros de la cámara. Si alguien lo pone igual
+   en `TISMA_COLMAP`, `tisma_scan` usa el `bin\colmap.exe` que tiene al lado.
 4. `tisma-cloud check`: «Escaneos 3D» tiene que decir «Listo». Si no, dice qué falta (y el nodo no toma escaneos
    hasta que esté todo: nunca le falla un escaneo a una persona por un programa que falta).
 5. En el maestro: `tisma-cloud admin node-set <nodo> --priorities scan,fea,...` (un escaneo usa la placa de video,

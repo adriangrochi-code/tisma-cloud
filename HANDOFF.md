@@ -83,3 +83,7 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   QA told. Untested: Windows, a real phone scan, an NVIDIA card. Test note: where httpx2 is installed, starlette's
   TestClient uses it and test_a_removed_node_forgets_its_token_and_asks_again fails (the agent catches httpx's
   errors); CI has no httpx2 and passes.
+- 20:50: TismaScan-windows green on scanner/next (run 41903680499, d720958): bin\colmap.exe without the .bat,
+  --check, synthetic box 42.43 x 32.49 x 20.62 mm, closed mesh, 16 min without NVIDIA. README step 3 now points at
+  bin\colmap.exe. The scanner session also made the printed mat give the scale without --mat (contract unchanged).
+  Left: openscanner PR #2 / scanner/next merge (owner), then OPENSCANNER_REF in scan-e2e.yml.
