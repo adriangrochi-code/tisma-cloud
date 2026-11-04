@@ -1,8 +1,10 @@
 # Server session: state
 
-Branch `server/next` (from `ccr-7e2013d9-qwmclz`). Scope: `server/` only. Spec/QA contact: `session_01QadJfL7KViJEaJL92p8Swb`.
+Repository `adriangrochi-code/tisma-cloud` (private, owner's decision 2026-11-04), branch `main`; it was `server/` of the
+public slicer repository, moved here with its history (`git subtree split`). Spec/QA contact:
+`session_01QadJfL7KViJEaJL92p8Swb`.
 
-Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (249 passed, 2 skipped
+Tests: venv, `pip install -e '.[master,test]'`, `python -m pytest -q` (249 passed, 2 skipped
 at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extras).
 
 Dates (owner, relayed by QA 2026-11-04, corrected): closed beta in December 2026 on the owner's real server (tunnel,

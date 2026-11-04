@@ -1,0 +1,244 @@
+name: Cloud server
+
+# Tests of the Tisma Cloud server (proprietary, Python) on SQLite and PostgreSQL, and its program tisma-cloud.
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tisma
+          POSTGRES_PASSWORD: tisma
+          POSTGRES_DB: tisma_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tisma" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install ".[master,test]"
+      - name: Tests (SQLite)
+        run: pytest -q
+      - name: Tests (PostgreSQL)
+        env:
+          TISMA_TEST_DATABASE_URL: postgresql+psycopg://tisma:tisma@localhost:5432/tisma_test
+        run: pytest -q
+
+  # The server as one program, tisma-cloud (.exe on Windows): master, node and administration (tisma-cloud.spec).
+  executable:
+    needs: tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            name: windows
+            exe: tisma-cloud.exe
+          - os: ubuntu-24.04
+            name: linux
+            exe: tisma-cloud
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      # The package of Tisma Slicer of the last build of main (an artifact of ci.yml).
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install ".[master,exe]"
+      - name: Build
+        run: pyinstaller --noconfirm --clean tisma-cloud.spec
+      # The programs a node runs come with the package, in tisma-slicer/ next to the executable, so that no machine
+      # needs Tisma Slicer installed: the Windows package of Tisma Slicer of the last successful build of main, or its
+      # AppImage extracted on Linux (usr/bin; GTK 3 and WebKitGTK 4.1 come from the system, as for the AppImage).
+      # Tisma Slicer is AGPL-3.0: its license and where its source is go with it. It lives in its own (public)
+      # repository; reading its artifacts from here needs a token with read access to it in the secret
+      # TISMA_SLICER_TOKEN (a fine-grained token: Actions read on that repository).
+      - name: Tisma Slicer programs (last build of main)
+        env:
+          GH_TOKEN: ${{ secrets.TISMA_SLICER_TOKEN || github.token }}
+          SLICER_REPO: adriangrochi-code/Nuevo-slicer-basado-en-prusa-
+        run: |
+          set -e
+          read -r run_id sha <<< "$(gh run list -R "$SLICER_REPO" --workflow ci.yml --branch main --status success \
+            --limit 1 --json databaseId,headSha -q '.[0] | "\(.databaseId) \(.headSha)"')"
+          echo "Tisma Slicer of the CI run $run_id of main ($sha)"
+          gh run download "$run_id" -R "$SLICER_REPO" -n "TismaSlicer-${{ matrix.name }}" -D tisma-download
+          rm -rf dist/tisma-slicer
+          if [ "${{ matrix.name }}" = windows ]; then
+            mv tisma-download dist/tisma-slicer
+          else
+            chmod +x tisma-download/*.AppImage
+            (cd tisma-download && ./*.AppImage --appimage-extract > /dev/null)
+            mv tisma-download/squashfs-root dist/tisma-slicer
+            rm -rf tisma-download
+          fi
+          curl -sfL "https://raw.githubusercontent.com/$SLICER_REPO/$sha/LICENSE" -o dist/tisma-slicer/LICENSE-AGPL-3.0.txt
+          printf 'Tisma Slicer (tisma-slicer, tisma-fea): GNU Affero General Public License 3.0, LICENSE-AGPL-3.0.txt.\nSource of this build: https://github.com/%s/tree/%s\n' \
+            "$SLICER_REPO" "$sha" > dist/tisma-slicer/SOURCE.txt
+          du -sh dist/tisma-slicer
+      - name: Try it
+        env:
+          TISMA_DATABASE_URL: sqlite:///./try.db
+          TISMA_STORAGE_DIR: ./try-storage
+          TISMA_INTERNAL_EMAILS: "@tisma.com.uy"
+        run: |
+          set -e
+          # The administration commands work in the folder of the service (that of the executable, dist/), the loose
+          # "master" command in the current one: one folder for both, so that they share the SQLite file.
+          export TISMA_HOME="$PWD"
+          exe=dist/${{ matrix.exe }}
+          "$exe" --help
+          "$exe" admin plan-set basico --hours 1 --concurrent 1
+          token=$("$exe" admin user-add equipo@tisma.com.uy --plan basico | tail -n 1)
+          "$exe" admin user-list | grep "unlimited"
+          "$exe" master --port 18990 > master.log 2>&1 &
+          master=$!
+          for _ in $(seq 1 30); do curl -sf http://127.0.0.1:18990/v1/health > /dev/null 2>&1 && break; sleep 1; done
+          curl -sf -H "Authorization: Bearer $token" http://127.0.0.1:18990/v1/me | grep '"unlimited":true'
+          kill $master || true
+      - name: Try the service (role, start, status, stop)
+        run: |
+          set -e
+          exe=dist/${{ matrix.exe }}
+          export TISMA_HOME=service-home
+          "$exe" role master
+          "$exe" config port 18991
+          "$exe" config TISMA_INTERNAL_EMAILS @tisma.com.uy
+          "$exe" start
+          "$exe" status
+          curl -sf http://127.0.0.1:18991/v1/health
+          # The process of "start" has ended and its unpacked files are deleted: the supervisor must still be able to
+          # start the master again (it unpacks its own files, PYINSTALLER_RESET_ENVIRONMENT).
+          if [ "${{ matrix.name }}" = linux ]; then
+            sup=$(cat service-home/tisma-cloud.pid)
+            kill -9 "$(ps -o pid=,args= --ppid "$sup" | grep -v -- --local-node | head -n 1 | awk '{print $1}')"
+            for _ in $(seq 1 40); do sleep 1; curl -sf http://127.0.0.1:18991/v1/health > /dev/null 2>&1 && break; done
+            curl -sf http://127.0.0.1:18991/v1/health || { "$exe" logs 20; exit 1; }
+          fi
+          "$exe" logs 20
+          "$exe" stop
+          if "$exe" status; then echo "still running"; exit 1; fi
+      # Started from the window (not by the scheduled task), the process that starts the service ends and its unpacked
+      # files are deleted: the supervisor must still be able to start the master again.
+      - name: Windows (service started by a process that has ended)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = (Resolve-Path dist/tisma-cloud.exe).Path
+          $svc = Join-Path $PWD "restart-home"
+          function tc { & $exe --home $svc @args; if ($LASTEXITCODE -ne 0) { throw "tisma-cloud $args failed ($LASTEXITCODE)" } }
+          function healthy { try { (Invoke-WebRequest http://127.0.0.1:18993/v1/health -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { $false } }
+          tc role master
+          tc config port 18993
+          tc config master_computes off
+          tc start
+          Start-Sleep 3
+          $sup = [int](Get-Content "$svc/tisma-cloud.pid")
+          $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$sup" | Where-Object { $_.CommandLine -notmatch '--local-node' } | Select-Object -First 1
+          if (-not $child) { throw "no child of the supervisor $sup" }
+          taskkill /PID $child.ProcessId /T /F | Out-Null
+          Start-Sleep 2
+          $back = $false
+          for ($i = 0; $i -lt 40; $i++) { if (healthy) { $back = $true; break }; Start-Sleep 1 }
+          tc logs 15
+          if (-not $back) { throw "the master was not started again" }
+          tc stop
+      # The node of the package finds its programs by itself and slices and analyses a real project with them, on a
+      # machine without Tisma Slicer installed.
+      - name: Programs of the package
+        run: |
+          set -e
+          if [ "${{ matrix.name }}" = windows ]; then
+            slicer=dist/tisma-slicer/tisma-slicer-console.exe
+            fea=dist/tisma-slicer/tisma-fea.exe
+          else
+            sudo apt-get update -q > /dev/null
+            sudo apt-get install -y -q libgtk-3-0t64 libwebkit2gtk-4.1-0 libhidapi-hidraw0 libgl1 libegl1 libglu1-mesa > /dev/null
+            slicer=dist/tisma-slicer/usr/bin/tisma-slicer
+            fea=dist/tisma-slicer/usr/bin/tisma-fea
+          fi
+          "$slicer" --help | head -n 2
+          "$fea" --help | head -n 1
+          export TISMA_HOME="$PWD/package-home"
+          dist/${{ matrix.exe }} role node
+          dist/${{ matrix.exe }} config | grep -E '^tisma_slicer = .*tisma-slicer[/\\]'
+          dist/${{ matrix.exe }} config | grep -E '^tisma_fea = .*tisma-slicer[/\\]'
+          unset TISMA_HOME
+          pip install ".[master,test]" > /dev/null
+          TISMA_SLICER_BIN="$PWD/$slicer" TISMA_FEA_BIN="$PWD/$fea" pytest -q tests/test_node.py -k real_programs -rs \
+            | tee real.log
+          grep -q "1 passed" real.log
+      # The runners of GitHub are Windows Server 2022 with an administrator: what a server does at boot.
+      - name: Windows Server (start with the machine as SYSTEM, firewall, supervisor)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = (Resolve-Path dist/tisma-cloud.exe).Path
+          $svc = Join-Path $PWD "winsvc-home"
+          function tc { & $exe --home $svc @args; if ($LASTEXITCODE -ne 0) { throw "tisma-cloud $args failed ($LASTEXITCODE)" } }
+          function healthy { try { (Invoke-WebRequest http://127.0.0.1:18992/v1/health -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { $false } }
+          tc role master
+          tc config port 18992
+          tc firewall on
+          $port = (Get-NetFirewallRule -DisplayName "Tisma Cloud" | Get-NetFirewallPortFilter).LocalPort
+          if ($port -ne "18992") { throw "firewall rule opens $port" }
+          tc autostart on
+          $xml = schtasks /Query /XML /TN "Tisma Cloud" | Out-String
+          if ($xml -notmatch "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" -or $xml -notmatch "<RestartOnFailure>") { throw "task: $xml" }
+          tc start   # through the scheduled task, as SYSTEM
+          tc status
+          if (-not (healthy)) { tc logs 40; throw "the master does not answer" }
+          # The supervisor starts the master again when it dies.
+          $sup = [int](Get-Content "$svc/tisma-cloud.pid")
+          $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$sup" | Where-Object { $_.CommandLine -notmatch '--local-node' } | Select-Object -First 1
+          if (-not $child) { throw "no child of the supervisor $sup" }
+          taskkill /PID $child.ProcessId /T /F | Out-Null
+          Start-Sleep 2
+          $back = $false
+          for ($i = 0; $i -lt 40; $i++) { if (healthy) { $back = $true; break }; Start-Sleep 1 }
+          tc logs 15
+          if (-not $back) { throw "the master was not started again" }
+          & $exe --home $svc check
+          tc stop
+          & $exe --home $svc status
+          if ($LASTEXITCODE -ne 3) { throw "still running" }
+          if (healthy) { throw "the master still answers" }
+          tc autostart off
+          tc firewall off
+          if (Get-NetFirewallRule -DisplayName "Tisma Cloud" -ErrorAction SilentlyContinue) { throw "rule left" }
+      - name: Tests on Windows (service and system)
+        if: matrix.name == 'windows'
+        run: |
+          pip install ".[master,test]"
+          pytest -q tests/test_system.py tests/test_manager.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tisma-cloud-${{ matrix.name }}
+          path: |
+            dist/${{ matrix.exe }}
+            dist/tisma-slicer
+            .env.example
+            deploy/node.example.toml
+          retention-days: 30
