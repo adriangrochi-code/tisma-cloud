@@ -19,13 +19,14 @@ import shutil
 import sqlite3
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 log = logging.getLogger("tisma_cloud")
 
 PREFIX = "tisma-"
-NAME = re.compile(r"^tisma-\d{8}-\d{4}\.(db|dump)$")
+# tisma-YYYYMMDD-HHMMSS.ext (UTC); the first ones had no seconds.
+NAME = re.compile(r"^tisma-\d{8}-\d{4}(\d{2})?\.(db|dump)$")
 
 
 class BackupError(Exception):
@@ -66,18 +67,25 @@ def _ext(database_url: str) -> str:
 
 
 def latest(dest: Path) -> Path | None:
-    files = sorted(f for f in (dest / "daily").iterdir() if NAME.match(f.name)) if (dest / "daily").is_dir() else []
+    files = sorted((f for f in (dest / "daily").iterdir() if NAME.match(f.name)), key=_order) \
+        if (dest / "daily").is_dir() else []
     return files[-1] if files else None
 
 
 def stamp_of(path: Path) -> datetime | None:
-    """The time in the name of a backup (tisma-YYYYMMDD-HHMM.ext, UTC)."""
+    """The time in the name of a backup (tisma-YYYYMMDD-HHMMSS.ext, UTC)."""
     if not NAME.match(path.name):
         return None
+    text = path.stem[len(PREFIX):]
     try:
-        return datetime.strptime(path.stem[len(PREFIX):], "%Y%m%d-%H%M")
+        return datetime.strptime(text, "%Y%m%d-%H%M%S" if len(text) == 15 else "%Y%m%d-%H%M")
     except ValueError:
         return None
+
+
+def _order(path: Path) -> tuple[datetime, str]:
+    # By the time in the name, not the name: names with and without seconds sort together.
+    return stamp_of(path) or datetime.min, path.name
 
 
 def check_sqlite(path: Path) -> None:
@@ -140,7 +148,7 @@ def prune(folder: Path, keep: int) -> None:
         return
     for part in folder.glob("*.part*"):
         part.unlink(missing_ok=True)
-    files = sorted(f for f in folder.iterdir() if stamp_of(f) is not None)
+    files = sorted((f for f in folder.iterdir() if stamp_of(f) is not None), key=_order)
     for old in files[:max(0, len(files) - keep)]:
         old.unlink(missing_ok=True)
         log.info("Backup removed: %s", old)
@@ -151,7 +159,11 @@ def make(settings, dest: Path, now: datetime) -> Backup:  # noqa: ANN001
     daily, weekly = dest / "daily", dest / "weekly"
     daily.mkdir(parents=True, exist_ok=True)
     weekly.mkdir(parents=True, exist_ok=True)
-    final = daily / f"{PREFIX}{now:%Y%m%d-%H%M}{_ext(settings.database_url)}"
+    final = daily / f"{PREFIX}{now:%Y%m%d-%H%M%S}{_ext(settings.database_url)}"
+    # Two in one second (a backup by hand right after the daily one): the second waits a little.
+    while final.exists():
+        now += timedelta(seconds=1)
+        final = daily / f"{PREFIX}{now:%Y%m%d-%H%M%S}{_ext(settings.database_url)}"
     part = final.with_name(final.name + ".part")
 
     def clear() -> None:

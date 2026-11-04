@@ -30,7 +30,7 @@ def test_daily_backup_of_sqlite(settings, tmp_path):
         # Before the hour nothing; then one, checked, and no second one the same day.
         assert services.backup_if_due(monday.replace(hour=2)) is None
         made = services.backup_if_due(monday)
-        assert made is not None and made.path.name == "tisma-20261102-0330.db"
+        assert made is not None and made.path.name == "tisma-20261102-033000.db"
         backup.check_sqlite(made.path)
         con = sqlite3.connect(f"file:{made.path}?mode=ro", uri=True)
         assert con.execute("select name from plans").fetchone()[0] == "pro"
@@ -43,8 +43,8 @@ def test_daily_backup_of_sqlite(settings, tmp_path):
         for day in (1, 2, 6):
             assert services.backup_if_due(monday + timedelta(days=day)) is not None
         daily = sorted(p.name for p in (tmp_path / "copies" / "daily").iterdir())
-        assert daily == ["tisma-20261104-0330.db", "tisma-20261108-0330.db"]
-        assert [p.name for p in (tmp_path / "copies" / "weekly").iterdir()] == ["tisma-20261108-0330.db"]
+        assert daily == ["tisma-20261104-033000.db", "tisma-20261108-033000.db"]
+        assert [p.name for p in (tmp_path / "copies" / "weekly").iterdir()] == ["tisma-20261108-033000.db"]
 
 
 def test_failed_backup_is_alerted(settings, tmp_path):
@@ -101,3 +101,21 @@ def test_commands_backup_and_restore(tmp_path, monkeypatch, capsys):
     con = sqlite3.connect(tmp_path / "tisma.db")
     assert con.execute("select v from t").fetchone()[0] == "before"
     con.close()
+
+
+def test_two_backups_in_one_second_are_both_kept(tmp_path):
+    from types import SimpleNamespace as NS
+
+    db = tmp_path / "t.db"
+    con = sqlite3.connect(db)
+    con.execute("create table t (v)")
+    con.commit()
+    con.close()
+    st = NS(database_url=f"sqlite:///{db}", backup_days=14, backup_weeks=8)
+    when = datetime(2026, 11, 4, 13, 29, 5)
+    first = backup.make(st, tmp_path / "b", when)
+    second = backup.make(st, tmp_path / "b", when)
+    assert first.path != second.path and first.path.exists() and second.path.exists()
+    assert backup.latest(tmp_path / "b") == second.path
+    # The names of the first version, without seconds, still count.
+    assert backup.stamp_of(tmp_path / "tisma-20261104-1329.db") == datetime(2026, 11, 4, 13, 29)

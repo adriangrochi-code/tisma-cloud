@@ -459,7 +459,7 @@ las apaga. Si una copia falla, llega el aviso por correo y queda en rojo en `/ad
 ```
 tisma-cloud backup                                     # una copia ahora
 tisma-cloud stop
-tisma-cloud restore backups\daily\tisma-AAAAMMDD-HHMM.db   # la base que reemplaza queda como tisma.db.before-restore
+tisma-cloud restore backups\daily\tisma-AAAAMMDD-HHMMSS.db   # la base que reemplaza queda como tisma.db.before-restore
 tisma-cloud start
 ```
 
