@@ -3,6 +3,7 @@
 # and replace <TUNNEL-ID> with the id that "cloudflared tunnel create tisma" printed.
 tunnel: <TUNNEL-ID>
 credentials-file: C:\Windows\System32\config\systemprofile\.cloudflared\<TUNNEL-ID>.json
+logfile: C:\Windows\System32\config\systemprofile\.cloudflared\cloudflared.log
 
 ingress:
   # The administration and the node pairing are for the local network only: never through the tunnel.

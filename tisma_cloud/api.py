@@ -724,19 +724,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin_networks = parse_networks(cfg.admin_networks)
     site_networks = parse_networks(cfg.site_networks)
 
+    trusted_proxies = parse_networks(cfg.trusted_proxies)
     ip_header = cfg.client_ip_header.encode("latin-1")
 
     def scope_ip(scope: dict) -> str:
         # Behind a proxy the address of the user is in cfg.client_ip_header: X-Forwarded-For behind Caddy (which replaces
         # what the user sends), CF-Connecting-IP behind a Cloudflare Tunnel. Without it, the address of the connection
-        # (the local network reaches port 8000 directly).
+        # (the local network reaches port 8000 directly). The header counts only on a connection from a proxy
+        # (cfg.trusted_proxies): uvicorn runs without --proxy-headers, so scope["client"] is the real connection.
+        client = scope.get("client")
+        peer = client[0] if client else "?"
+        if not address_in(peer, trusted_proxies):
+            return peer
         for k, v in scope.get("headers", []):
             if k == ip_header:
                 first = v.decode("latin-1").split(",")[0].strip()
                 if first:
                     return first
-        client = scope.get("client")
-        return client[0] if client else "?"
+        return peer
 
     def client_key(request: Request) -> str:
         return scope_ip(request.scope)

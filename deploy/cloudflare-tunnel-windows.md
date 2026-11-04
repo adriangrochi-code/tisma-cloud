@@ -66,31 +66,47 @@ Crea en Cloudflare un `CNAME` de `tismaservidores.net` hacia el túnel. No hace 
 
 ## 5. Configuración y servicio de Windows
 
-El servicio de Windows corre como «Sistema local» y busca su configuración en la carpeta de ese usuario, no en la tuya.
-Por eso la configuración va ahí.
+El servicio de Windows corre como «Sistema local» y no lee la carpeta `.cloudflared` de tu usuario: su configuración, la
+credencial y `cert.pem` van en la carpeta de ese usuario. Son los pasos de la guía oficial de Cloudflare para un túnel
+administrado localmente como servicio de Windows
+(<https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/as-a-service/windows/>).
 
 ```powershell
 $dir = "C:\Windows\System32\config\systemprofile\.cloudflared"
 New-Item -ItemType Directory -Force $dir
 Copy-Item "$env:USERPROFILE\.cloudflared\<id>.json" $dir
+Copy-Item "$env:USERPROFILE\.cloudflared\cert.pem" $dir
 Copy-Item "<carpeta de Tisma Cloud>\deploy\cloudflared-config.example.yml" "$dir\config.yml"
 notepad "$dir\config.yml"
 ```
 
 En `config.yml`, reemplazar las dos `<TUNNEL-ID>` por el id del túnel. Si el maestro usa otro puerto, cambiar el `8000`.
+Comprobar las reglas:
+
+```powershell
+cloudflared tunnel --config "$dir\config.yml" ingress validate
+cloudflared tunnel --config "$dir\config.yml" ingress rule https://tismaservidores.net/admin      # http_status:404
+cloudflared tunnel --config "$dir\config.yml" ingress rule https://tismaservidores.net/v1/health  # http://localhost:8000
+```
 
 La configuración ya **cierra** `/admin`, `/v1/admin` y `/v1/node/join`: desde internet responden «no existe». La
-administración y el alta de nodos quedan solo para la red local, igual que antes.
+administración y el alta de nodos quedan solo para la red local, igual que antes. El maestro también las niega desde
+internet por su cuenta (paso 6), así que el túnel es una segunda barrera.
 
-Instalar y arrancar el servicio:
+Instalar el servicio y decirle qué configuración usar. Sin el segundo comando el servicio arranca sin `config.yml` y el
+túnel no se conecta:
 
 ```powershell
 cloudflared service install
-Start-Service cloudflared
+$exe = (Get-Command cloudflared).Source
+Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Cloudflared" ImagePath `
+    "`"$exe`" --config=`"$dir\config.yml`" tunnel run"
+Restart-Service cloudflared
 Get-Service cloudflared          # tiene que decir Running
 ```
 
-El servicio arranca solo con Windows y se reconecta después de cada cambio de IP o corte de internet.
+El servicio arranca solo con Windows y se reconecta después de cada cambio de IP o corte de internet. Después de cambiar
+`config.yml`: `Restart-Service cloudflared`. El registro queda en `$dir\cloudflared.log` (`logfile` de `config.yml`).
 
 ## 6. Ajustes de Tisma Cloud detrás del túnel
 
@@ -100,7 +116,7 @@ En la carpeta de Tisma Cloud, o en la ventana de `tisma-cloud.exe` › Configura
 tisma-cloud config TISMA_PUBLIC_URL https://tismaservidores.net
 tisma-cloud config TISMA_CLIENT_IP_HEADER cf-connecting-ip
 tisma-cloud config TISMA_MAX_UPLOAD_MB 100
-tisma-cloud config TISMA_DDNS_HOST ""
+tisma-cloud config TISMA_DDNS_HOST --clear
 tisma-cloud restart
 ```
 
@@ -109,7 +125,10 @@ tisma-cloud restart
   pone Cloudflare. Sin este ajuste, Tisma Cloud lee `X-Forwarded-For`. Cloudflare **agrega** su dato a ese encabezado,
   pero no borra lo que mandó el usuario, así que alguien podría escribir ahí una dirección de la red local, pasar por
   local y llegar a la administración. Con el ajuste, eso no pasa.
-- `TISMA_DDNS_HOST` vacío apaga el DNS dinámico de No-IP, que con el túnel ya no hace falta.
+- El maestro lee ese encabezado solo en conexiones desde la red local (`TISMA_TRUSTED_PROXIES`, por defecto las redes
+  privadas y esta máquina): `cloudflared` llega desde `localhost`. Una conexión que llegue de internet directo al puerto
+  8000 (un reenvío olvidado en el router) se juzga por su propia dirección, aunque traiga el encabezado.
+- `--clear` deja vacío el ajuste (en PowerShell 5, `""` no llega al programa). `TISMA_DDNS_HOST` vacío apaga el DNS dinámico de No-IP, que con el túnel ya no hace falta.
 - Si estaba abierto el puerto en el router (reenvío al 80, 443 u 8000), cerrarlo.
 
 ## 7. Probar
@@ -128,6 +147,7 @@ Si algo falla:
 Get-Service cloudflared
 cloudflared tunnel info tisma               # conexiones activas del túnel
 Get-WinEvent -LogName Application -MaxEvents 30 | Where-Object ProviderName -eq cloudflared
+Get-Content "C:\Windows\System32\config\systemprofile\.cloudflared\cloudflared.log" -Tail 30
 ```
 
 ## 8. Qué pasa cuando cambia la IP
@@ -141,6 +161,6 @@ siguen: los nodos hablan con el maestro por la red local, no por el túnel.
 Guardar fuera de la máquina, por ejemplo en un pendrive cifrado:
 - `C:\Windows\System32\config\systemprofile\.cloudflared\<id>.json`;
 - `config.yml`;
-- `C:\Users\<usuario>\.cloudflared\cert.pem`.
+- `cert.pem` (en esa misma carpeta y en `C:\Users\<usuario>\.cloudflared\`).
 
 Con eso el túnel se puede rearmar en otra máquina sin crear uno nuevo.

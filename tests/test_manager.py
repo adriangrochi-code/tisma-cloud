@@ -85,6 +85,18 @@ def test_commands(tmp_path, monkeypatch, capsys):
     assert cli.main(["role", "boss"]) == 1
 
 
+def test_config_clear(tmp_path, monkeypatch, capsys):
+    # Windows PowerShell 5 drops an empty "" argument: "--clear" empties a setting (the tunnel guide, TISMA_DDNS_HOST).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TISMA_HOME", str(tmp_path))
+    assert cli.main(["role", "master"]) == 0
+    assert cli.main(["config", "TISMA_DDNS_HOST", "tisma.ddns.net"]) == 0
+    assert "TISMA_DDNS_HOST=tisma.ddns.net" in (tmp_path / ".env").read_text(encoding="utf-8")
+    assert cli.main(["config", "TISMA_DDNS_HOST", "--clear"]) == 0
+    env = (tmp_path / ".env").read_text(encoding="utf-8").splitlines()
+    assert "TISMA_DDNS_HOST=" in env
+
+
 def test_admin_from_the_home(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TISMA_HOME", str(tmp_path))

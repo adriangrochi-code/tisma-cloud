@@ -58,6 +58,11 @@ class Settings:
     # CF-Connecting-IP is always set by Cloudflare. Without the header, the address of the connection is used.
     client_ip_header: str = field(default_factory=lambda: os.environ.get("TISMA_CLIENT_IP_HEADER",
                                                                          "x-forwarded-for").strip().lower())
+    # The addresses a proxy connects from (comma separated networks): client_ip_header is read only on connections
+    # from them, since anyone can write that header. The default is the local network: Caddy in its container,
+    # cloudflared on this machine. A connection from internet straight to the port (forwarded in the router by
+    # mistake) is then known by its own address and cannot pass as the local network.
+    trusted_proxies: str = field(default_factory=lambda: os.environ.get("TISMA_TRUSTED_PROXIES", PRIVATE_NETWORKS))
     # Addresses of the web site allowed to use /v1/site (comma separated, e.g. its server's public IP); empty: any address
     # with the site key.
     site_networks: str = field(default_factory=lambda: os.environ.get("TISMA_SITE_NETWORKS", ""))

@@ -74,6 +74,10 @@ no necesita pagar. No es administradora (no entra al panel ni recibe los avisos)
   niega a cualquier dirección fuera de `TISMA_ADMIN_NETWORKS` (por defecto, las redes privadas 192.168.x.x, 10.x.x.x,
   172.16–31.x.x). Se entra con `http://<central>:8000/admin` desde una PC conectada a la red del rack (Wi-Fi o
   cable). El puerto 8000 no se abre en el router.
+- **La dirección del usuario** detrás de Caddy o del túnel viene en un encabezado (`TISMA_CLIENT_IP_HEADER`:
+  `X-Forwarded-For` o `CF-Connecting-IP`). El maestro lo lee solo en conexiones desde `TISMA_TRUSTED_PROXIES` (por
+  defecto, las mismas redes privadas y la propia máquina); una conexión desde internet directo al puerto 8000 se juzga
+  por su propia dirección, aunque traiga el encabezado.
 
 ## Cuentas: correo confirmado y entrar con Google
 

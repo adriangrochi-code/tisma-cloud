@@ -7,6 +7,7 @@ of the service (gui.py); over SSH the same is done with these commands, or with 
     tisma-cloud status                  running or stopped, its role and port
     tisma-cloud logs [N]                the last N lines of its log (40)
     tisma-cloud config [KEY [VALUE]]    show the settings, or change one (port, TISMA_* of the master, keys of a node)
+    tisma-cloud config KEY --clear      empty one (PowerShell 5 drops an empty "" argument)
     tisma-cloud autostart on|off        start the service with the machine
     tisma-cloud firewall on|off         open the port of the master in the Windows firewall
     tisma-cloud check [--fix]           check what the machine needs to serve, and fix what can be fixed
@@ -107,8 +108,9 @@ def serve_master(host: str, port: int) -> int:
     if 0 < files < settings.max_connections + 100:
         logging.getLogger("tisma_cloud").warning("Only %d open files allowed: fewer than TISMA_MAX_CONNECTIONS=%d",
                                                  files, settings.max_connections)
-    # As deploy/Dockerfile.master: behind Caddy, short keep-alive.
-    uvicorn.run(create_app(settings), host=host, port=port, proxy_headers=True, forwarded_allow_ips="*",
+    # As deploy/Dockerfile.master: short keep-alive. No proxy_headers: the master reads the user's address itself, and
+    # only from a trusted proxy (TISMA_TRUSTED_PROXIES); uvicorn would take X-Forwarded-For from anyone.
+    uvicorn.run(create_app(settings), host=host, port=port, proxy_headers=False,
                 limit_concurrency=settings.max_connections, timeout_keep_alive=5, server_header=False, backlog=4096,
                 access_log=settings.access_log)
     return 0
@@ -399,7 +401,9 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(manager.logs(int(rest[0]) if rest else 40)))
             return 0
         if command == "config":
-            if len(rest) >= 2:
+            if len(rest) == 2 and rest[1] == "--clear":
+                manager.set_setting(rest[0], "")
+            elif len(rest) >= 2:
                 manager.set_setting(rest[0], " ".join(rest[1:]))
             show_config(manager)
             return 0
