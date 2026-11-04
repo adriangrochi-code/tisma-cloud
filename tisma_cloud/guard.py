@@ -224,6 +224,11 @@ class Guard:
             refuse_counted(401)
             await _answer(send, 401, "Invalid access token", [(b"www-authenticate", b"Bearer")])
             return
+        # The result of a node is not one of the uploads of the users: it never waits for their places (a result
+        # refused under load would fail a job already computed). A node sends as many as its slots.
+        if upload == "node":
+            await self.app(scope, receive, counted_send)
+            return
         if not self.uploads.take(who):
             refuse_counted(429)
             await _answer(send, 429, "Too many uploads at the same time: try again in a moment", [(b"retry-after", b"5")])

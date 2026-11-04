@@ -27,7 +27,9 @@ Windows service), which must be up and stable for it; 1.0 in the second week of 
 4. Robustness: a node that restarts gets its lost jobs requeued from its heartbeat (orphans, 60 s grace). Daily backups
    made by the master itself for the tisma-cloud program (backup.py: SQLite online copy, checked; `tisma-cloud backup`,
    `restore`; alert; Diagnóstico). Uploads security: any
-   other request body is capped (TISMA_MAX_BODY_KB, 1 MB). Next: queue under load, Windows installer review.
+   other request body is capped (TISMA_MAX_BODY_KB, 1 MB). Queue under load: deploy/loadtest.py, 100 users / 500 jobs / 8 nodes
+   on SQLite: 500 done, 0 failed (after fixing node results refused by the users' upload places). Next: Windows
+   installer review.
 
 ## Done for QA
 

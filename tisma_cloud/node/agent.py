@@ -27,6 +27,9 @@ from .runners import RUNNERS, JobCancelled, JobFailed, scan_readiness
 log = logging.getLogger("tisma_cloud.node")
 
 HEARTBEAT_S = 15
+# A result is sent again while the master answers these (busy, restarting) or is out of reach, for this long [s].
+RETRY_STATUS = (429, 502, 503, 504)
+RESULT_RETRY_S = 900.
 # How often a node asks tisma_scan --check again (a COLMAP installed meanwhile, a card removed) [s].
 SCAN_CHECK_S = 600.
 PROGRESS_EVERY_S = 2.
@@ -139,11 +142,7 @@ class Agent:
             # The processor cores of the job's plan (capacity.py): the engine runs with that many threads.
             params["threads"] = int(job.get("cpu_cores") or 0)
             outcome = runner(self.cfg, params, project, work, progress, cancel.is_set)
-            with open(outcome.result, "rb") as f:
-                r = self.client.post(f"/v1/node/jobs/{job_id}/result",
-                                     files={"file": (outcome.result.name, f, "application/octet-stream")},
-                                     data={"summary": json.dumps(outcome.summary)}, timeout=600.)
-            r.raise_for_status()
+            self._send_result(job_id, outcome)
             log.info("Job %s done", job_id)
             return "done"
         except JobCancelled:
@@ -162,6 +161,31 @@ class Agent:
             with self._lock:
                 self._running.pop(job_id, None)
             shutil.rmtree(work, ignore_errors=True)
+
+    def _send_result(self, job_id: str, outcome) -> None:  # noqa: ANN001
+        """Sends the result, trying again while the master is busy (429, 502-504: a restart, an update) or out of
+        reach, as long as RESULT_RETRY_S: a computed job is not failed for a moment of the master."""
+        deadline = time.monotonic() + RESULT_RETRY_S
+        wait = 2.
+        while True:
+            try:
+                with open(outcome.result, "rb") as f:
+                    r = self.client.post(f"/v1/node/jobs/{job_id}/result",
+                                         files={"file": (outcome.result.name, f, "application/octet-stream")},
+                                         data={"summary": json.dumps(outcome.summary)}, timeout=600.)
+                if r.status_code not in RETRY_STATUS:
+                    r.raise_for_status()
+                    return
+                retry_after = r.headers.get("retry-after", "")
+                pause = float(retry_after) if retry_after.replace(".", "", 1).isdigit() else wait
+                reason = f"the master answered {r.status_code}"
+            except httpx.TransportError as ex:
+                pause, reason = wait, f"the master is out of reach ({ex})"
+            if time.monotonic() + pause > deadline or self._stop.is_set():
+                raise JobFailed(f"The result could not be sent: {reason}")
+            log.warning("Job %s: %s; sending the result again in %.0f s", job_id, reason, pause)
+            self._stop.wait(pause)
+            wait = min(wait * 2, 60.)
 
     def _report_failure(self, job_id: str, error: str, cancelled: bool = False, details: dict | None = None) -> None:
         body: dict = {"error": error[:4000], "cancelled": cancelled}

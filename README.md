@@ -655,6 +655,26 @@ Por eso:
 - **Un análisis estructural a la vez por nodo** (`fea_slots = 1`): usan mucha memoria y la placa de video; mientras
   corre uno, los otros lugares del nodo siguen laminando.
 
+### Medido con carga (`deploy/loadtest.py`)
+
+El maestro real con SQLite (como lo instala el programa), en una máquina de 4 núcleos: usuarios que mandan 5 trabajos
+cada uno y los consultan cada 2 s, como Tisma y la app, y nodos simulados que los toman y devuelven el resultado al
+momento (mide la API, no el cálculo).
+
+| Usuarios | Trabajos | Nodos | Terminados | Fallidos | Consulta (mediana / p95) | Mandar (mediana / p95) |
+|---|---|---|---|---|---|---|
+| 50 (antes del arreglo) | 250 | 4 | 232 | 18 | 4 / 7 ms | 36 / 317 ms |
+| 100 | 500 | 8 | 500 | 0 | 4 / 8 ms | 30 / 444 ms |
+
+Los 18 fallidos eran resultados de los nodos rechazados (429) porque usaban los mismos 8 lugares de subida que los
+usuarios: ahora un resultado nunca espera esos lugares, y el nodo reintenta mandarlo si el maestro está ocupado o
+reiniciando (hasta 15 min) en vez de dar el trabajo por fallido. Las subidas de los usuarios por encima de 8 a la vez
+reciben 429 con `Retry-After` y se reintentan.
+
+```
+TISMA_DATABASE_URL=... TISMA_STORAGE_DIR=... python deploy/loadtest.py --url http://127.0.0.1:8000 --users 100 --nodes 8
+```
+
 ### Puentes conectados (impresoras remotas)
 
 Cada puente (Tisma abierto en una PC) tiene siempre abierta una espera de órdenes. Medido en la misma máquina (4

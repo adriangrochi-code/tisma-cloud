@@ -125,3 +125,30 @@ def test_any_other_body_is_limited(settings):
         # A normal request still works.
         r = c.post("/v1/auth/login", json={"email": "a@b.c", "password": "wrong-password"})
         assert r.status_code == 401
+
+
+def test_node_results_never_wait_for_the_users_places(settings):
+    # Under load the users' projects took the 8 places of uploads and a node's result was refused (429), which failed
+    # a job already computed. A result does not use those places.
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from conftest import Factory, new_app
+
+    full = dataclasses.replace(settings, max_uploads=0)
+    with TestClient(new_app(full)) as c:
+        f = Factory(c)
+        user = f.user("full@x.com")
+        assert c.post("/v1/jobs", headers=user, data={"kind": "slice", "params": "{}"},
+                      files={"file": ("p.3mf", b"x", "model/3mf")}).status_code == 429
+    with TestClient(new_app(settings)) as c:
+        f = Factory(c)
+        user = f.user("ana@x.com")
+        node = f.node("n", "slice")
+        job = f.submit(user)
+        assert f.claim(node)["id"] == job["id"]
+    with TestClient(new_app(full)) as c:
+        r = c.post(f"/v1/node/jobs/{job['id']}/result", headers=node,
+                   files={"file": ("plate.gcode", b"G1 X1\n", "text/plain")}, data={"summary": "{}"})
+        assert r.status_code == 200, r.text

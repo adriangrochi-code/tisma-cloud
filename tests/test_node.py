@@ -10,6 +10,7 @@ import textwrap
 import zipfile
 from pathlib import Path
 
+import httpx
 import pytest
 from conftest import DATA, make_3mf
 
@@ -156,6 +157,36 @@ def test_agent_slices(client, f, node_cfg):
     # Nothing left in the work directory.
     assert list(node_cfg.work_dir.iterdir()) == []
     assert agent.run_once() is None
+
+
+@posix_only
+def test_result_is_sent_again_while_the_master_is_busy(client, f, node_cfg, monkeypatch):
+    # Under load the master answered a node's result with 429 and the node failed a job already computed.
+    from tisma_cloud.node import agent as agent_mod
+
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), node_cfg)
+    job = f.submit(user)
+    real_post = client.post
+    answers = iter([429, 503])
+
+    def busy_then_real(url, *args, **kwargs):
+        if url.endswith("/result"):
+            code = next(answers, None)
+            if code is not None:
+                return httpx.Response(code, headers={"retry-after": "0"}, request=httpx.Request("POST", url))
+        return real_post(url, *args, **kwargs)
+
+    monkeypatch.setattr(client, "post", busy_then_real)
+    monkeypatch.setattr(agent_mod, "RESULT_RETRY_S", 30.)
+    assert agent.run_once() == "done"
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
+    # Busy for longer than RESULT_RETRY_S: then it is reported, not left running.
+    job = f.submit(user)
+    answers = iter([503] * 1000)
+    monkeypatch.setattr(agent_mod, "RESULT_RETRY_S", 0.)
+    assert agent.run_once() == "failed"
+    assert "could not be sent" in client.get(f"/v1/jobs/{job['id']}", headers=user).json()["error"]
 
 
 @posix_only
