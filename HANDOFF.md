@@ -5,7 +5,7 @@ public slicer repository, moved here with its history (`git subtree split`). Spe
 `session_01QadJfL7KViJEaJL92p8Swb`.
 
 Tests: venv, `pip install -e '.[master,test]'`, `python -m pytest -q` (249 passed, 2 skipped
-at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extras).
+at the last commit).
 
 Dates (owner, relayed by QA 2026-11-04, corrected): closed beta in December 2026 on the owner's real server (tunnel,
 Windows service), which must be up and stable for it; 1.0 in the second week of January 2027.
@@ -52,3 +52,9 @@ Windows service), which must be up and stable for it; 1.0 in the second week of 
 - Tisma Scanner in the cloud (owner 2026-11-04: inside Tisma Cloud, a plan of its own, this session also changes
   openscanner): job kind/class `scan`, uploads in pieces at /v1/scans (scans.py, ScanUpload), node runner run_scan()
   with `tisma_scan`. The openscanner side (tools/tisma_scan.py, the app's client) is on its own branch there.
+- 2026-11-04: merged by the owner. Slicer PR #24 (dev): server/ removed from the public repository (still in alpha
+  and some feature branches until they take dev; still in its history). openscanner PR #1: the app and tisma_scan on
+  its main branch (ccr-0a51a497-evjxni); new openscanner work goes on a fresh branch from it.
+- Open: a scan that completes with pieza.stl (needs a COLMAP with CUDA or OpenMVS; building OpenMVS here was blocked by
+  the session's permissions) and bundling COLMAP/OpenMVS with the scan node. Waiting for the owner on doing it in CI.
+- CI of this repository: the tests job passed at 3d8e74d; the two executable jobs were still queued at 16:20.
