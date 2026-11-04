@@ -2,7 +2,7 @@
 
 Branch `server/next` (from `ccr-7e2013d9-qwmclz`). Scope: `server/` only. Spec/QA contact: `session_01QadJfL7KViJEaJL92p8Swb`.
 
-Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (215 passed, 2 skipped
+Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (224 passed, 2 skipped
 at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extras).
 
 Dates (owner, relayed by QA 2026-11-04): the roadmap closes in the second week of January 2027, when a closed beta
@@ -11,8 +11,14 @@ starts on the owner's real server (tunnel, Windows service): it must be running 
 ## Work list (in order)
 
 1. Set up: done.
-2. Server against the engine's `docs/spec/features/cloud.md`: **blocked**, this session has no access to
-   `adriangrochi-code/tisma_engine` (adding the repo was refused). Waiting on the owner.
+2. Server against the engine's `docs/spec/features/cloud.md` (read-only clone in
+   `/home/user/adriangrochi-code/tisma_engine`, owner's permission 2026-11-04; dev bc900da + spec/next): rules 1 to 21
+   and 10b/10c/19a hold; `tests/test_contract.py` checks them rule by rule. Differences, decided:
+   - aero `extreme` (48 cells): the server accepts it (8cd9006, owner's request, engine dev 47f6f14); cloud.md rule 6
+     and aerodynamics.md still list up to `high`: the spec is behind, told QA.
+   - `GET /v1/jobs?limit` above 200 is capped at 200, not refused: matches «hasta 200».
+   - Rule 22 (Thingiverse proxy, thingiverse.md rule 21): not built. It is after 1.0 and its routes wait for the
+     engine's confirmation with a real token (thingiverse.md rule 20). Decision: after the beta work, roadmap first.
 3. Cloudflare tunnel guide and Windows manager: d891fc8 (service ImagePath, cert.pem, ingress checks, log file,
    `config KEY --clear`; client IP header only from `TISMA_TRUSTED_PROXIES`). Not tested on Windows nor with a real
    cloudflared (downloading it was refused). Still to review: the Windows installer flow.
