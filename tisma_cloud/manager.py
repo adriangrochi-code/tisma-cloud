@@ -802,38 +802,19 @@ class Manager:
                      if hours < 48 else f"La última es de hace {hours / 24:.0f} días: {last}; mirá el registro")
 
     def _scan_checks(self, tisma_scan: str) -> list[Check]:
-        """What a node needs for the 3D scans of Tisma Scanner (node/runners.py, run_scan): tisma_scan, and for its
-        .py the Python modules; COLMAP; an NVIDIA card (only a warning: COLMAP is much slower without one)."""
-        import shutil
-        import subprocess
+        """What a node needs for the 3D scans of Tisma Scanner: the same tisma_scan --check the node asks before it
+        takes any scan (node/runners.py, scan_readiness), so the diagnosis and the node never disagree."""
         from types import SimpleNamespace
 
-        from .node.runners import JobFailed, scan_command
+        from .node.runners import scan_readiness
 
-        out: list[Check] = []
-        if not Path(tisma_scan).is_file():
-            return [Check("Escaneos 3D: tisma_scan", False, f"No existe: {tisma_scan}")]
-        try:
-            command = scan_command(SimpleNamespace(tisma_scan=tisma_scan))
-        except JobFailed:
-            return [Check("Escaneos 3D: Python", False, "tisma_scan es un .py y esta máquina no tiene Python")]
-        out.append(Check("Escaneos 3D: tisma_scan", True, " ".join(command)))
-        if len(command) > 1:
-            # The same Python the node will run it with: numpy, OpenCV and Open3D (openscanner's README).
-            try:
-                run = subprocess.run([command[0], "-c", "import numpy, cv2, open3d"], capture_output=True, text=True,
-                                     timeout=60)
-                ok, detail = run.returncode == 0, (run.stderr.strip().splitlines() or ["?"])[-1]
-            except (OSError, subprocess.SubprocessError) as e:
-                ok, detail = False, str(e)
-            out.append(Check("Escaneos 3D: módulos de Python", ok, f"numpy, OpenCV y Open3D en {command[0]}" if ok else
-                             f"{detail}: pip install numpy opencv-contrib-python-headless open3d"))
-        colmap = os.environ.get("TISMA_COLMAP") or shutil.which("colmap") or ""
-        out.append(Check("Escaneos 3D: COLMAP", bool(colmap) and (Path(colmap).is_file() or bool(shutil.which(colmap))),
-                         colmap or "No está: instalalo (versión con CUDA) y ponelo en el PATH o en TISMA_COLMAP"))
-        gpu = shutil.which("nvidia-smi")
-        out.append(Check("Escaneos 3D: placa NVIDIA", True if gpu else None,
-                         "nvidia-smi encontrado" if gpu else "Sin nvidia-smi: COLMAP es mucho más lento sin placa NVIDIA"))
+        state = scan_readiness(SimpleNamespace(tisma_scan=tisma_scan))
+        out = [Check("Escaneos 3D", state["ready"],
+                     f"Listo: {tisma_scan}" if state["ready"] else
+                     "No toma escaneos hasta que esté todo: " + "; ".join(state["problems"]),
+                     None if state["ready"] or not tisma_scan.lower().endswith(".py") else "scan_modules")]
+        for warning in state["warnings"]:
+            out.append(Check("Escaneos 3D: aviso", None, warning))
         return out
 
     def checks(self) -> list[Check]:
@@ -959,7 +940,26 @@ class Manager:
                 raise RuntimeError("No se encontraron tisma-slicer y tisma-fea: copiá la carpeta tisma-slicer del "
                                    "paquete de Tisma Cloud junto al programa, o indicá los programas")
             return "Programas encontrados: " + ", ".join(found.values())
+        if key == "scan_modules":
+            return self._fix_scan_modules()
         raise ValueError(f"Nothing to fix for {key}")
+
+    def _fix_scan_modules(self) -> str:
+        """The Python modules of tools/tisma_scan.py, installed with pip in the Python the node runs it with. COLMAP is
+        not installed here: it comes in the node package (see README, «Escaneos 3D»)."""
+        import subprocess
+        from types import SimpleNamespace
+
+        from .node.runners import scan_command
+
+        command = scan_command(SimpleNamespace(tisma_scan=str(self.read_node().get("tisma_scan") or "")))
+        if len(command) < 2:
+            raise RuntimeError("tisma_scan no es un .py: el programa ya trae sus módulos")
+        run = subprocess.run([command[0], "-m", "pip", "install", "numpy", "opencv-contrib-python-headless", "open3d"],
+                             capture_output=True, text=True, timeout=1800)
+        if run.returncode != 0:
+            raise RuntimeError("pip no pudo instalar los módulos: " + (run.stderr.strip().splitlines() or ["?"])[-1])
+        return f"Módulos de los escaneos instalados en {command[0]}"
 
     # ---- running in the foreground (the process started by start())
     def run(self, child: bool = False, local_node: bool = False) -> int:

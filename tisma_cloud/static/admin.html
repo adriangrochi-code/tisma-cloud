@@ -289,9 +289,15 @@ function renderNode(node, jobs) {
   });
 
   const mine = jobs.filter((j) => j.node === node.name && j.status === "running");
+  // 3D scans: a node takes them only when tisma_scan --check found everything (node/agent.py).
+  const scan = list.includes("scan") ? (i.scan || { ready: false, problems: ["todavía no informó si puede escanear"] }) : null;
+  const scanLine = scan && !scan.ready
+    ? el("div", { class: "info", style: "color:var(--bad, #c0392b)" }, "No toma escaneos 3D: " + (scan.problems || []).join("; "))
+    : null;
   return el("div", { class: "card" },
     el("h3", {}, node.name, el("span", { class: "pill " + state[0] }, state[1])),
     el("div", { class: "info" }, facts || "Todavía no informó sus datos", el("br"), `Última señal ${ago(node.last_seen)}`),
+    scanLine,
     el("div", { class: "running" },
       mine.length ? mine.map((j) => el("div", { class: "job-line" },
         el("span", {}, NAMES[j.job_class] || j.job_class), el("span", { class: "bar" }, el("i", { style: `width:${j.progress}%` })),

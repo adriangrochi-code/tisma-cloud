@@ -356,6 +356,31 @@ def scan_command(cfg: NodeConfig) -> list[str]:
     return [cfg.tisma_scan]
 
 
+def scan_readiness(cfg: NodeConfig) -> dict:
+    """Whether this node can rebuild scans now: tisma_scan --check (COLMAP, the Python modules, OpenMVS when set).
+    {"ready": bool, "problems": [...], "warnings": [...]}. The agent takes no scan while it is not ready, so a missing
+    piece leaves the scan in the queue for another node instead of failing a person's job."""
+    try:
+        command = scan_command(cfg)
+    except JobFailed as ex:
+        return {"ready": False, "problems": [str(ex)], "warnings": []}
+    if not command:
+        return {"ready": False, "problems": ["tisma_scan is not set"], "warnings": []}
+    if not Path(command[-1]).is_file():
+        return {"ready": False, "problems": [f"tisma_scan does not exist: {command[-1]}"], "warnings": []}
+    try:
+        run = subprocess.run([*command, "--check"], capture_output=True, text=True, errors="replace", timeout=180,
+                             env=program_env())
+        result = json.loads(run.stdout.strip().splitlines()[-1]) if run.stdout.strip() else {}
+    except (OSError, subprocess.SubprocessError, ValueError) as ex:
+        return {"ready": False, "problems": [f"tisma_scan --check did not answer: {ex}"], "warnings": []}
+    if not isinstance(result, dict) or "ready" not in result:
+        return {"ready": False, "problems": ["tisma_scan is too old (it has no --check): update it"], "warnings": []}
+    return {"ready": bool(result["ready"]) and run.returncode == 0,
+            "problems": [str(p) for p in result.get("problems", [])][:10],
+            "warnings": [str(w) for w in result.get("warnings", [])][:10]}
+
+
 def run_scan(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
              cancelled: Cancelled) -> Outcome:
     """A 3D scan of Tisma Scanner (scans.py of the master) rebuilt with tisma_scan. Its contract:

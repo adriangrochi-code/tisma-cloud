@@ -22,11 +22,13 @@ import httpx
 from .. import __version__
 from ..jobs import FEA_CLASSES
 from .config import NodeConfig, memory_gb
-from .runners import RUNNERS, JobCancelled, JobFailed
+from .runners import RUNNERS, JobCancelled, JobFailed, scan_readiness
 
 log = logging.getLogger("tisma_cloud.node")
 
 HEARTBEAT_S = 15
+# How often a node asks tisma_scan --check again (a COLMAP installed meanwhile, a card removed) [s].
+SCAN_CHECK_S = 600.
 PROGRESS_EVERY_S = 2.
 
 
@@ -50,6 +52,9 @@ class Agent:
         self._running: dict[str, threading.Event] = {}
         # This run of the node program: the master tells two programs with one token apart (twins.py).
         self.instance = uuid.uuid4().hex
+        # 3D scans: taken only while tisma_scan --check says this machine has everything (runners.scan_readiness).
+        self.scan_ready = False
+        self._scan_checked = 0.
         # Taken by a slot while it may claim, or runs, a structural analysis.
         self._fea = threading.BoundedSemaphore(max(1, cfg.fea_slots))
         self._stop = threading.Event()
@@ -67,7 +72,25 @@ class Agent:
         r.raise_for_status()
         return r.json()["job"]
 
+    def check_scans(self, force: bool = False) -> bool:
+        """Asks tisma_scan --check every SCAN_CHECK_S (and at start); the result goes with the machine's data, so the
+        administration sees why a node takes no scans."""
+        now = time.monotonic()
+        if not force and now - self._scan_checked < SCAN_CHECK_S:
+            return self.scan_ready
+        self._scan_checked = now
+        state = scan_readiness(self.cfg)
+        if state["ready"] != self.scan_ready or force:
+            if state["ready"]:
+                log.info("3D scans: ready")
+            elif self.cfg.tisma_scan:
+                log.warning("3D scans: not taken until this is fixed: %s", "; ".join(state["problems"]))
+        self.scan_ready = state["ready"]
+        self.info["scan"] = state
+        return self.scan_ready
+
     def heartbeat(self) -> None:
+        self.check_scans()
         with self._lock:
             running = list(self._running)
         r = self.client.post("/v1/node/heartbeat", json={"running": running, "info": self.info,
@@ -158,7 +181,9 @@ class Agent:
         slot holds an analysis place (release it with release_fea() when the job ends)."""
         may_analyse = self._fea.acquire(blocking=False)
         try:
-            job = self.claim(wait, exclude=() if may_analyse else FEA_CLASSES)
+            # A scan only on a machine that has all it needs; an analysis only with a free analysis place.
+            exclude = set(() if may_analyse else FEA_CLASSES) | (set() if self.scan_ready else {"scan"})
+            job = self.claim(wait, exclude=tuple(sorted(exclude)))
         except BaseException:
             if may_analyse:
                 self._fea.release()
@@ -218,6 +243,7 @@ class Agent:
     def run_forever(self) -> None:
         log.info("Node with %d slot(s) (%d for analyses) working for %s", self.cfg.slots, self.cfg.fea_slots,
                  self.cfg.master_url)
+        self.check_scans(force=True)
         threads = [threading.Thread(target=self._heartbeats, daemon=True)]
         threads += [threading.Thread(target=self._slot, args=(i,), daemon=True) for i in range(self.cfg.slots)]
         for t in threads:

@@ -241,17 +241,57 @@ def test_scan_only_node_config(tmp_path):
 def test_check_of_a_scan_node(tmp_path, monkeypatch):
     from tisma_cloud.manager import Manager
 
-    monkeypatch.setenv("TISMA_COLMAP", str(tmp_path / "no-colmap"))
     script = tmp_path / "tisma_scan.py"
-    script.write_text("print('x')\n")
+    script.write_text(READY_CHECK.format(ready="False"))
     m = Manager(tmp_path)
     m.set_role("node")
     m.write_node({"tisma_scan": str(script), "tisma_slicer": "", "tisma_fea": "", "master_url": "http://127.0.0.1:9"})
     checks = {c.name: c for c in m.checks()}
-    assert checks["Escaneos 3D: tisma_scan"].ok
-    assert "Escaneos 3D: módulos de Python" in checks
-    assert checks["Escaneos 3D: COLMAP"].ok is False
+    assert checks["Escaneos 3D"].ok is False and "COLMAP is missing" in checks["Escaneos 3D"].detail
+    assert checks["Escaneos 3D"].fix == "scan_modules"
+    assert checks["Escaneos 3D: aviso"].ok is None
     # A node only for scans: no complaint about tisma-slicer.
     assert "Programa tisma-slicer" not in checks
+    script.write_text(READY_CHECK.format(ready="True"))
+    assert {c.name: c for c in m.checks()}["Escaneos 3D"].ok is True
     m.write_node({"tisma_scan": str(tmp_path / "missing.exe")})
-    assert {c.name: c for c in m.checks()}["Escaneos 3D: tisma_scan"].ok is False
+    assert {c.name: c for c in m.checks()}["Escaneos 3D"].ok is False
+
+
+READY_CHECK = """import json, sys
+ready = {ready}
+if sys.argv[1:] == ["--check"]:
+    print(json.dumps({{"ready": ready, "problems": [] if ready else ["COLMAP is missing"],
+                      "warnings": ["no NVIDIA card found"]}}))
+    sys.exit(0 if ready else 3)
+"""
+
+
+def test_node_takes_scans_only_when_ready(tmp_path):
+    from tisma_cloud.node.agent import Agent
+    from tisma_cloud.node.config import NodeConfig
+
+    script = tmp_path / "tisma_scan.py"
+    script.write_text(READY_CHECK.format(ready="False"))
+    claims: list[dict] = []
+
+    class Answer:
+        status_code = 204
+
+    class Client:
+        headers: dict = {}
+
+        def post(self, url, json=None, params=None, timeout=None):  # noqa: A002
+            claims.append(json)
+            return Answer()
+
+    cfg = NodeConfig(master_url="http://m", token="t", tisma_scan=str(script), work_dir=tmp_path / "w")
+    agent = Agent(cfg, client=Client())
+    assert not agent.check_scans(force=True)
+    assert agent.info["scan"]["problems"] == ["COLMAP is missing"]
+    agent.claim_for_slot(wait=0)
+    assert "scan" in claims[-1]["exclude"]
+    script.write_text(READY_CHECK.format(ready="True"))
+    assert agent.check_scans(force=True)
+    agent.claim_for_slot(wait=0)
+    assert "scan" not in claims[-1]["exclude"]
