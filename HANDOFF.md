@@ -65,3 +65,12 @@ Windows service), which must be up and stable for it; 1.0 in the second week of 
   runs master -> node -> result with it, on openscanner's scan/cpu-pipeline: switch OPENSCANNER_REF to
   ccr-0a51a497-evjxni once PR #2 is merged. TextureMesh crashes (-11) in the CPU build: no textura.zip there.
 - openscanner AGPL-3.0: waits for the owner's own confirmation in this session (relayed by QA only).
+
+## Ownership (2026-11-04, owner via QA)
+
+The Tisma Scanner session (session_01QadJfNpbVkgeJVY8DZiSRZ, openscanner branch scanner/next) owns the app and the
+pipeline. This session owns the cloud side: /v1/scans, the scan nodes and packaging tisma_scan for nodes (the
+TismaScan-windows artifact of openscanner's server-windows.yml: tisma_scan.exe with the official COLMAP 3.9.1 and
+OpenMVS 2.4.0, found by tisma-cloud in tisma-scan/ next to the program, ec5be1f). The tisma_scan contract was sent to
+that session (command line, progress lines, files, summary and its codes, --check). Pending: the CI of openscanner
+cb85aef (the package and a synthetic scan on Windows) and whether scanner/next has 64d0c37 and cb85aef.
