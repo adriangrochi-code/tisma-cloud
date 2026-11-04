@@ -36,6 +36,22 @@ jobs:
         env:
           TISMA_TEST_DATABASE_URL: postgresql+psycopg://tisma:tisma@localhost:5432/tisma_test
         run: pytest -q
+      # The real master under load (deploy/loadtest.py): 100 users sending and polling, 8 simulated nodes. Every job
+      # must end done, with no error of the server.
+      - name: Load test (PostgreSQL)
+        env:
+          TISMA_DATABASE_URL: postgresql+psycopg://tisma:tisma@localhost:5432/tisma_test
+          TISMA_STORAGE_DIR: ./load-storage
+          TISMA_UPDATES_URL: ""
+          TISMA_BACKUP_DIR: "off"
+        run: |
+          set -e
+          tisma-cloud master --port 18980 > load-master.log 2>&1 &
+          master=$!
+          for _ in $(seq 1 30); do curl -sf http://127.0.0.1:18980/v1/health > /dev/null 2>&1 && break; sleep 1; done
+          python deploy/loadtest.py --url http://127.0.0.1:18980 --users 100 --jobs 5 --nodes 8 | tee load-report.json
+          kill $master || true
+          if grep -i "traceback" load-master.log; then exit 1; fi
 
   # The server as one program, tisma-cloud (.exe on Windows): master, node and administration (tisma-cloud.spec).
   executable:
