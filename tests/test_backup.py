@@ -119,3 +119,34 @@ def test_two_backups_in_one_second_are_both_kept(tmp_path):
     assert backup.latest(tmp_path / "b") == second.path
     # The names of the first version, without seconds, still count.
     assert backup.stamp_of(tmp_path / "tisma-20261104-1329.db") == datetime(2026, 11, 4, 13, 29)
+
+
+def test_concurrent_backups_get_their_own_names(tmp_path):
+    import threading
+    from types import SimpleNamespace as NS
+
+    db = tmp_path / "t.db"
+    con = sqlite3.connect(db)
+    con.execute("create table t (v)")
+    con.execute("insert into t values (randomblob(200000))")
+    con.commit()
+    con.close()
+    st = NS(database_url=f"sqlite:///{db}", backup_days=14, backup_weeks=8)
+    when = datetime(2026, 11, 4, 13, 47, 6)
+    made, errors = [], []
+
+    def run() -> None:
+        try:
+            made.append(backup.make(st, tmp_path / "b", when).path)
+        except Exception as ex:  # noqa: BLE001
+            errors.append(ex)
+
+    threads = [threading.Thread(target=run) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors and len(set(made)) == 4
+    for path in made:
+        backup.check_sqlite(path)
+    assert sorted(p.name for p in (tmp_path / "b" / "daily").iterdir()) == sorted(p.name for p in made)

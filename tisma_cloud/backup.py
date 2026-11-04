@@ -18,6 +18,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -146,8 +147,14 @@ def prune(folder: Path, keep: int) -> None:
     """Keeps the newest `keep` backups of the folder (the names sort by date) and removes what a cut run left."""
     if not folder.is_dir():
         return
+    # What a cut run left (an hour old: a backup still being written by another process is not touched).
+    stale = time.time() - 3600
     for part in folder.glob("*.part*"):
-        part.unlink(missing_ok=True)
+        try:
+            if part.stat().st_mtime < stale:
+                part.unlink(missing_ok=True)
+        except OSError:
+            pass
     files = sorted((f for f in folder.iterdir() if stamp_of(f) is not None), key=_order)
     for old in files[:max(0, len(files) - keep)]:
         old.unlink(missing_ok=True)
@@ -159,18 +166,28 @@ def make(settings, dest: Path, now: datetime) -> Backup:  # noqa: ANN001
     daily, weekly = dest / "daily", dest / "weekly"
     daily.mkdir(parents=True, exist_ok=True)
     weekly.mkdir(parents=True, exist_ok=True)
-    final = daily / f"{PREFIX}{now:%Y%m%d-%H%M%S}{_ext(settings.database_url)}"
-    # Two in one second (a backup by hand right after the daily one): the second waits a little.
-    while final.exists():
+    ext = _ext(settings.database_url)
+    # The name is taken by creating its .part file exclusively: two backups at once (the daily one and one by hand,
+    # or two by hand) never get the same name; the second takes the next second.
+    while True:
+        final = daily / f"{PREFIX}{now:%Y%m%d-%H%M%S}{ext}"
+        part = final.with_name(final.name + ".part")
+        if not final.exists():
+            try:
+                os.close(os.open(part, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            except FileExistsError:
+                pass
+            else:
+                # The .part of another backup disappears only when its final file appears (os.replace).
+                if not final.exists():
+                    break
+                part.unlink(missing_ok=True)
         now += timedelta(seconds=1)
-        final = daily / f"{PREFIX}{now:%Y%m%d-%H%M%S}{_ext(settings.database_url)}"
-    part = final.with_name(final.name + ".part")
 
     def clear() -> None:
         for leftover in (part, Path(f"{part}-wal"), Path(f"{part}-shm"), Path(f"{part}-journal")):
             leftover.unlink(missing_ok=True)
 
-    clear()
     try:
         _dump(settings.database_url, part)
     except BaseException:
