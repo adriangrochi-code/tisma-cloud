@@ -477,6 +477,34 @@ tisma_scan <scan.zip> -o <carpeta> --summary <resumen.json> [--threads <n>] [--n
 con `progress N` en la salida, los archivos de arriba en `<carpeta>`, y en `<resumen.json>` lo que muestra la app o,
 si falla, `error`, `code` y `error_es` con código de salida distinto de 0.
 
+### Nodo de escaneo en Windows (por ejemplo el i5 con la GTX 1060)
+
+Un escaneo necesita, además del nodo de Tisma Cloud, tres programas. Todos se bajan de sus páginas oficiales:
+
+| Programa | Archivo | Para qué | Licencia |
+|---|---|---|---|
+| `tisma_scan.exe` | artefacto `TismaServer-windows` del CI de `openscanner` («TismaServer.exe (Windows)») | El pipeline del escaneo, con sus módulos de Python adentro | Del dueño (repositorio `openscanner`) |
+| COLMAP 3.9.1 | `COLMAP-3.9.1-windows-cuda.zip` de <https://github.com/colmap/colmap/releases/tag/3.9.1> | Fotogrametría; con CUDA también la nube densa | BSD-3-Clause |
+| OpenMVS (opcional con CUDA, obligatorio sin) | `OpenMVS_Windows_x64.zip` de <https://github.com/cdcseacave/openMVS/releases> | Nube densa, malla y textura en el procesador | AGPL-3.0 (se usa sin cambios, como programa aparte) |
+
+Es la versión 3.9.1 de COLMAP a propósito: es la que prueba el CI (la 4.x cambió opciones de la línea de comandos
+que usa el pipeline).
+
+1. Descomprimir COLMAP en `C:\COLMAP` y, si se usa, OpenMVS en `C:\OpenMVS`; `tisma_scan.exe` en `C:\TismaScan`.
+2. Las variables del sistema (Panel de control › Sistema › Variables de entorno, para que las vea el servicio):
+   `TISMA_COLMAP=C:\COLMAP\COLMAP.bat` (el zip trae ese `.bat`, que prepara las librerías de COLMAP antes de
+   arrancarlo) y, con OpenMVS, `TISMA_OPENMVS=C:\OpenMVS`. **Sin probar todavía en Windows:** si `tisma-cloud check`
+   no encuentra COLMAP, probar con `C:\COLMAP\bin\colmap.exe`.
+3. En el nodo: `tisma-cloud config tisma_scan C:\TismaScan\tisma_scan.exe` y reiniciar.
+4. `tisma-cloud check`: «Escaneos 3D» tiene que decir «Listo». Si no, dice qué falta (y el nodo no toma escaneos
+   hasta que esté todo: nunca le falla un escaneo a una persona por un programa que falta).
+5. En el maestro: `tisma-cloud admin node-set <nodo> --priorities scan,fea,...` (un escaneo usa la placa de video,
+   así que cuenta como un análisis: uno a la vez con `fea_slots = 1`).
+
+Sin placa NVIDIA también funciona, más lento: COLMAP sin CUDA hace la fotogrametría en el procesador (`tisma_scan`
+lo configura solo) y la nube densa la hace OpenMVS. Probado de punta a punta así en el CI de `openscanner`
+(«Escaneo completo en el procesador», un escaneo sintético hasta `pieza.stl`).
+
 ## Lista de versiones de Tisma
 
 El maestro sirve la lista firmada de versiones del programa y de la app (`app_updates.md` del motor, regla 13) como

@@ -46,3 +46,13 @@ Programs run as separate processes (not linked):
 | Google Identity Services (`accounts.google.com/gsi/client`) | Google's terms | Loaded by the account page from Google only when `TISMA_GOOGLE_CLIENT_IDS` is set; not distributed with the server. |
 
 This is a technical summary, not legal advice.
+
+## Programs a scan node runs (not part of Tisma Cloud, installed next to it)
+
+Tisma Cloud runs them as separate programs and contains no code of them (README, «Nodo de escaneo en Windows»):
+
+- **COLMAP** 3.9.1 (https://github.com/colmap/colmap): BSD-3-Clause.
+- **OpenMVS** (https://github.com/cdcseacave/openMVS): AGPL-3.0, used unmodified as a separate program. Its source is
+  that of the release it comes from.
+- **tisma_scan** (the owner's `openscanner` repository), with numpy (BSD-3-Clause), OpenCV (Apache-2.0) and Open3D
+  (MIT) inside.
