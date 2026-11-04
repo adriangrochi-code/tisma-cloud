@@ -87,3 +87,8 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   --check, synthetic box 42.43 x 32.49 x 20.62 mm, closed mesh, 16 min without NVIDIA. README step 3 now points at
   bin\colmap.exe. The scanner session also made the printed mat give the scale without --mat (contract unchanged).
   Left: openscanner PR #2 / scanner/next merge (owner), then OPENSCANNER_REF in scan-e2e.yml.
+- 21:20: licence check of TismaScan-windows (QA). Green on scanner/next 830da96 (run 41910637103): BSD/AGPL texts
+  checked, OpenMVS 2.4.0 source zip shipped. Open: the official COLMAP/OpenMVS zips bring no notice files (0 found),
+  so the bundled DLLs (Qt LGPL, Boost, CGAL, OpenCV, CUDA runtime...) lack their licences; asked the scanner session
+  to list the DLLs and add those texts. Until then the package is fine on the owner's own servers but not for third
+  parties.
