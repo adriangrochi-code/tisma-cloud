@@ -93,3 +93,4 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   to list the DLLs and add those texts. Until then the package is fine on the owner's own servers but not for third
   parties.
 - 22:05: 1d07f56 (scanner/next) lists the 95 bundled DLLs (~40 libraries) with their licence texts and fails on an unknown DLL. GPL-2.0+ (SPQR) and LGPL (Qt 5, GMP, LibRaw, CHOLMOD) inside: documented (f40e68d) that the package is for the owner's own nodes; a source companion artifact is the precondition for third parties (owner decides). Run 41919077404 scan step was still running at 22:02.
+- 23:50 owner's decision (via QA): the server and its node packages, TismaScan-windows included, run only on the owner's own machines and are never given to third parties; no source companion artifact. Written as the rule in THIRD_PARTY_LICENSES.md and README.

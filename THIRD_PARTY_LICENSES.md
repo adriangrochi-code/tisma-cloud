@@ -60,8 +60,9 @@ OpenMVS the same way; nothing links them. Tisma Cloud contains no code of them. 
   (named in `tisma-scan/LEEME.txt`).
 - The libraries inside those two releases (about 40, listed with their licence in `tisma-scan/licenses/BUNDLED_DLLS.txt`
   and their texts in `tisma-scan/licenses/third-party/`). Some are GPL-2.0+ (SuiteSparse SPQR) or LGPL (Qt 5, GMP,
-  LibRaw, CHOLMOD): giving the package to a third party means also offering their source code. **The package is for
-  the owner's own nodes only**; before it is given to anyone else (outside nodes, a public download) a companion
-  artifact with the exact sources of those libraries and a written offer in `LEEME.txt` are needed (not made yet).
+  LibRaw, CHOLMOD): giving the package to a third party means also offering their source code. **The package runs only
+  on the owner's own machines and is never given to third parties** (owner's decision, 2026-11-04), so no source
+  offer is made. Changing that rule would first need a companion artifact with the exact sources of those libraries
+  and a written offer in `LEEME.txt`.
 - **tisma_scan** (the owner's `openscanner` repository), with numpy (BSD-3-Clause), OpenCV (Apache-2.0) and Open3D
   (MIT) inside.
