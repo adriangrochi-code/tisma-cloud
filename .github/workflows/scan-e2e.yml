@@ -1,0 +1,101 @@
+name: Scan end to end
+
+# A 3D scan through all of Tisma Cloud, as in production but on a machine without an NVIDIA card: the master (SQLite),
+# a node with tisma_scan (openscanner's tools/tisma_scan.py), Ubuntu's COLMAP 3.9.1 without CUDA and OpenMVS on the
+# processor. The scan is synthetic (openscanner's tools/make_synthetic_scan.py: a box of 40 x 30 x 20 mm), sent in
+# pieces as the app sends it (deploy/scan_e2e.py); the result zip must have pieza.stl with those measures.
+
+on:
+  push:
+    paths:
+      - "tisma_cloud/scans.py"
+      - "tisma_cloud/node/**"
+      - "deploy/scan_e2e.py"
+      - ".github/workflows/scan-e2e.yml"
+  workflow_dispatch:
+    inputs:
+      openscanner_ref:
+        description: "Branch of openscanner with tisma_scan"
+        default: "scan/cpu-pipeline"
+
+env:
+  OPENMVS_VERSION: v2.3.0
+  # scan/cpu-pipeline until openscanner PR #2 is merged; then its main branch, ccr-0a51a497-evjxni.
+  OPENSCANNER_REF: ${{ github.event.inputs.openscanner_ref || 'scan/cpu-pipeline' }}
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: adriangrochi-code/openscanner
+          ref: ${{ env.OPENSCANNER_REF }}
+          path: openscanner
+
+      - name: COLMAP and what OpenMVS needs
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends colmap build-essential cmake git libeigen3-dev \
+            libboost-iostreams-dev libboost-program-options-dev libboost-system-dev libboost-serialization-dev \
+            libopencv-dev libcgal-dev libglew-dev libjpeg-dev libpng-dev libtiff-dev zlib1g-dev libegl1 libgl1
+
+      - uses: actions/cache@v4
+        id: openmvs
+        with:
+          path: openmvs/bin
+          key: openmvs-${{ env.OPENMVS_VERSION }}-ubuntu-24.04-cpu-nofortify
+
+      # OpenMVS: AGPL-3.0, used unmodified as a separate program (THIRD_PARTY_LICENSES.md). Without _FORTIFY_SOURCE:
+      # with Ubuntu 24.04's default, DensifyPointCloud v2.3.0 aborts ("buffer overflow detected").
+      - name: Build OpenMVS
+        if: steps.openmvs.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          git clone -q --depth 1 https://github.com/cdcseacave/VCG.git vcglib
+          git clone -q --depth 1 --branch "$OPENMVS_VERSION" https://github.com/cdcseacave/openMVS.git openmvs-src
+          cmake -S openmvs-src -B openmvs-build -DCMAKE_BUILD_TYPE=Release -DVCG_ROOT="$PWD/vcglib" \
+            -DOpenMVS_USE_CUDA=OFF -DOpenMVS_USE_CERES=OFF -DOpenMVS_USE_PYTHON=OFF -DOpenMVS_BUILD_VIEWER=OFF \
+            -DCMAKE_CXX_FLAGS="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" -DCMAKE_C_FLAGS="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+          cmake --build openmvs-build -j "$(nproc)"
+          mkdir -p openmvs/bin
+          for tool in InterfaceCOLMAP DensifyPointCloud ReconstructMesh RefineMesh TextureMesh; do
+            cp "$(find openmvs-build -type f -name "$tool" -perm -u+x | head -n 1)" openmvs/bin/
+          done
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install ".[master,test]" numpy opencv-contrib-python-headless open3d
+
+      - name: A scan through master, node and result
+        env:
+          TISMA_DATABASE_URL: sqlite:///./scan-e2e.db
+          TISMA_STORAGE_DIR: ./scan-storage
+          TISMA_UPDATES_URL: ""
+          TISMA_BACKUP_DIR: "off"
+          TISMA_OPENMVS: ${{ github.workspace }}/openmvs/bin
+        run: |
+          set -e
+          python openscanner/tools/make_synthetic_scan.py scan.zip --views 16 --size 640x480
+          tisma-cloud master --port 18970 > master.log 2>&1 &
+          for _ in $(seq 1 30); do curl -sf http://127.0.0.1:18970/v1/health > /dev/null 2>&1 && break; sleep 1; done
+          tisma-cloud admin plan-set escaneo --hours 10 --concurrent 1 --classes scan --public
+          tisma-cloud admin user-add ana@tisma.test --plan escaneo > /dev/null
+          tisma-cloud admin user-set ana@tisma.test --paid-until 2099-01-01 > /dev/null
+          token=$(tisma-cloud admin user-token ana@tisma.test | grep -o 'tu_[A-Za-z0-9_-]*' | head -n 1)
+          node_token=$(tisma-cloud admin node-add gpu1 --priorities scan | grep -o 'tn_[A-Za-z0-9_-]*' | head -n 1)
+          printf 'master_url = "http://127.0.0.1:18970"\ntoken = "%s"\ntisma_scan = "%s"\nwork_dir = "node-work"\nslots = 1\ngpu = false\n' \
+            "$node_token" "$PWD/openscanner/tools/tisma_scan.py" > node.toml
+          tisma-cloud node --config node.toml > node.log 2>&1 &
+          python deploy/scan_e2e.py --url http://127.0.0.1:18970 --token "$token" --scan scan.zip --expect 40,30,20
+
+      - name: Logs
+        if: always()
+        run: |
+          tail -n 40 master.log || true
+          tail -n 60 node.log || true

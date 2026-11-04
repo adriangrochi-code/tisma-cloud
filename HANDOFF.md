@@ -60,3 +60,8 @@ Windows service), which must be up and stable for it; 1.0 in the second week of 
 - Open: a scan that completes with pieza.stl (needs a COLMAP with CUDA or OpenMVS; building OpenMVS here was blocked by
   the session's permissions) and bundling COLMAP/OpenMVS with the scan node. Waiting for the owner on doing it in CI.
 - CI of this repository: the tests job passed at 3d8e74d; the two executable jobs were still queued at 16:20.
+- Scan proven end to end without CUDA (openscanner CI run 41880333430: synthetic 40x30x20 mm box -> STL 41.17 x 31.08 x
+  20.14 mm). openscanner PR #2 (scan/cpu-pipeline) waits for the owner. This repo's .github/workflows/scan-e2e.yml
+  runs master -> node -> result with it, on openscanner's scan/cpu-pipeline: switch OPENSCANNER_REF to
+  ccr-0a51a497-evjxni once PR #2 is merged. TextureMesh crashes (-11) in the CPU build: no textura.zip there.
+- openscanner AGPL-3.0: waits for the owner's own confirmation in this session (relayed by QA only).
