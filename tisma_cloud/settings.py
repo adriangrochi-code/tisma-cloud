@@ -49,6 +49,13 @@ class Settings:
     job_history_days: int = field(default_factory=lambda: _int("TISMA_JOB_HISTORY_DAYS", 90))
     # Results and projects older than this are deleted [h].
     retention_h: int = field(default_factory=lambda: _int("TISMA_RETENTION_H", 72))
+    # Daily backups of the database made by the master (backup.py): the folder; "off": none; empty: "backups" next to
+    # the storage folder with SQLite, none with PostgreSQL (the backup service of compose.master.yaml makes them).
+    backup_dir: str = field(default_factory=lambda: os.environ.get("TISMA_BACKUP_DIR", ""))
+    # Hour (UTC) of the daily backup, and how many daily and weekly (Sunday) copies are kept.
+    backup_hour: int = field(default_factory=lambda: _int("TISMA_BACKUP_HOUR", 3))
+    backup_days: int = field(default_factory=lambda: _int("TISMA_BACKUP_DAYS", 14))
+    backup_weeks: int = field(default_factory=lambda: _int("TISMA_BACKUP_WEEKS", 8))
     # Networks from which the administration (/admin and /v1/admin) can be used: the local network only. From any other
     # address those pages do not exist (404).
     admin_networks: str = field(default_factory=lambda: os.environ.get("TISMA_ADMIN_NETWORKS", PRIVATE_NETWORKS))

@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from . import __version__, alerts, billing, capacity, codes, crypto, google_play, pairing, remote, reports, scheduler, triage
+from . import __version__, alerts, backup, billing, capacity, codes, crypto, google_play, pairing, remote, reports, scheduler, triage
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
@@ -123,6 +123,9 @@ class Services:
         self.clamd = Clamd(settings.clamd) if settings.clamd else None
         self.refused = ThreatLog()
         self.twins = Twins()
+        # The last daily backup that failed (backup.py), for the alerts; None when the last one was good.
+        self.backup_failed: str | None = None
+        self._backup_lock = threading.Lock()
         # Processes that read large G-code in parts at the same time (made when first needed).
         self._scan_pool: ProcessPoolExecutor | None = None
         self._scan_pool_lock = threading.Lock()
@@ -333,11 +336,31 @@ class Services:
             raise
         return findings
 
+    def backup_if_due(self, now: datetime | None = None) -> backup.Backup | None:
+        """The daily backup of the database, when it is due (backup.py). A failure is logged and alerted."""
+        dest = backup.backup_dir(self.settings)
+        now = now or utcnow()
+        if dest is None or not self._backup_lock.acquire(blocking=False):
+            return None
+        try:
+            if not backup.due(self.settings, dest, now):
+                return None
+            made = backup.make(self.settings, dest, now)
+            self.backup_failed = None
+            return made
+        except (backup.BackupError, OSError, ValueError) as ex:
+            if self.backup_failed is None:
+                log.error("The daily backup failed: %s", ex)
+            self.backup_failed = str(ex)
+            return None
+        finally:
+            self._backup_lock.release()
+
     def check_alerts(self, now: datetime | None = None) -> list[Alert]:
         """Opens, repeats and closes the alerts (one check at a time, so that an alert is never opened twice)."""
         with self._alerts_lock, self.db.session() as s:
             return alerts.update(s, self.settings, self.storage.root, self.mailer, now, self.refused.recent(),
-                                 self.twins.twins(now or utcnow()))
+                                 self.twins.twins(now or utcnow()), self.backup_failed)
 
 
 def job_view(job: Job) -> dict[str, Any]:
@@ -675,6 +698,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await run_in_threadpool(services.sweep)
                 except Exception:  # noqa: BLE001 (keep sweeping)
                     log.exception("Sweep failed")
+                try:
+                    await run_in_threadpool(services.backup_if_due)
+                except Exception:  # noqa: BLE001 (keep sweeping)
+                    log.exception("Backup failed")
                 await pause(30)
 
         async def flusher() -> None:

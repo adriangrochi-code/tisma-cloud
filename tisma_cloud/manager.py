@@ -768,6 +768,36 @@ class Manager:
         return found
 
     # ---- diagnosis
+    def _backup_check(self) -> Check:
+        """The daily backup of the database (backup.py): where it goes and how old the last one is."""
+        from types import SimpleNamespace
+
+        from . import backup
+        from .models import utcnow
+
+        env = self.read_env()
+        url = os.environ.get("TISMA_DATABASE_URL") or env.get("TISMA_DATABASE_URL", "sqlite:///./tisma.db")
+        db_file = backup.sqlite_path(url)
+        if db_file is not None and not db_file.is_absolute():
+            url = "sqlite:///" + str(self.home / db_file)
+        storage = Path(os.environ.get("TISMA_STORAGE_DIR") or env.get("TISMA_STORAGE_DIR", "./storage"))
+        settings = SimpleNamespace(database_url=url, storage_dir=self.home / storage,
+                                   backup_dir=os.environ.get("TISMA_BACKUP_DIR") or env.get("TISMA_BACKUP_DIR", ""))
+        dest = backup.backup_dir(settings)
+        if dest is None:
+            return Check("Copias de seguridad", None, "Apagadas (TISMA_BACKUP_DIR=off, o PostgreSQL sin "
+                                                      "TISMA_BACKUP_DIR): la base de datos no se copia")
+        dest = dest if dest.is_absolute() else self.home / dest
+        last = backup.latest(dest)
+        when = backup.stamp_of(last) if last else None
+        if when is None:
+            return Check("Copias de seguridad", None, f"Todavía ninguna en {dest} (el maestro hace una por día; "
+                                                      "«tisma-cloud backup» hace una ahora)")
+        hours = (utcnow() - when).total_seconds() / 3600
+        return Check("Copias de seguridad", hours < 48,
+                     f"La última, hace {hours:.0f} h: {last} (guardá también una copia fuera de esta máquina)"
+                     if hours < 48 else f"La última es de hace {hours / 24:.0f} días: {last}; mirá el registro")
+
     def checks(self) -> list[Check]:
         """What this machine needs to serve, checked one by one (the window, tisma-cloud check)."""
         out: list[Check] = []
@@ -804,6 +834,7 @@ class Manager:
                                  "Este Windows no tiene WebView2 (Windows Server 2019 y 2022 no lo traen): instalá "
                                  "«Microsoft Edge WebView2 Runtime» o abrí el panel desde otra PC en "
                                  f"http://<IP de este servidor>:{self.port()}/admin"))
+            out.append(self._backup_check())
             env = self.read_env()
             url = env.get("TISMA_PUBLIC_URL", "")
             if url:

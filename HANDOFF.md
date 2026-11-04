@@ -2,7 +2,7 @@
 
 Branch `server/next` (from `ccr-7e2013d9-qwmclz`). Scope: `server/` only. Spec/QA contact: `session_01QadJfL7KViJEaJL92p8Swb`.
 
-Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (226 passed, 2 skipped
+Tests: venv, `pip install -e 'server[master]' pytest aiosmtpd`, `python -m pytest -q server/tests` (230 passed, 2 skipped
 at the last commit; `aiosmtpd` is needed by the SMTP test and is not in the extras).
 
 Dates (owner, relayed by QA 2026-11-04, corrected): closed beta in December 2026 on the owner's real server (tunnel,
@@ -22,8 +22,9 @@ Windows service), which must be up and stable for it; 1.0 in the second week of 
 3. Cloudflare tunnel guide and Windows manager: d891fc8 (service ImagePath, cert.pem, ingress checks, log file,
    `config KEY --clear`; client IP header only from `TISMA_TRUSTED_PROXIES`). Not tested on Windows nor with a real
    cloudflared (downloading it was refused). Still to review: the Windows installer flow.
-4. Robustness: a node that restarts gets its lost jobs requeued from its heartbeat (orphans, 60 s grace). Next: queue
-   under load, backups/restore, uploads security.
+4. Robustness: a node that restarts gets its lost jobs requeued from its heartbeat (orphans, 60 s grace). Daily backups
+   made by the master itself for the tisma-cloud program (backup.py: SQLite online copy, checked; `tisma-cloud backup`,
+   `restore`; alert; Diagnóstico). Next: queue under load, uploads security, Windows installer review.
 
 ## Done for QA
 

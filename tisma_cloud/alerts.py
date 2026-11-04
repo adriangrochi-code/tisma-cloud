@@ -27,7 +27,8 @@ class Problem:
 
 
 def find_problems(session: Session, settings, storage_dir: Path, now: datetime | None = None,  # noqa: ANN001
-                  refused: dict[str, int] | None = None, twins: set[int] | None = None) -> list[Problem]:
+                  refused: dict[str, int] | None = None, twins: set[int] | None = None,
+                  backup_failed: str | None = None) -> list[Problem]:
     now = now or utcnow()
     problems: list[Problem] = []
     # Files refused in the last hour (threats.py): projects, G-code, found by the antivirus, antivirus not answering.
@@ -46,6 +47,8 @@ def find_problems(session: Session, settings, storage_dir: Path, now: datetime |
                                                    Node.last_seen < silent)).scalars():
         minutes = int((now - node.last_seen).total_seconds() // 60)
         problems.append(Problem(f"node:{node.id}", f"El nodo «{node.name}» no responde hace {minutes} min."))
+    if backup_failed:
+        problems.append(Problem("backup", f"La copia de seguridad diaria de la base de datos falló: {backup_failed}"))
     # Two node programs with one token (twins.py).
     for node in session.execute(select(Node).where(Node.id.in_(sorted(twins or ())))).scalars():
         problems.append(Problem(f"twins:{node.id}", f"Hay dos programas con el token del nodo «{node.name}» "
@@ -78,11 +81,12 @@ def recipients(session: Session, settings) -> list[str]:  # noqa: ANN001
 
 
 def update(session: Session, settings, storage_dir: Path, mailer: Mailer, now: datetime | None = None,  # noqa: ANN001
-           refused: dict[str, int] | None = None, twins: set[int] | None = None) -> list[Alert]:
+           refused: dict[str, int] | None = None, twins: set[int] | None = None,
+           backup_failed: str | None = None) -> list[Alert]:
     """Compares the problems now with the open alerts: opens, repeats and closes them, and e-mails each change.
     Returns the open alerts."""
     now = now or utcnow()
-    current = {p.key: p for p in find_problems(session, settings, storage_dir, now, refused, twins)}
+    current = {p.key: p for p in find_problems(session, settings, storage_dir, now, refused, twins, backup_failed)}
     open_alerts = {a.key: a for a in session.execute(select(Alert).where(Alert.resolved_at.is_(None))).scalars()}
     to_send: list[tuple[str, str]] = []
     repeat = timedelta(hours=settings.alert_repeat_h)

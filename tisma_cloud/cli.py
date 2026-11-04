@@ -11,6 +11,8 @@ of the service (gui.py); over SSH the same is done with these commands, or with 
     tisma-cloud autostart on|off        start the service with the machine
     tisma-cloud firewall on|off         open the port of the master in the Windows firewall
     tisma-cloud check [--fix]           check what the machine needs to serve, and fix what can be fixed
+    tisma-cloud backup                  a backup of the database of the master now (the master makes one every day)
+    tisma-cloud restore FILE            put a backup in place of the database (with the service stopped)
     tisma-cloud console                 a menu with all of the above (for SSH)
     tisma-cloud panel                   the control panel of the master in a window (servers, queue, jobs, users)
     tisma-cloud admin <command> ...     administration of the master (as tisma-cloud-admin: users, nodes, plans...)
@@ -349,6 +351,53 @@ def open_panel(manager) -> int:
     return 0
 
 
+def _master_settings(manager):
+    from .settings import Settings
+
+    if manager.role() != "master":
+        raise RuntimeError("Backups are made on the master")
+    load_env(manager.env_path)
+    return Settings()
+
+
+def run_backup(manager) -> int:
+    from . import backup
+    from .models import utcnow
+
+    settings = _master_settings(manager)
+    dest = backup.backup_dir(settings)
+    if dest is None:
+        print("Backups are off (TISMA_BACKUP_DIR=off, or PostgreSQL without TISMA_BACKUP_DIR)", file=sys.stderr)
+        return 1
+    try:
+        made = backup.make(settings, dest, utcnow())
+    except backup.BackupError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"{made.path} ({made.size // 1024} KB)")
+    return 0
+
+
+def run_restore(manager, rest: list[str]) -> int:
+    from . import backup
+
+    if len(rest) != 1:
+        print("Usage: tisma-cloud restore FILE (a backup from the backups/daily or backups/weekly folder)",
+              file=sys.stderr)
+        return 2
+    settings = _master_settings(manager)
+    if manager.status().running:
+        print("Error: stop the service first (tisma-cloud stop)", file=sys.stderr)
+        return 1
+    try:
+        db_file = backup.restore_sqlite(Path(rest[0]), settings.database_url)
+    except backup.BackupError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"Restored into {db_file} (the one it replaced: {db_file.name}.before-restore). Start the service again.")
+    return 0
+
+
 def open_gui(manager) -> int:
     try:
         from .gui import main as gui_main
@@ -420,6 +469,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if command == "check":
             return print_checks(manager, fix="--fix" in rest)
+        if command == "backup":
+            return run_backup(manager)
+        if command == "restore":
+            return run_restore(manager, rest)
         if command == "console":
             return console(manager)
         if command == "panel":

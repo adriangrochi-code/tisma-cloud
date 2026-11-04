@@ -447,6 +447,27 @@ correos usan el mismo servidor SMTP que los códigos de las cuentas.
 
 ## Copias de seguridad
 
+**Con el programa `tisma-cloud` (Windows o Linux, sin Docker):** el maestro copia su base de datos solo, una vez por
+día después de las `TISMA_BACKUP_HOUR` (UTC, por defecto 3; si estaba apagado a esa hora, al arrancar). Con SQLite, la
+base del programa por defecto, las copias van a `backups\daily\` al lado de la carpeta `storage` (o a
+`TISMA_BACKUP_DIR`); cada una se revisa (`PRAGMA integrity_check`) antes de darla por buena, se guardan las últimas
+`TISMA_BACKUP_DAYS` (14) y una por semana (domingo) en `backups\weekly\` durante `TISMA_BACKUP_WEEKS` semanas (8).
+Con PostgreSQL hace falta poner `TISMA_BACKUP_DIR` y tener `pg_dump` y `pg_restore` instalados. `TISMA_BACKUP_DIR=off`
+las apaga. Si una copia falla, llega el aviso por correo y queda en rojo en `/admin`; el Diagnóstico dice cuándo fue la
+última.
+
+```
+tisma-cloud backup                                     # una copia ahora
+tisma-cloud stop
+tisma-cloud restore backups\daily\tisma-AAAAMMDD-HHMM.db   # la base que reemplaza queda como tisma.db.before-restore
+tisma-cloud start
+```
+
+Copiar también la carpeta `backups` fuera de la máquina (otro disco, un nodo, un pendrive), y guardar aparte, una vez,
+`storage\data.key` (la clave de los datos personales, que a propósito no va en las copias) y el archivo `.env`.
+
+**Con Docker:**
+
 El servicio `backup` de `compose.master.yaml` copia la base de datos (cuentas, pagos, planes, trabajos) todos los días a
 las `BACKUP_HOUR` (UTC, por defecto 3) en `BACKUP_DIR` (por defecto `deploy/backups`), con `pg_dump`. Cada copia se
 verifica antes de darla por buena (`pg_restore --list`); se guardan las últimas `BACKUP_DAYS` diarias (14) y una por
