@@ -49,10 +49,14 @@ This is a technical summary, not legal advice.
 
 ## Programs a scan node runs (not part of Tisma Cloud, installed next to it)
 
-Tisma Cloud runs them as separate programs and contains no code of them (README, «Nodo de escaneo en Windows»):
+Tisma Cloud runs tisma_scan as a separate program (subprocess, node/runners.py), and tisma_scan runs COLMAP and
+OpenMVS the same way; nothing links them. Tisma Cloud contains no code of them. On Windows they come in the folder
+`tisma-scan` (openscanner's TismaScan-windows package), with their licenses in `tisma-scan/licenses` (README,
+«Nodo de escaneo en Windows»):
 
-- **COLMAP** 3.9.1 (https://github.com/colmap/colmap): BSD-3-Clause.
-- **OpenMVS** (https://github.com/cdcseacave/openMVS): AGPL-3.0, used unmodified as a separate program. Its source is
-  that of the release it comes from.
+- **COLMAP** 3.9.1 (https://github.com/colmap/colmap): BSD-3-Clause; its official Windows release, unmodified.
+- **OpenMVS** 2.4.0 (https://github.com/cdcseacave/openMVS): AGPL-3.0; its official Windows release, unmodified, used
+  as a separate program. Its corresponding source is that release's tag, https://github.com/cdcseacave/openMVS/tree/v2.4.0
+  (named in `tisma-scan/LEEME.txt`).
 - **tisma_scan** (the owner's `openscanner` repository), with numpy (BSD-3-Clause), OpenCV (Apache-2.0) and Open3D
   (MIT) inside.
