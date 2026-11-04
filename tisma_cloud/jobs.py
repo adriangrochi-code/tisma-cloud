@@ -137,7 +137,9 @@ SLICE_PER_TRIANGLE_S = 3.5e-5
 FEA_QUALITY_S = {"fast": 5., "normal": 15., "high": 60., "extreme": 240., "ultra": 240.}
 FEA_OPTIMIZE_FACTOR = 5.
 # Not measured yet on the nodes: a guess from the cells of each quality (only to order the queue).
-AERO_QUALITY_S = {"friction": 2., "fast": 20., "normal": 60., "high": 180., "extreme": 600.}
+# Measured: "fast" on a 20 mm cube took 299 s on one core of the test node (engine dev dc4e419, two runs at 2/3 and
+# full resolution). The others scale with cells^4 (three dimensions and the time steps): 16, 24, 32 and 48 cells.
+AERO_QUALITY_S = {"friction": 2., "fast": 300., "normal": 1500., "high": 4800., "extreme": 24300.}
 ORIENT_S = 15.
 
 
