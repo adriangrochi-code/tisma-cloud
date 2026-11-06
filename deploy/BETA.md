@@ -101,9 +101,31 @@ Sin esto, un disco roto deja los datos sin poder leerse:
       C:\TismaCloud\tisma-cloud.exe --folder D:\simulacro` (README, «Simulacro de restaurar»). Sin `data.key` el
       maestro no arranca: por eso va aparte y fuera de la máquina.
 
-## 8. Antes de invitar a la gente
+## 8. Qué mirar durante la beta
+
+El maestro se vigila solo y avisa por correo (README, «Avisos de problemas»). Con `TISMA_ALERT_EMAILS` puesto, llegan
+estos avisos, uno cuando empieza el problema, un recordatorio cada `TISMA_ALERT_REPEAT_H` horas y otro cuando se
+resuelve:
+
+| Aviso | Cuándo (ajuste, valor por defecto) | Qué hacer |
+|---|---|---|
+| Nodo caído | un nodo no responde hace `TISMA_ALERT_NODE_MINUTES` (5 min) | mirar esa PC: encendida, con red, Diagnóstico del nodo; sus trabajos vuelven solos a la cola |
+| Cola trabada | un trabajo espera más de `TISMA_ALERT_QUEUE_MINUTES` (30 min) | ningún nodo hace ese tipo de trabajo (prioridades, «Escaneos 3D: Listo»), o están todos ocupados |
+| Disco | quedan menos de `TISMA_ALERT_DISK_FREE_GB` (5 GB) en el maestro | los resultados viejos se borran a las `TISMA_RETENTION_H` (72 h); liberar espacio o bajar ese valor |
+| Copia de seguridad | falló la copia diaria de la base | el mensaje dice por qué (disco lleno, carpeta que no existe); `tisma-cloud backup` para probar |
+
+- [ ] Probar que llegan: apagar un nodo más de 5 minutos y prenderlo de nuevo (llegan dos correos).
+- [ ] El panel (`/admin`, o **Panel de control** en la ventana) muestra los avisos activos en rojo arriba, los nodos
+      en línea y qué corre cada uno, la cola por tipo, los trabajos de hoy (terminados y fallidos), las cuentas y las
+      horas calculadas del mes. Mirarlo una vez por día durante la beta.
+- [ ] Los trabajos fallidos del día: en el panel, con su error. Uno que falla igual dos veces con proyectos distintos
+      es un problema del nodo o del programa, no del proyecto: mirar el registro del nodo (`tisma-cloud logs 200`).
+- [ ] Los problemas que informa la gente (Tisma y la app) aparecen en el panel, «Problemas informados», agrupados.
+
+## 9. Antes de invitar a la gente
 
 - [ ] El Diagnóstico del maestro y de cada nodo, sin ✖.
 - [ ] `smoke.py` en `OK` desde afuera.
 - [ ] Un corte de luz simulado: reiniciar el i5 y ver que el maestro, el túnel y los nodos vuelven solos.
-- [ ] El correo de las alertas llega (apagar un nodo más de `TISMA_ALERT_NODE_MINUTES`).
+- [ ] El correo de las alertas llega (paso 8).
+- [ ] La guía para quienes prueban la beta (`deploy/BETA_TESTERS.md`) con la dirección real, mandada a cada uno.
