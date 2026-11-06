@@ -609,11 +609,16 @@ def test_real_engine_slices_the_new_tisma_projects(client, f, tmp_path):
         view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
         return view, client.get(f"/v1/jobs/{job['id']}/result", headers=user).content
 
-    # A bare model, and a project of the new Tisma with its settings: the engine.
-    for data in (box_project(), box_project({"layers": {"height": 0.25}})):
-        view, gcode = sliced(data)
-        assert view["summary"]["slicer"] == "tisma-engine" and view["summary"]["print_time"]
-        assert b"G1 " in gcode
+    # A project of the new Tisma with its settings: the engine.
+    view, gcode = sliced(box_project({"layers": {"height": 0.25}}))
+    assert view["summary"]["slicer"] == "tisma-engine" and view["summary"]["print_time"]
+    assert b"G1 " in gcode
+    # A bare model: this engine slices only projects saved by Tisma (code 2 for any other 3MF, measured 11-06), so
+    # Tisma Slicer slices it and the summary says the engine was tried first.
+    if SLICER:
+        view, gcode = sliced(box_project())
+        assert view["summary"]["slicer"] == "tisma-slicer" and b"G1 " in gcode
+        assert view["summary"]["fallback_from"] == "tisma-engine (code 2)"
     # The machine's own G-code with macros (CONFIG.md, machine.macros): the project's start G-code is in the result.
     view, gcode = sliced(box_project({"machine": {"macros": {
         "dialect": "prusaslicer", "templates": {"start": "; TISMA CLOUD TEST START\nG28\n",
