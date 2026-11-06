@@ -12,16 +12,20 @@ on:
       - "tisma_cloud/node/**"
       - "deploy/scan_e2e.py"
       - ".github/workflows/scan-e2e.yml"
+  # Once a week too: tisma_scan changes in its own repository, which pushes here do not follow.
+  schedule:
+    - cron: "17 6 * * 1"
   workflow_dispatch:
     inputs:
       openscanner_ref:
         description: "Branch of openscanner with tisma_scan"
-        default: "scan/cpu-pipeline"
+        default: "scanner/next"
 
 env:
   OPENMVS_VERSION: v2.3.0
-  # scan/cpu-pipeline until openscanner PR #2 is merged; then its main branch, ccr-0a51a497-evjxni.
-  OPENSCANNER_REF: ${{ github.event.inputs.openscanner_ref || 'scan/cpu-pipeline' }}
+  # The branch of the Tisma Scanner session (it owns tisma_scan; its contract with the node is in HANDOFF.md), so a
+  # change there that breaks the node shows here; its default branch once that work is merged.
+  OPENSCANNER_REF: ${{ github.event.inputs.openscanner_ref || 'scanner/next' }}
 
 jobs:
   scan:
