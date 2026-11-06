@@ -346,7 +346,9 @@ sus ajustes:
 - un proyecto del Tisma nuevo (con `Metadata/tisma_project.json`), con tisma-engine;
 - uno de Tisma Slicer, con Tisma Slicer;
 - un modelo sin ajustes, con tisma-engine. Si el motor falla por algo que no es del modelo (códigos 1, 2, 3, 6 o un
-  cierre inesperado), lo intenta Tisma Slicer, y el trabajo lo dice (`"fallback_from"` en el resumen).
+  cierre inesperado), lo intenta Tisma Slicer, y el trabajo lo dice (`"fallback_from"` en el resumen). Hoy el motor
+  lamina solo proyectos guardados por Tisma: a un modelo suelto le responde el código 2, así que esos los lamina
+  Tisma Slicer (medido el 06-11 con el *nightly* en Windows y Linux).
 
 Un proyecto nunca se lamina con el programa equivocado: el otro tomaría solo las piezas y laminaría con sus propios
 ajustes por defecto, sin avisar. Un nodo al que le falta el programa del proyecto lo rechaza con un código claro
