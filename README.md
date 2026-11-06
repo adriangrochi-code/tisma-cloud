@@ -202,6 +202,11 @@ El objetivo es guardar lo mínimo para dar el servicio, y que lo guardado sirva 
   sirve para entrar. Una sesión que no se usa en `TISMA_SESSION_DAYS` (90) días se cierra sola.
 - La cuenta ve sus sesiones abiertas y cierra cualquiera, o todas las demás; cambiar o recuperar la contraseña cierra
   las otras. Los intentos de entrar, de códigos y de registro están limitados por dirección y por correo.
+- Adivinar la contraseña de una cuenta desde muchas direcciones: como mucho **20 contraseñas equivocadas por hora** a
+  una cuenta, vengan de donde vengan (las correctas no cuentan; con la cuenta trabada, la persona entra eligiendo una
+  contraseña nueva con un código por correo). Los códigos por correo son de 6 cifras, valen 15 minutos y 5 intentos,
+  y llegan como mucho **10 por día** a una dirección: 50 intentos de adivinar un código por día.
+- Todas las respuestas llevan `X-Content-Type-Options: nosniff`: un navegador nunca toma una descarga por una página.
 - El registro responde lo mismo si el correo ya tiene cuenta (al dueño le llega un aviso): la página no sirve para
   averiguar quién es cliente. Entrar con un correo desconocido tarda lo mismo que con uno conocido.
 - Las páginas solo ejecutan su propio script (CSP con su SHA-256, sin `unsafe-inline`).
