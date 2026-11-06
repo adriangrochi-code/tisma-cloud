@@ -39,12 +39,22 @@ jobs:
           ref: ${{ env.OPENSCANNER_REF }}
           path: openscanner
 
+      # A stuck package mirror once held this step for over an hour: each attempt is cut after 10 minutes and tried
+      # again, and the step gives up after 25.
       - name: COLMAP and what OpenMVS needs
+        timeout-minutes: 25
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends colmap build-essential cmake git libeigen3-dev \
-            libboost-iostreams-dev libboost-program-options-dev libboost-system-dev libboost-serialization-dev \
-            libopencv-dev libcgal-dev libglew-dev libjpeg-dev libpng-dev libtiff-dev zlib1g-dev libegl1 libgl1
+          packages="colmap build-essential cmake git libeigen3-dev libboost-iostreams-dev libboost-program-options-dev
+            libboost-system-dev libboost-serialization-dev libopencv-dev libcgal-dev libglew-dev libjpeg-dev libpng-dev
+            libtiff-dev zlib1g-dev libegl1 libgl1"
+          for attempt in 1 2; do
+            if sudo timeout 600 apt-get update -q -o Acquire::Retries=3 &&
+               sudo timeout 600 apt-get install -y -q --no-install-recommends -o Acquire::Retries=3 $packages; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed or timed out"
+          done
+          exit 1
 
       - uses: actions/cache@v4
         id: openmvs
