@@ -129,12 +129,15 @@ def charge_time(session: Session, job: Job) -> None:
     seconds = max(0., (job.finished_at - job.started_at).total_seconds())
     job.seconds = seconds
     month = month_of(job.finished_at)
-    updated = session.execute(
-        update(Usage).where(Usage.user_id == job.user_id, Usage.month == month).values(seconds=Usage.seconds + seconds)
-    )
-    if updated.rowcount == 0:
-        session.add(Usage(user_id=job.user_id, month=month, seconds=seconds))
-        session.flush()
+    # One statement that inserts the row of the month or adds to it: two jobs of the same user ending at once must not
+    # both insert it (on PostgreSQL the second one failed on the unique (user, month) and its result was lost).
+    if session.get_bind().dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+    stmt = insert(Usage).values(user_id=job.user_id, month=month, seconds=seconds)
+    session.execute(stmt.on_conflict_do_update(index_elements=[Usage.user_id, Usage.month],
+                                               set_={"seconds": Usage.seconds + stmt.excluded.seconds}))
 
 
 def claim(session: Session, node: Node, is_sqlite: bool, exclude: tuple[str, ...] | list[str] = ()) -> Job | None:

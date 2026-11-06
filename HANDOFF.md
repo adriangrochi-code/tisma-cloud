@@ -100,3 +100,4 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   check of a deployed master from internet (tested locally against a master and a fake node, both outcomes of the
   /admin check).
 - Load with scans: deploy/loadtest.py --scans/--scan-mb/--prefix. 50 users x 40 MB scans in pieces + 200 slicing jobs, 8 nodes, SQLite, 4 cores: 250 done, 0 failed, 2 GB in 30 s (README «Medido con carga»); a scan run also in the CI load test on PostgreSQL.
+- 11-06: bug found by the CI load test on PostgreSQL (runs of 21edd2a and f4c3498): two jobs of one user ending at once both inserted the month's usage row; one result got a 500 (UniqueViolation usage_user_id_month_key) and its job was left running. charge_time is now one INSERT ... ON CONFLICT DO UPDATE; test_jobs_of_one_user_ending_at_once_all_count fails 3/3 on PostgreSQL with the old code and passes with the new. Full suite: PostgreSQL 252 passed, SQLite 253 passed (local PostgreSQL 16).

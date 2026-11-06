@@ -64,3 +64,46 @@ def test_parallel_submissions_respect_the_limit(client, f, postgres):
     for t in threads:
         t.join(60)
     assert sorted(codes) == [201, 201] + [429] * 8
+
+
+def test_jobs_of_one_user_ending_at_once_all_count(client, f):
+    """The first jobs of a month of one user, ending at the same moment on several nodes: each adds its time to the
+    one usage row of the month (on PostgreSQL two of them both inserted it, and one result was lost with a 500)."""
+    from datetime import timedelta
+
+    from tisma_cloud.models import Job, Usage, User, utcnow
+
+    user = f.user(plan=f.plan("big", concurrent=1000))
+    db = f.db
+    ids = [f.submit(user)["id"] for _ in range(4)]
+    end = utcnow()
+    with db.session() as s:
+        for job_id in ids:
+            job = s.get(Job, job_id)
+            job.started_at, job.finished_at = end - timedelta(seconds=10), end
+        user_id = s.get(Job, ids[0]).user_id
+        assert s.get(User, user_id) is not None
+    start = threading.Barrier(len(ids))
+    errors: list[BaseException] = []
+
+    def finish(job_id: str) -> None:
+        try:
+            if db.is_sqlite:  # one writer at a time: the sessions cannot all be open together
+                start.wait(10)
+            with db.session() as s:
+                job = s.get(Job, job_id)
+                if not db.is_sqlite:  # all in their transaction, then all at once
+                    start.wait(10)
+                scheduler.charge_time(s, job)
+        except BaseException as ex:  # noqa: BLE001
+            errors.append(ex)
+
+    threads = [threading.Thread(target=finish, args=(job_id,)) for job_id in ids]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert not errors, errors
+    with db.session() as s:
+        rows = s.execute(select(Usage).where(Usage.user_id == user_id)).scalars().all()
+        assert len(rows) == 1 and abs(rows[0].seconds - 10 * len(ids)) < 1e-6
