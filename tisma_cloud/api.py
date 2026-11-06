@@ -57,6 +57,10 @@ JOBS = "jobs"
 # address (the request and its polls).
 JOIN_POLL_S = 5
 JOIN_PER_MINUTE = 30
+# Wrong passwords an hour for one account, from any address (guessing it from many addresses), and e-mail codes a day
+# to one address.
+LOGIN_FAILURES_PER_HOUR = 20
+CODES_PER_DAY = 10
 
 
 def bridge_key(bridge_id: str) -> str:
@@ -137,6 +141,8 @@ class Services:
         self.wakeup = Wakeup()
         # A slower window for the e-mails sent to one address (at most a few per hour).
         self.hourly = RateLimiter(3600.)
+        # And a day: the e-mail codes to one address (each reset code allows a few guesses).
+        self.daily = RateLimiter(86400.)
         self.mailer = mailer_for(settings)
         # The translator of the problem reports, on our own servers (none: they are kept as written).
         self.translator = Translator(settings.translate_url, settings.translate_to) if settings.translate_url else None
@@ -987,6 +993,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not (limiter.allow(f"login-ip:{client_key(request)}", cfg.login_per_minute)
                 and limiter.allow(f"login-email:{email}", cfg.login_per_minute)):
             raise HTTPException(429, "Too many login attempts: wait a minute", headers={"Retry-After": "60"})
+        # Guessing a password from many network addresses: at most LOGIN_FAILURES_PER_HOUR wrong passwords an hour
+        # for one account. Right ones never count, and a new password by e-mail code still works.
+        if services.hourly.used(f"login-fail:{email}") >= LOGIN_FAILURES_PER_HOUR:
+            raise HTTPException(429, "Too many wrong passwords for this account: wait an hour, or choose a new "
+                                     "password with a code by e-mail", headers={"Retry-After": "3600"})
         with db.session() as s:
             user = s.execute(select(User).where(User.email_index == crypto.index(email))).scalar_one_or_none()
             stored = user.password_hash if user and user.password_hash else DUMMY_HASH
@@ -998,6 +1009,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # As long as a failed login on an unknown e-mail, so that the time does not tell the account exists.
                 verify_password(body.password, DUMMY_HASH)
             if user is None or not ok or not user.enabled:
+                services.hourly.allow(f"login-fail:{email}", LOGIN_FAILURES_PER_HOUR + 1)
                 raise HTTPException(401, "Wrong e-mail or password")
             if not user.email_verified:
                 raise HTTPException(403, "E-mail not verified: enter the code we sent to it")
@@ -1228,8 +1240,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(503, "The e-mail could not be sent: try again in a few minutes") from None
 
     def mail_allowed(request: Request, email: str) -> bool:
-        """At most one code per minute and 5 per hour to an address, and 20 per hour from a network address."""
+        """At most one code per minute, 5 per hour and CODES_PER_DAY per day to an address, and 20 per hour from a
+        network address. With 5 attempts per code, at most 50 guesses of a 6-digit code a day."""
         return (limiter.allow(f"mail-min:{email}", 1) and services.hourly.allow(f"mail-hour:{email}", 5)
+                and services.daily.allow(f"mail-day:{email}", CODES_PER_DAY)
                 and services.hourly.allow(f"mail-ip:{client_key(request)}", 20))
 
     def code_attempt_allowed(request: Request, email: str) -> bool:

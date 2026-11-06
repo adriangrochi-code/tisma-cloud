@@ -111,6 +111,18 @@ async def _answer(send: Send, status: int, text: str, headers: list[tuple[bytes,
     await send({"type": "http.response.body", "body": body})
 
 
+def _nosniff(send: Send) -> Send:
+    """Every answer with X-Content-Type-Options: nosniff (a browser never takes a download or JSON for a page)."""
+    async def wrapped(message: dict) -> None:
+        if message["type"] == "http.response.start":
+            headers = list(message.get("headers") or [])
+            if not any(k.lower() == b"x-content-type-options" for k, _ in headers):
+                headers.append((b"x-content-type-options", b"nosniff"))
+            message = {**message, "headers": headers}
+        await send(message)
+    return wrapped
+
+
 class Guard:
     def __init__(self, app, *, settings, client_ip: Callable[[Scope], str], is_local: Callable[[str], bool],
                  token_owner: Callable[[str, str], str | None], run_sync: Callable) -> None:
@@ -166,6 +178,7 @@ class Guard:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        send = _nosniff(send)
         ip = self.client_ip(scope)
         local = self.is_local(ip)
         if not local and self.bans.banned(ip):

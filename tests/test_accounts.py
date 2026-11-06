@@ -174,3 +174,41 @@ def test_google_tokens_are_checked(gweb):
 def test_google_disabled_without_client_id(web):
     assert web.get("/v1/health").json()["google_client_id"] == ""
     assert web.post("/v1/auth/google", json={"id_token": google_token("x@gmail.com")}).status_code == 401
+
+
+def test_wrong_passwords_of_one_account_are_limited_from_any_address(web, settings):
+    """Guessing one account's password from many addresses: after 20 wrong ones in an hour the account takes no more
+    passwords (the right one included) for that hour; other accounts are not affected, right passwords never count,
+    and a new password by e-mail code still works."""
+    from tisma_cloud.api import LOGIN_FAILURES_PER_HOUR
+
+    for email in ("victima@correo.uy", "otra@correo.uy"):
+        web.post("/v1/auth/register", json={"email": email, "password": "una clave larga"})
+        web.post("/v1/auth/verify", json={"email": email, "code": code_of(web, email)})
+    for _ in range(3 * LOGIN_FAILURES_PER_HOUR):
+        assert web.post("/v1/auth/login", json={"email": "otra@correo.uy", "password": "una clave larga"}
+                        ).status_code == 200
+    for _ in range(LOGIN_FAILURES_PER_HOUR):
+        assert web.post("/v1/auth/login", json={"email": "victima@correo.uy", "password": "adivinanza"}
+                        ).status_code == 401
+    r = web.post("/v1/auth/login", json={"email": "Victima@correo.uy", "password": "una clave larga"})
+    assert r.status_code == 429 and r.headers["retry-after"] == "3600" and "code by e-mail" in r.json()["detail"]
+    assert web.post("/v1/auth/login", json={"email": "otra@correo.uy", "password": "una clave larga"}).status_code == 200
+    assert web.post("/v1/auth/password/forgot", json={"email": "victima@correo.uy"}).status_code == 200
+    r = web.post("/v1/auth/password/reset", json={"email": "victima@correo.uy", "password": "clave nueva 123",
+                                                  "code": code_of(web, "victima@correo.uy")})
+    assert r.status_code == 200
+
+
+def test_e_mail_codes_to_one_address_are_limited_per_day(web):
+    """Each reset code allows 5 guesses: at most 10 codes a day to one address (50 guesses of a 6-digit code)."""
+    from tisma_cloud.api import CODES_PER_DAY
+
+    web.post("/v1/auth/register", json={"email": "d@correo.uy", "password": "una clave larga"})
+    services = web.app.state.services
+    for _ in range(CODES_PER_DAY):  # as if 10 codes had been asked today (one a minute in the real world)
+        assert services.daily.allow("mail-day:d@correo.uy", CODES_PER_DAY)
+    services.limiter._hits.pop("mail-min:d@correo.uy", None)
+    sent = len(services.mailer.sent)
+    assert web.post("/v1/auth/password/forgot", json={"email": "d@correo.uy"}).status_code == 429
+    assert len(services.mailer.sent) == sent

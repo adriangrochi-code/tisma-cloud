@@ -152,3 +152,10 @@ def test_node_results_never_wait_for_the_users_places(settings):
         r = c.post(f"/v1/node/jobs/{job['id']}/result", headers=node,
                    files={"file": ("plate.gcode", b"G1 X1\n", "text/plain")}, data={"summary": "{}"})
         assert r.status_code == 200, r.text
+
+
+def test_every_answer_says_nosniff(client, f):
+    user = f.user()
+    for r in (client.get("/v1/health"), client.get("/v1/me", headers=user), client.get("/v1/me"),
+              client.get("/v1/no-such-thing")):
+        assert r.headers.get("x-content-type-options") == "nosniff", (r.request.url, r.status_code)

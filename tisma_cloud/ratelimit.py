@@ -29,6 +29,13 @@ class RateLimiter:
                 self._cleanup(now)
             return True
 
+    def used(self, key: str, now: float | None = None) -> int:
+        """How many requests of the key are in the window now, without counting one more."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            hits = self._hits.get(key)
+            return sum(1 for h in hits if h > now - self.window_s) if hits else 0
+
     def _cleanup(self, now: float) -> None:
         self._last_cleanup = now
         for key in [k for k, h in self._hits.items() if not h or h[-1] <= now - self.window_s]:
