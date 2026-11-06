@@ -289,6 +289,10 @@ recibe entrada estándar. Con Docker el nodo corre sin privilegios y con el sist
 
 ## Instalar el maestro (i5)
 
+**Para la beta en el i5 con Windows y el túnel de Cloudflare:** la lista en orden está en `deploy/BETA.md`, y
+`deploy/smoke.py` prueba el maestro desde internet (HTTPS, planes, administración oculta y un trabajo de punta a punta).
+Lo de abajo es la instalación con Docker en Linux.
+
 1. `cp .env.example .env` y completar `POSTGRES_PASSWORD`, `TISMA_DOMAIN`, `TISMA_PUBLIC_URL` y `TISMA_SITE_KEY`.
 2. Firewall y kernel (en el central, una vez; ajustar `LAN` en `firewall.nft` a la red del rack):
    `sudo cp deploy/firewall.nft /etc/nftables.d/tisma.nft && sudo nft -f /etc/nftables.d/tisma.nft` y

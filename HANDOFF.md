@@ -94,3 +94,8 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   parties.
 - 22:05: 1d07f56 (scanner/next) lists the 95 bundled DLLs (~40 libraries) with their licence texts and fails on an unknown DLL. GPL-2.0+ (SPQR) and LGPL (Qt 5, GMP, LibRaw, CHOLMOD) inside: documented (f40e68d) that the package is for the owner's own nodes; a source companion artifact is the precondition for third parties (owner decides). Run 41919077404 scan step was still running at 22:02.
 - 23:50 owner's decision (via QA): the server and its node packages, TismaScan-windows included, run only on the owner's own machines and are never given to third parties; no source companion artifact. Written as the rule in THIRD_PARTY_LICENSES.md and README.
+- 11-06 (owner's rule: no idle time; take the next item, deploy tests and docs while the real server waits):
+  scan-e2e.yml follows openscanner scanner/next and runs weekly (946eef3); deploy/BETA.md, the beta checklist for the
+  i5 (package, master, tunnel, plans, nodes, scan node, smoke test, secrets, before inviting); deploy/smoke.py, the
+  check of a deployed master from internet (tested locally against a master and a fake node, both outcomes of the
+  /admin check).
