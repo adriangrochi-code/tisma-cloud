@@ -663,6 +663,30 @@ dinámico. Otro servicio del mismo protocolo (dyndns2) se usa con `TISMA_DDNS_UR
 Sin dominio propio la dirección automática es HTTP, sin cifrar: para HTTPS hace falta un nombre (el del DNS dinámico
 sirve) y Caddy delante del maestro (ver «Instalar el maestro»).
 
+## Actualizar Tisma Cloud
+
+El maestro y cada nodo se actualizan igual: `tisma-cloud stop`, una copia de seguridad del maestro (`tisma-cloud
+backup`), poner el paquete nuevo en la misma carpeta encima del viejo (el `.exe`, `tisma-slicer\`, `tisma-engine\` y,
+en un nodo de escaneo, `tisma-scan\`) y `tisma-cloud start`. La configuración (`tisma-cloud.toml`, `.env`,
+`node.toml`), la base de datos y `storage\data.key` no se tocan. Al arrancar, el maestro pone la base al día solo
+(tablas y columnas nuevas, `db.py`; nunca borra una). Conviene actualizar primero el maestro y después los nodos; un
+nodo viejo sigue trabajando con un maestro nuevo mientras tanto.
+
+**Simulacro de actualizar (`deploy/upgrade_drill.py`):** instala la versión del 24-10-2026 (la primera con los
+comandos del servicio) desde la historia de este repositorio, le carga cuentas, trabajos terminados, un nodo
+registrado y un `node.toml`, y arranca la versión actual sobre la misma carpeta. Comprueba que están todas las
+cuentas, que los tokens viejos siguen entrando con su correo, que se conservan los trabajos y las horas usadas, que el
+token del nodo viejo sigue sirviendo, que un trabajo nuevo va de punta a punta y que el `node.toml` viejo se lee. Lo
+corre el CI con SQLite y con PostgreSQL. Medido (20 cuentas): la versión nueva responde 1,3 s (SQLite) y 1,6 s
+(PostgreSQL) después de iniciarla sobre la base vieja.
+
+```
+python deploy/upgrade_drill.py --old-ref a7a9805 [--database-url postgresql+psycopg://...]
+```
+
+`/v1/updates` es otra cosa: la lista firmada de versiones de los programas de Tisma (la app y el de escritorio), que el
+maestro sirve como segunda dirección; no actualiza el servidor.
+
 ## Instalar un nodo
 
 Los nodos están en la misma red que el maestro. Un nodo **sin token** pide unirse solo:

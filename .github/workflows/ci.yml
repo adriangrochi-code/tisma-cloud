@@ -25,6 +25,8 @@ jobs:
           --health-cmd "pg_isready -U tisma" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the upgrade drill installs an older commit
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -38,6 +40,15 @@ jobs:
         run: pytest -q
       # The real master under load (deploy/loadtest.py): 100 users sending and polling, 8 simulated nodes. Every job
       # must end done, with no error of the server.
+      # Upgrade drill (deploy/upgrade_drill.py): the version of 2026-10-24 (the first with the service commands) with
+      # accounts, jobs and a node, then this one on the same database: SQLite and PostgreSQL.
+      - name: Upgrade drill (SQLite and PostgreSQL)
+        run: |
+          set -e
+          git config --global user.email ci@tisma.test && git config --global user.name ci
+          python deploy/upgrade_drill.py --old-ref a7a9805 --users 20 --folder "$RUNNER_TEMP/upgrade-sqlite"
+          python deploy/upgrade_drill.py --old-ref a7a9805 --users 20 --folder "$RUNNER_TEMP/upgrade-pg" \
+            --database-url postgresql+psycopg://tisma:tisma@localhost:5432/tisma_test
       - name: Load test (PostgreSQL)
         env:
           TISMA_DATABASE_URL: postgresql+psycopg://tisma:tisma@localhost:5432/tisma_test

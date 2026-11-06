@@ -122,7 +122,14 @@ resuelve:
       es un problema del nodo o del programa, no del proyecto: mirar el registro del nodo (`tisma-cloud logs 200`).
 - [ ] Los problemas que informa la gente (Tisma y la app) aparecen en el panel, «Problemas informados», agrupados.
 
-## 9. Antes de invitar a la gente
+## 9. Actualizar durante la beta
+
+- [ ] Para cada versión nueva: `tisma-cloud stop`, `tisma-cloud backup`, el paquete nuevo encima del viejo en la misma
+      carpeta, `tisma-cloud start`; primero el maestro, después los nodos (README, «Actualizar Tisma Cloud»). El CI
+      prueba la actualización desde la versión del 24-10 con datos, en SQLite y PostgreSQL (`upgrade_drill.py`).
+- [ ] Después de actualizar, `smoke.py` desde afuera.
+
+## 10. Antes de invitar a la gente
 
 - [ ] El Diagnóstico del maestro y de cada nodo, sin ✖.
 - [ ] `smoke.py` en `OK` desde afuera.
