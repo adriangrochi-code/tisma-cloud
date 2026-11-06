@@ -928,4 +928,5 @@ TISMA_SLICER_BIN=.../tisma-slicer TISMA_FEA_BIN=.../tisma-fea pytest   # con los
 - Medir en tus equipos (laminado y FEA) para fijar las horas de cada plan y el umbral de las placas grandes.
 - Laminado de resina en la nube.
 - Materiales propios del usuario en el FEA en la nube (por ahora se usan los de la tabla incluida).
-- Respaldo del maestro (keepalived) y copia de la base de datos (ver `docs/CLOUD_ARCHITECTURE.md`).
+- Un segundo maestro de respaldo que tome el lugar del primero si se cae (hoy: el maestro se reinicia solo y la base
+  de datos tiene copias diarias, «Copias de seguridad»; volver a levantarlo en otra máquina es a mano).
