@@ -240,7 +240,7 @@ jobs:
           if [ "${{ matrix.name }}" = windows ]; then engine=dist/tisma-engine/tisma-engine.exe; else
             engine=dist/tisma-engine/tisma-engine; fi
           TISMA_SLICER_BIN="$PWD/$slicer" TISMA_FEA_BIN="$PWD/$fea" TISMA_ENGINE_BIN="$PWD/$engine" \
-            pytest -q tests/test_node.py -k "real_programs or real_engine" -rs | tee real.log
+            pytest -q -s tests/test_node.py -k "real_programs or real_engine" -rs | tee real.log
           grep -q "2 passed" real.log
       # The beta as it will run (deploy/BETA.md): the packaged master as a service, computing with its own node and the
       # Tisma Slicer of the package, and deploy/smoke.py from outside the process: health, public plans, the account and
