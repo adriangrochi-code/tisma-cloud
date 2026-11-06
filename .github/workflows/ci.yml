@@ -124,13 +124,15 @@ jobs:
           export TISMA_HOME="$PWD"
           exe=dist/${{ matrix.exe }}
           "$exe" --help
-          "$exe" admin plan-set basico --hours 1 --concurrent 1
+          "$exe" admin plan-set basico --hours 1 --concurrent 1 --public
           token=$("$exe" admin user-add equipo@tisma.com.uy --plan basico | tail -n 1)
           "$exe" admin user-list | grep "unlimited"
           "$exe" master --port 18990 > master.log 2>&1 &
           master=$!
           for _ in $(seq 1 30); do curl -sf http://127.0.0.1:18990/v1/health > /dev/null 2>&1 && break; sleep 1; done
           curl -sf -H "Authorization: Bearer $token" http://127.0.0.1:18990/v1/me | grep '"unlimited":true'
+          # The smoke test of a deployed master (deploy/smoke.py), here from this machine (--local: /admin answers).
+          python deploy/smoke.py --url http://127.0.0.1:18990 --local --token "$token"
           kill $master || true
       - name: Try the service (role, start, status, stop)
         run: |
