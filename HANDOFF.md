@@ -80,9 +80,7 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   en Windows», TISMA_COLMAP=C:\COLMAP\bin\colmap.exe instead of COLMAP.bat.
 - 19:02: scan-e2e.yml (be8ffee) green, run 41886937961: app-style upload -> master -> node (tisma_scan.py, CPU COLMAP
   + OpenMVS) -> result zip (pieza.stl, informe, ply, log); 40.99 x 31.36 x 20.10 mm for 40 x 30 x 20; 25 min on CPU.
-  QA told. Untested: Windows, a real phone scan, an NVIDIA card. Test note: where httpx2 is installed, starlette's
-  TestClient uses it and test_a_removed_node_forgets_its_token_and_asks_again fails (the agent catches httpx's
-  errors); CI has no httpx2 and passes.
+  QA told. Untested: Windows, a real phone scan, an NVIDIA card. (The httpx2 test note is solved: node/errors.py, 11-06.)
 - 20:50: TismaScan-windows green on scanner/next (run 41903680499, d720958): bin\colmap.exe without the .bat,
   --check, synthetic box 42.43 x 32.49 x 20.62 mm, closed mesh, 16 min without NVIDIA. README step 3 now points at
   bin\colmap.exe. The scanner session also made the printed mat give the scale without --mat (contract unchanged).
@@ -101,3 +99,4 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   /admin check).
 - Load with scans: deploy/loadtest.py --scans/--scan-mb/--prefix. 50 users x 40 MB scans in pieces + 200 slicing jobs, 8 nodes, SQLite, 4 cores: 250 done, 0 failed, 2 GB in 30 s (README «Medido con carga»); a scan run also in the CI load test on PostgreSQL.
 - 11-06: bug found by the CI load test on PostgreSQL (runs of 21edd2a and f4c3498): two jobs of one user ending at once both inserted the month's usage row; one result got a 500 (UniqueViolation usage_user_id_month_key) and its job was left running. charge_time is now one INSERT ... ON CONFLICT DO UPDATE; test_jobs_of_one_user_ending_at_once_all_count fails 3/3 on PostgreSQL with the old code and passes with the new. Full suite: PostgreSQL 252 passed, SQLite 253 passed (local PostgreSQL 16).
+- 11-06: CI green on 2835c57. Local PostgreSQL 16 load: 100 users / 500 jobs / 8 nodes 500 done, 30 users with 24 MB scans 90 done, no errors. node/errors.py: the node catches the errors of httpx and httpx2 (Starlette's test client prefers httpx2); the full suite now passes with httpx2 installed too (253 passed).

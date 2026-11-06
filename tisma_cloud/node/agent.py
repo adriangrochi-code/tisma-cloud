@@ -22,6 +22,7 @@ import httpx
 from .. import __version__
 from ..jobs import FEA_CLASSES
 from .config import NodeConfig, memory_gb
+from .errors import HTTPError, HTTPStatusError, TransportError
 from .runners import RUNNERS, JobCancelled, JobFailed, scan_readiness
 
 log = logging.getLogger("tisma_cloud.node")
@@ -125,7 +126,7 @@ class Agent:
                 r = self.client.post(f"/v1/node/jobs/{job_id}/progress", json={"progress": p}, timeout=30.)
                 if r.status_code == 404 or (r.status_code == 200 and r.json().get("cancel")):
                     cancel.set()
-            except httpx.HTTPError:
+            except HTTPError:
                 pass
 
         try:
@@ -179,7 +180,7 @@ class Agent:
                 retry_after = r.headers.get("retry-after", "")
                 pause = float(retry_after) if retry_after.replace(".", "", 1).isdigit() else wait
                 reason = f"the master answered {r.status_code}"
-            except httpx.TransportError as ex:
+            except TransportError as ex:
                 pause, reason = wait, f"the master is out of reach ({ex})"
             if time.monotonic() + pause > deadline or self._stop.is_set():
                 raise JobFailed(f"The result could not be sent: {reason}")
@@ -193,7 +194,7 @@ class Agent:
             body["details"] = details
         try:
             self.client.post(f"/v1/node/jobs/{job_id}/fail", json=body, timeout=30.)
-        except httpx.HTTPError:
+        except HTTPError:
             log.warning("Could not report the end of job %s", job_id)
 
     def run_once(self, wait: int = 0) -> str | None:
@@ -233,7 +234,7 @@ class Agent:
                 finally:
                     if holds:
                         self.release_fea()
-            except httpx.HTTPStatusError as ex:
+            except HTTPStatusError as ex:
                 if ex.response.status_code == 401:
                     self._token_refused()
                     return
@@ -241,7 +242,7 @@ class Agent:
                             backoff)
                 self._stop.wait(backoff)
                 backoff = min(backoff * 2, 60.)
-            except httpx.HTTPError as ex:
+            except HTTPError as ex:
                 log.warning("Slot %d: master not reachable (%s), retrying in %.0f s", index, ex, backoff)
                 self._stop.wait(backoff)
                 backoff = min(backoff * 2, 60.)
@@ -256,12 +257,12 @@ class Agent:
         while not self._stop.wait(HEARTBEAT_S):
             try:
                 self.heartbeat()
-            except httpx.HTTPStatusError as ex:
+            except HTTPStatusError as ex:
                 if ex.response.status_code == 401:
                     self._token_refused()
                     return
                 log.warning("Heartbeat failed: %s", ex)
-            except httpx.HTTPError as ex:
+            except HTTPError as ex:
                 log.warning("Heartbeat failed: %s", ex)
 
     def run_forever(self) -> None:

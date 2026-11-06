@@ -16,6 +16,7 @@ import httpx
 
 from .agent import machine_info
 from .config import NodeConfig
+from .errors import HTTPError
 
 log = logging.getLogger("tisma_cloud.node")
 
@@ -82,7 +83,7 @@ def ask_to_join(cfg: NodeConfig, config_path: Path, client: httpx.Client | None 
                 state_path.unlink(missing_ok=True)
                 raise Rejected()
             sleep(poll_s)
-        except httpx.HTTPError as ex:
+        except HTTPError as ex:
             # Not reachable, or not from this network (404 on the join of a master on internet), or too many requests.
             log.warning("Asking the master to join failed (%s), again in %.0f s", ex, backoff)
             sleep(backoff)
