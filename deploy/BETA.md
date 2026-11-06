@@ -96,8 +96,10 @@ Sin esto, un disco roto deja los datos sin poder leerse:
       cuentas»). Va **aparte** de las copias de la base de datos.
 - [ ] `C:\TismaCloud\.env` (la configuración, con la contraseña del correo).
 - [ ] Los archivos del túnel (`cloudflare-tunnel-windows.md`, «Respaldo de lo secreto»).
-- [ ] Una copia de la última copia de la base (`TISMA_BACKUP_DIR`) en otro lugar, cada tanto. Probar una vez
-      `tisma-cloud restore` en otra carpeta (README, «Copias de seguridad»).
+- [ ] Una copia de la última copia de la base (`TISMA_BACKUP_DIR`) en otro lugar, cada tanto.
+- [ ] El simulacro de restaurar, una vez, en otra carpeta: `python deploy/restore_drill.py --exe
+      C:\TismaCloud\tisma-cloud.exe --folder D:\simulacro` (README, «Simulacro de restaurar»). Sin `data.key` el
+      maestro no arranca: por eso va aparte y fuera de la máquina.
 
 ## 8. Antes de invitar a la gente
 

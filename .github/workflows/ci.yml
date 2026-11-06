@@ -233,6 +233,11 @@ jobs:
             exit 1
           fi
           "$exe" stop
+      # Restore drill with the program of the package (deploy/restore_drill.py): a master with data, its backup, the
+      # same data back on an empty machine with its data.key, and a refusal to start without that key.
+      - name: Restore drill
+        run: python deploy/restore_drill.py --users 30 --exe "$PWD/dist/${{ matrix.exe }}" --folder restore-drill
+
       # The runners of GitHub are Windows Server 2022 with an administrator: what a server does at boot.
       - name: Windows Server (start with the machine as SYSTEM, firewall, supervisor)
         if: matrix.name == 'windows'
