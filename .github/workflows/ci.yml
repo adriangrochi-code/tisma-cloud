@@ -115,6 +115,25 @@ jobs:
           printf 'Tisma Slicer (tisma-slicer, tisma-fea): GNU Affero General Public License 3.0, LICENSE-AGPL-3.0.txt.\nSource of this build: https://github.com/%s/tree/%s\n' \
             "$SLICER_REPO" "$sha" > dist/tisma-slicer/SOURCE.txt
           du -sh dist/tisma-slicer
+      # tisma-engine, the engine that replaces Tisma Slicer (F6), next to it in tisma-engine/: the last nightly of its
+      # public repository (a rolling pre-release, tag nightly). PolyForm Noncommercial 1.0.0 with commercial use
+      # reserved to its owner, who is the owner of Tisma Cloud; the package runs only on the owner's machines.
+      - name: tisma-engine (its nightly)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENGINE_REPO: adriangrochi-code/tisma_engine
+        run: |
+          set -e
+          gh release download nightly -R "$ENGINE_REPO" -p "tisma-engine-nightly-*-${{ matrix.name }}-x64.zip" -D engine-download
+          (cd engine-download && unzip -q ./*.zip && rm ./*.zip)
+          rm -rf dist/tisma-engine
+          mv engine-download/tisma-engine-nightly-* dist/tisma-engine
+          ls dist/tisma-engine
+          if [ "${{ matrix.name }}" = windows ]; then engine=dist/tisma-engine/tisma-engine.exe; else
+            engine=dist/tisma-engine/tisma-engine; chmod +x "$engine"; fi
+          "$engine" --help | head -n 3
+          gh release view nightly -R "$ENGINE_REPO" --json name,body -q '.name + "\n" + .body' > dist/tisma-engine/SOURCE.txt
+          du -sh dist/tisma-engine
       - name: Try it
         env:
           TISMA_DATABASE_URL: sqlite:///./try.db
@@ -207,9 +226,11 @@ jobs:
           dist/${{ matrix.exe }} config | grep -E '^tisma_fea = .*tisma-slicer[/\\]'
           unset TISMA_HOME
           pip install ".[master,test]" > /dev/null
-          TISMA_SLICER_BIN="$PWD/$slicer" TISMA_FEA_BIN="$PWD/$fea" pytest -q tests/test_node.py -k real_programs -rs \
-            | tee real.log
-          grep -q "1 passed" real.log
+          if [ "${{ matrix.name }}" = windows ]; then engine=dist/tisma-engine/tisma-engine.exe; else
+            engine=dist/tisma-engine/tisma-engine; fi
+          TISMA_SLICER_BIN="$PWD/$slicer" TISMA_FEA_BIN="$PWD/$fea" TISMA_ENGINE_BIN="$PWD/$engine" \
+            pytest -q tests/test_node.py -k "real_programs or real_engine" -rs | tee real.log
+          grep -q "2 passed" real.log
       # The beta as it will run (deploy/BETA.md): the packaged master as a service, computing with its own node and the
       # Tisma Slicer of the package, and deploy/smoke.py from outside the process: health, public plans, the account and
       # a real project sliced by that node, its G-code back.
@@ -288,6 +309,7 @@ jobs:
           path: |
             dist/${{ matrix.exe }}
             dist/tisma-slicer
+            dist/tisma-engine
             .env.example
             deploy/node.example.toml
           retention-days: 30

@@ -29,15 +29,23 @@ MODEL_CONFIG_FILE = "Metadata/Slic3r_PE_model.config"
 # Projects of other slicers (Bambu Studio, OrcaSlicer): their settings are converted by Tisma when loaded, so they are
 # not accepted (the client always sends Tisma projects).
 FOREIGN_CONFIGS = ("Metadata/project_settings.config",)
+# A project saved by the new Tisma (tisma-engine's interface, the app): its settings, which only the engine reads
+# (tisma_engine docs/PROJECT.md, «El paquete 3MF»).
+ENGINE_PROJECT = "Metadata/tisma_project.json"
+# Exit codes of tisma-engine (its README, «Códigos de salida») after which Tisma Slicer may try a bare model: the
+# command line (an older engine), a file it could not read, an order not made yet, a G-code that failed its own check,
+# or a crash. Not 4 (the model cannot be printed: Tisma Slicer would not print it either) nor 5 (analyses).
+ENGINE_RETRY_CODES = (1, 2, 3, 6)
 
 
 class JobFailed(Exception):
     """A job that could not be done. details: what the engine's summary adds to its error (its stable "code" and
     "error_es", the text in Spanish), kept with the job so the program shows it in the user's language."""
 
-    def __init__(self, message: str, details: dict | None = None) -> None:
+    def __init__(self, message: str, details: dict | None = None, exit_code: int | None = None) -> None:
         super().__init__(message)
         self.details = details or {}
+        self.exit_code = exit_code
 
 
 class JobCancelled(Exception):
@@ -226,24 +234,47 @@ def _run_engine(cfg: NodeConfig, command: str, project: Path, out: Path, extra: 
     if code != 0 or not out.exists() or out.stat().st_size == 0:
         what = {"slice": "Slicing", "orient": "The orientation"}.get(command, "The analysis")
         details = {k: str(summary[k])[:1000] for k in ("code", "error_es") if summary.get(k)}
-        raise JobFailed(str(summary.get("error") or "") or err.strip() or f"{what} failed (code {code})", details)
+        raise JobFailed(str(summary.get("error") or "") or err.strip() or f"{what} failed (code {code})", details,
+                        exit_code=code)
     for k in ("error", "code", "error_es"):
         summary.pop(k, None)
     return summary
 
 
-def run_slice(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
-              cancelled: Cancelled) -> Outcome:
-    if cfg.tisma_engine:
-        clean = work / "project.3mf"
-        sanitize_project(project, clean, for_slicing=True, engine=True)
-        out = work / "plate.gcode"
-        summary = _run_engine(cfg, "slice", clean, out, [], work, progress, cancelled, params)
-        with open(out, "rb") as f:
-            binary = f.read(4) == b"GCDE"
-        if binary:
-            out = out.rename(out.with_suffix(".bgcode"))
-        return Outcome(out, summary)
+def project_kind(project: Path) -> str:
+    """Who saved the project, which decides who slices it: "engine" (the new Tisma: its settings are only read by
+    tisma-engine), "slicer" (Tisma Slicer: only it reads its settings), "foreign" (Bambu Studio or OrcaSlicer) or
+    "model" (a 3MF with no settings)."""
+    try:
+        with zipfile.ZipFile(project) as archive:
+            names = set(archive.namelist())
+    except zipfile.BadZipFile:
+        raise JobFailed("The project is not a 3MF file") from None
+    if ENGINE_PROJECT in names:
+        return "engine"
+    if CONFIG_FILE in names:
+        return "slicer"
+    if any(n in names for n in FOREIGN_CONFIGS):
+        return "foreign"
+    return "model"
+
+
+def _binary_suffix(out: Path) -> Path:
+    with open(out, "rb") as f:
+        binary = f.read(4) == b"GCDE"
+    return out.rename(out.with_suffix(".bgcode")) if binary else out
+
+
+def _slice_with_engine(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
+                       cancelled: Cancelled) -> Outcome:
+    clean = work / "project.3mf"
+    sanitize_project(project, clean, for_slicing=True, engine=True)
+    out = work / "plate.gcode"
+    summary = _run_engine(cfg, "slice", clean, out, [], work, progress, cancelled, params)
+    return Outcome(_binary_suffix(out), {**summary, "slicer": "tisma-engine"})
+
+
+def _slice_with_slicer(cfg: NodeConfig, project: Path, work: Path, progress: Progress, cancelled: Cancelled) -> Outcome:
     clean = work / "project.3mf"
     sanitize_project(project, clean, for_slicing=True)
     out = work / "plate.gcode"
@@ -257,11 +288,46 @@ def run_slice(cfg: NodeConfig, params: dict, project: Path, work: Path, progress
         shutil.rmtree(datadir, ignore_errors=True)
     if code != 0 or not out.exists() or out.stat().st_size == 0:
         raise JobFailed(err.strip() or f"Slicing failed (code {code})")
-    with open(out, "rb") as f:
-        binary = f.read(4) == b"GCDE"
-    if binary:
-        out = out.rename(out.with_suffix(".bgcode"))
-    return Outcome(out, _gcode_summary(out))
+    out = _binary_suffix(out)
+    return Outcome(out, {**_gcode_summary(out), "slicer": "tisma-slicer"})
+
+
+def run_slice(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
+              cancelled: Cancelled) -> Outcome:
+    """Slices with the program that reads the project's settings (project_kind). A project of the new Tisma goes to
+    tisma-engine, one of Tisma Slicer to Tisma Slicer: the other one would ignore its settings and slice it with its
+    own defaults. A bare model goes to tisma-engine (F6: the engine replaces Tisma Slicer), with Tisma Slicer as the
+    fallback when the engine fails for a reason that is not the model's (ENGINE_RETRY_CODES)."""
+    kind = project_kind(project)
+    engine, slicer = bool(cfg.tisma_engine), bool(cfg.tisma_slicer)
+    if kind == "engine":
+        if not engine:
+            raise JobFailed("This project was saved by the new Tisma and this computing server has no tisma-engine",
+                            {"code": "needs_engine", "error_es": "Este servidor de cálculo no tiene tisma-engine, que "
+                                                                 "hace falta para los proyectos del Tisma nuevo"})
+        return _slice_with_engine(cfg, params, project, work, progress, cancelled)
+    if kind == "slicer":
+        if not slicer:
+            raise JobFailed("This project was saved by Tisma Slicer and this computing server does not have it",
+                            {"code": "needs_slicer", "error_es": "Este servidor de cálculo no tiene Tisma Slicer, que "
+                                                                 "hace falta para los proyectos guardados con él"})
+        return _slice_with_slicer(cfg, project, work, progress, cancelled)
+    if not engine:
+        return _slice_with_slicer(cfg, project, work, progress, cancelled)
+    try:
+        return _slice_with_engine(cfg, params, project, work, progress, cancelled)
+    except JobFailed as ex:
+        code = ex.exit_code
+        # A crash is a negative code (a signal) on Linux and a large one (an NTSTATUS) on Windows.
+        crashed = code is not None and (code < 0 or code > 255)
+        if kind != "model" or not slicer or not (code in ENGINE_RETRY_CODES or crashed):
+            raise
+        logging.getLogger("tisma_cloud").warning("tisma-engine failed (code %s: %s); slicing the model with Tisma Slicer", ex.exit_code, ex)
+        for leftover in work.glob("plate.*"):
+            leftover.unlink(missing_ok=True)
+        outcome = _slice_with_slicer(cfg, project, work, progress, cancelled)
+        outcome.summary["fallback_from"] = f"tisma-engine (code {ex.exit_code})"
+        return outcome
 
 
 def _fea_quality(params: dict) -> str:

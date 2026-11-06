@@ -161,6 +161,13 @@ def test_programs_come_with_the_package(tmp_path, monkeypatch):
     assert system.find_scan_program() == str(scan)
     assert m.detect_programs() == {"tisma_scan": str(scan)}
     assert m.read_node()["tisma_scan"] == str(scan)
+    # The engine of the package, next to the program, the same way.
+    assert system.find_engine_program() is None
+    engine = exe.parent.resolve() / system.ENGINE_FOLDER / system.ENGINE_NAMES[0]
+    engine.parent.mkdir()
+    engine.write_text("")
+    assert system.find_engine_program() == str(engine)
+    assert m.detect_programs() == {"tisma_engine": str(engine)}
 
 
 def test_node_programs_are_found(tmp_path, monkeypatch):

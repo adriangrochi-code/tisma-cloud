@@ -255,6 +255,10 @@ class Manager:
                 node.token_hash = hash_token(token)
         data = dict(NODE_DEFAULTS, master_url=f"http://127.0.0.1:{self.port()}", token=token, tisma_slicer=slicer,
                     tisma_fea=fea, work_dir="master-work")
+        engine = system.find_engine_program()
+        if engine:
+            # The engine slices the new Tisma's projects and the bare models; Tisma Slicer stays for its own projects.
+            data["tisma_engine"] = engine
         scan = system.find_scan_program()
         if scan:
             # It takes scans when "scan" is among its priorities (admin node-set maestro --priorities scan,...).
@@ -767,7 +771,8 @@ class Manager:
         node = self.read_node()
         slicer, fea = system.find_tisma_programs()
         found = {}
-        for key, path in (("tisma_slicer", slicer), ("tisma_fea", fea), ("tisma_scan", system.find_scan_program())):
+        for key, path in (("tisma_slicer", slicer), ("tisma_fea", fea), ("tisma_scan", system.find_scan_program()),
+                          ("tisma_engine", system.find_engine_program())):
             current = str(node.get(key) or "")
             if path and (replace or not current or not Path(current).is_file()):
                 found[key] = path
@@ -889,9 +894,10 @@ class Manager:
             node = self.read_node()
             scan_only = bool(node.get("tisma_scan")) and not (node.get("tisma_engine") or node.get("tisma_slicer")
                                                               or node.get("tisma_fea"))
-            programs = ((("tisma_engine", "Programa tisma-engine"),) if node.get("tisma_engine") else
-                        () if scan_only else
-                        (("tisma_slicer", "Programa tisma-slicer"), ("tisma_fea", "Programa tisma-fea")))
+            # Every program the node has; with none of them, Tisma Slicer's are the ones it needs.
+            labels = (("tisma_engine", "Programa tisma-engine"), ("tisma_slicer", "Programa tisma-slicer"),
+                      ("tisma_fea", "Programa tisma-fea"))
+            programs = tuple(p for p in labels if node.get(p[0])) or (() if scan_only else labels[1:])
             if node.get("tisma_scan"):
                 out += self._scan_checks(str(node["tisma_scan"]))
             for key, label in programs:

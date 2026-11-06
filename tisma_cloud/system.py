@@ -38,6 +38,9 @@ FEA_NAMES = ("tisma-fea.exe",) if os.name == "nt" else ("tisma-fea",)
 # unpacked next to the executable, with tisma_scan and the COLMAP and OpenMVS it finds by itself.
 SCAN_FOLDER = "tisma-scan"
 SCAN_NAMES = ("tisma_scan.exe",) if os.name == "nt" else ("tisma_scan",)
+# tisma-engine, the engine that replaces Tisma Slicer (its nightly package, in this folder next to the executable).
+ENGINE_FOLDER = "tisma-engine"
+ENGINE_NAMES = ("tisma-engine.exe",) if os.name == "nt" else ("tisma-engine",)
 
 # Windows: no console window for the helper programs.
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -312,6 +315,23 @@ def find_program(names: tuple[str, ...]) -> str | None:
         found = shutil.which(name)
         if found:
             return found
+    return None
+
+
+def find_engine_program() -> str | None:
+    """tisma-engine of the package (tisma-engine/ next to this program), or None."""
+    if not getattr(sys, "frozen", False):
+        return None
+    folder = Path(sys.executable).resolve().parent / ENGINE_FOLDER
+    for name in ENGINE_NAMES:
+        path = folder / name
+        if path.is_file():
+            if os.name != "nt" and not os.access(path, os.X_OK):
+                try:  # unpacked from a ZIP, which keeps no permissions
+                    path.chmod(path.stat().st_mode | 0o111)
+                except OSError:
+                    pass
+            return str(path)
     return None
 
 

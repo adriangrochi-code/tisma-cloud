@@ -96,9 +96,14 @@ command, project = args[0], args[1]
 out, summary = get("-o"), get("--summary")
 assert "--sandbox" in args
 names = zipfile.ZipFile(project).namelist()
-if "Metadata/Slic3r_PE.config" in names and b"FAIL" in zipfile.ZipFile(project).read("Metadata/Slic3r_PE.config"):
+settings = zipfile.ZipFile(project).read("Metadata/tisma_project.json") if "Metadata/tisma_project.json" in names else b""
+model = zipfile.ZipFile(project).read("3D/3dmodel.model")
+if b"FAIL" in settings or b"TOO_LARGE" in model:
     json.dump({"error": "Object too large for the bed"}, open(summary, "w"))
     sys.exit(4)
+if b"ENGINE_BUG" in model:
+    sys.stderr.write("the G-code did not pass its check\\n")
+    sys.exit(6)
 if command == "analyze" and get("--mode") == "resin-structure":
     json.dump({"error": "this analysis (resin-structure) does not run in the cloud yet", "code": "not_in_cloud",
                "error_es": "este análisis (estructura de resina) todavía no corre en la nube"}, open(summary, "w"))
@@ -152,7 +157,8 @@ def test_agent_slices(client, f, node_cfg):
     assert agent.run_once() == "done"
     view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
     assert view["status"] == "done", view
-    assert view["summary"] == {"print_time": "10m 8s", "filament_g": 2.75, "filament_mm": 921.48}
+    assert view["summary"] == {"print_time": "10m 8s", "filament_g": 2.75, "filament_mm": 921.48,
+                               "slicer": "tisma-slicer"}
     assert client.get(f"/v1/jobs/{job['id']}/result", headers=user).content.startswith(b"G1 X1")
     # Nothing left in the work directory.
     assert list(node_cfg.work_dir.iterdir()) == []
@@ -375,7 +381,7 @@ def test_engine_slices(client, f, engine_cfg):
 def test_engine_failure_uses_its_summary(client, f, engine_cfg):
     user = f.user()
     agent = agent_for(client, f.node("n", "slice"), engine_cfg)
-    job = f.submit(user, data=make_3mf(config="; FAIL\n"))
+    job = f.submit(user, data=make_3mf(extra={"Metadata/tisma_project.json": '{"format": "tisma-project", "FAIL": 1}'}))
     assert agent.run_once() == "failed"
     view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
     assert view["status"] == "failed" and view["error"] == "Object too large for the bed"
@@ -485,3 +491,139 @@ def test_errors_do_not_show_the_node_folders(tmp_path):
     text = f"{work}{os.sep}project.3mf: project: settings: infill.density: must be a number (in {work})"
     assert _without_paths(text, work) == "project.3mf: project: settings: infill.density: must be a number (in )"
     assert str(tmp_path) not in _without_paths(text, work)
+
+
+ENGINE_PROJECT = {"Metadata/tisma_project.json": '{"format": "tisma-project", "version": 1, "settings": {}}'}
+
+
+@pytest.fixture
+def both_cfg(engine_cfg, node_cfg):
+    """A node with tisma-engine and Tisma Slicer, as the package brings them."""
+    node_cfg.tisma_engine = engine_cfg.tisma_engine
+    return node_cfg
+
+
+def _sliced_by(client, f, cfg, data: bytes, name: str = "n") -> dict:
+    user = f.user(f"{name}@x.com")
+    agent = agent_for(client, f.node(name, "slice"), cfg)
+    job = f.submit(user, data=data)
+    agent.run_once()
+    return client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+
+
+def _model_with(marker: str) -> bytes:
+    """A bare model (no settings) whose model file carries a marker for the fake engine."""
+    src = zipfile.ZipFile(io.BytesIO(make_3mf()))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as out:
+        for info in src.infolist():
+            body = src.read(info)
+            if info.filename == "3D/3dmodel.model":
+                body = body.replace(b"<build>", f"<!-- {marker} --><build>".encode())
+            out.writestr(info.filename, body)
+    return buf.getvalue()
+
+
+@posix_only
+def test_each_project_goes_to_the_program_that_reads_its_settings(client, f, both_cfg):
+    # The new Tisma's project: the engine (Tisma Slicer would ignore its settings).
+    view = _sliced_by(client, f, both_cfg, make_3mf(extra=ENGINE_PROJECT), "a")
+    assert view["status"] == "done" and view["summary"]["slicer"] == "tisma-engine"
+    # Tisma Slicer's project: Tisma Slicer (the engine would take only its parts, not its settings).
+    view = _sliced_by(client, f, both_cfg, make_3mf(config="; layer_height = 0.2\n"), "b")
+    assert view["status"] == "done" and view["summary"]["slicer"] == "tisma-slicer"
+    # A bare model: the engine, which replaces Tisma Slicer.
+    view = _sliced_by(client, f, both_cfg, make_3mf(), "c")
+    assert view["status"] == "done" and view["summary"]["slicer"] == "tisma-engine"
+    assert "fallback_from" not in view["summary"]
+
+
+@posix_only
+def test_a_bare_model_falls_back_to_tisma_slicer_when_the_engine_fails(client, f, both_cfg):
+    # The engine's own G-code check failed (code 6): Tisma Slicer slices the model, and the summary says so.
+    view = _sliced_by(client, f, both_cfg, _model_with("ENGINE_BUG"), "a")
+    assert view["status"] == "done" and view["summary"]["slicer"] == "tisma-slicer"
+    assert view["summary"]["fallback_from"] == "tisma-engine (code 6)"
+    # The model cannot be printed (code 4): no second try, the person sees the engine's reason.
+    view = _sliced_by(client, f, both_cfg, _model_with("TOO_LARGE"), "b")
+    assert view["status"] == "failed" and view["error"] == "Object too large for the bed"
+
+
+@posix_only
+def test_a_project_needs_the_program_that_reads_it(client, f, engine_cfg, node_cfg):
+    # The new Tisma's project on a node without the engine: refused with a clear code, never sliced with defaults.
+    view = _sliced_by(client, f, node_cfg, make_3mf(extra=ENGINE_PROJECT), "a")
+    assert view["status"] == "failed" and view["summary"]["code"] == "needs_engine"
+    assert "tisma-engine" in view["summary"]["error_es"]
+    # Tisma Slicer's project on a node with only the engine: the same.
+    view = _sliced_by(client, f, engine_cfg, make_3mf(config="; layer_height = 0.2\n"), "b")
+    assert view["status"] == "failed" and view["summary"]["code"] == "needs_slicer"
+
+
+# ---- with the real tisma-engine: TISMA_ENGINE_BIN (the engine's nightly package, as the CI puts it in the package).
+ENGINE = os.environ.get("TISMA_ENGINE_BIN")
+
+
+def box_project(settings: dict | None = None) -> bytes:
+    """A 20 x 20 x 10 mm box placed at (128, 128) on the bed: a bare model, or with settings a project of the new Tisma
+    (tisma_engine docs/PROJECT.md, «El paquete 3MF»: the mesh in its own coordinates, its place in the build item,
+    Metadata/tisma_project.json with the settings in the format of docs/CONFIG.md)."""
+    v = [(x, y, z) for z in (0, 10) for y in (-10, 10) for x in (-10, 10)]
+    faces = [(0, 2, 1), (1, 2, 3), (4, 5, 6), (5, 7, 6), (0, 1, 4), (1, 5, 4), (2, 6, 3), (3, 6, 7), (0, 4, 2),
+             (2, 4, 6), (1, 3, 5), (3, 7, 5)]
+    vertices = "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in v)
+    triangles = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in faces)
+    model = ('<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" '
+             'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model">'
+             f'<mesh><vertices>{vertices}</vertices><triangles>{triangles}</triangles></mesh></object></resources>'
+             '<build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 128 128 0"/></build></model>')
+    files = {"3D/3dmodel.model": model,
+             "[Content_Types].xml": '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org'
+                                    '/package/2006/content-types"><Default Extension="model" ContentType="application/'
+                                    'vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="rels" '
+                                    'ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>',
+             "_rels/.rels": '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.'
+                            'org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" '
+                            'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'}
+    if settings is not None:
+        files["Metadata/tisma_project.json"] = json.dumps(
+            {"format": "tisma-project", "version": 1, "settings": settings,
+             "models": [{"name": "box.stl", "mesh": 0, "offset": [0.0, 0.0, 0.0]}]})
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, content in files.items():
+            z.writestr(name, content)
+    return buf.getvalue()
+
+
+@pytest.mark.skipif(not ENGINE, reason="set TISMA_ENGINE_BIN (and TISMA_SLICER_BIN for the Tisma Slicer project)")
+def test_real_engine_slices_the_new_tisma_projects(client, f, tmp_path):
+    cfg = NodeConfig(master_url="http://testserver", token="", tisma_engine=ENGINE, tisma_slicer=SLICER or "",
+                     tisma_fea=FEA or "", work_dir=tmp_path / "work", gpu=False, timeout_s=600)
+    user = f.user(plan=f.plan("big", concurrent=10))
+    agent = agent_for(client, f.node("n", "slice_large,slice"), cfg)
+
+    def sliced(data: bytes) -> tuple[dict, bytes]:
+        job = f.submit(user, data=data)
+        assert agent.run_once() == "done", client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+        view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+        return view, client.get(f"/v1/jobs/{job['id']}/result", headers=user).content
+
+    # A bare model, and a project of the new Tisma with its settings: the engine.
+    for data in (box_project(), box_project({"layers": {"height": 0.25}})):
+        view, gcode = sliced(data)
+        assert view["summary"]["slicer"] == "tisma-engine" and view["summary"]["print_time"]
+        assert b"G1 " in gcode
+    # The machine's own G-code with macros (CONFIG.md, machine.macros): the project's start G-code is in the result.
+    view, gcode = sliced(box_project({"machine": {"macros": {
+        "dialect": "prusaslicer", "templates": {"start": "; TISMA CLOUD TEST START\nG28\n",
+                                                "end": "; TISMA CLOUD TEST END\n"}}}}))
+    assert b"TISMA CLOUD TEST START" in gcode and b"TISMA CLOUD TEST END" in gcode
+    # The plate of a Bambu Lab printer (CONFIG.md, bambu.plate): a project that carries it slices.
+    view, gcode = sliced(box_project({"bambu": {"plate": "Textured PEI Plate"}}))
+    assert view["status"] == "done" and b"G1 " in gcode
+    # A project of Tisma Slicer goes to Tisma Slicer, which reads its settings.
+    if SLICER:
+        view, gcode = sliced((DATA / "bar_project.3mf").read_bytes())
+        assert view["summary"]["slicer"] == "tisma-slicer" and b"G1 " in gcode
+

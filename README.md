@@ -340,6 +340,18 @@ En Linux los programas usan GTK 3, WebKitGTK 4.1 y hidapi del sistema, como el A
 `sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0 libhidapi-hidraw0`). La carpeta lleva la licencia de Tisma Slicer (AGPL-3.0) y en
 `SOURCE.txt` el código fuente exacto de esa compilación.
 
+**El motor nuevo (tisma-engine):** el paquete trae también `dist/tisma-engine/`, el último *nightly* del motor que
+reemplaza a Tisma Slicer. El nodo, y el del maestro, lo encuentran solos. Cada proyecto lo lamina el programa que lee
+sus ajustes:
+- un proyecto del Tisma nuevo (con `Metadata/tisma_project.json`), con tisma-engine;
+- uno de Tisma Slicer, con Tisma Slicer;
+- un modelo sin ajustes, con tisma-engine. Si el motor falla por algo que no es del modelo (códigos 1, 2, 3, 6 o un
+  cierre inesperado), lo intenta Tisma Slicer, y el trabajo lo dice (`"fallback_from"` en el resumen).
+
+Un proyecto nunca se lamina con el programa equivocado: el otro tomaría solo las piezas y laminaría con sus propios
+ajustes por defecto, sin avisar. Un nodo al que le falta el programa del proyecto lo rechaza con un código claro
+(`needs_engine` o `needs_slicer`). El resumen de cada laminado dice qué programa lo hizo (`"slicer"`).
+
 Se maneja de dos formas, con lo mismo:
 
 - **En la pantalla del servidor:** doble clic en `tisma-cloud.exe` abre la ventana de Tisma Cloud: rol de la máquina,
