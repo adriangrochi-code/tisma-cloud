@@ -597,6 +597,20 @@ docker compose --env-file .env -f deploy/compose.master.yaml start api
   `docker compose --env-file .env -f deploy/compose.master.yaml exec api cat /data/data.key`.
   Para restaurar en otra máquina, ponerla de nuevo en el volumen `storage` o en `TISMA_DATA_KEY` antes de arrancar.
 
+### Simulacro de restaurar (`deploy/restore_drill.py`)
+
+Los pasos de arriba con los comandos de `tisma-cloud`, como después de perder el disco: un maestro con cuentas y trabajos
+terminados, su copia, y en una máquina vacía la copia más `data.key`, `tisma-cloud restore` e iniciar. Comprueba que
+los tokens de las personas siguen andando con su correo, que están todas las cuentas, sus trabajos y sus horas usadas,
+y que **sin `data.key` el maestro no arranca** y dice por qué (no sirve datos que no puede leer). Lo corre el CI en
+Windows y Linux con el programa del paquete. Medido (SQLite, 300 cuentas): la copia 0,35 s (424 KB), restaurarla
+0,08 s y el maestro nuevo responde 1,3 s después de iniciarlo: lo que más tarda es copiar los archivos a la otra
+máquina.
+
+```
+python deploy/restore_drill.py --users 300 --exe C:\TismaCloud\tisma-cloud.exe --folder D:\simulacro
+```
+
 ### El maestro también calcula
 
 Con una sola máquina (o para aprovechar la del maestro) el maestro también corre trabajos: es la opción **«El maestro
@@ -630,21 +644,6 @@ dinámico. Otro servicio del mismo protocolo (dyndns2) se usa con `TISMA_DDNS_UR
 
 Sin dominio propio la dirección automática es HTTP, sin cifrar: para HTTPS hace falta un nombre (el del DNS dinámico
 sirve) y Caddy delante del maestro (ver «Instalar el maestro»).
-
-
-### Simulacro de restaurar (`deploy/restore_drill.py`)
-
-Los pasos de arriba con los comandos de `tisma-cloud`, como después de perder el disco: un maestro con cuentas y trabajos
-terminados, su copia, y en una máquina vacía la copia más `data.key`, `tisma-cloud restore` e iniciar. Comprueba que
-los tokens de las personas siguen andando con su correo, que están todas las cuentas, sus trabajos y sus horas usadas,
-y que **sin `data.key` el maestro no arranca** y dice por qué (no sirve datos que no puede leer). Lo corre el CI en
-Windows y Linux con el programa del paquete. Medido (SQLite, 300 cuentas): la copia 0,35 s (424 KB), restaurarla
-0,08 s y el maestro nuevo responde 1,3 s después de iniciarlo: lo que más tarda es copiar los archivos a la otra
-máquina.
-
-```
-python deploy/restore_drill.py --users 300 --exe C:\TismaCloud\tisma-cloud.exe --folder D:\simulacro
-```
 
 ## Instalar un nodo
 
