@@ -99,3 +99,4 @@ cb85aef (the package and a synthetic scan on Windows) and whether scanner/next h
   i5 (package, master, tunnel, plans, nodes, scan node, smoke test, secrets, before inviting); deploy/smoke.py, the
   check of a deployed master from internet (tested locally against a master and a fake node, both outcomes of the
   /admin check).
+- Load with scans: deploy/loadtest.py --scans/--scan-mb/--prefix. 50 users x 40 MB scans in pieces + 200 slicing jobs, 8 nodes, SQLite, 4 cores: 250 done, 0 failed, 2 GB in 30 s (README «Medido con carga»); a scan run also in the CI load test on PostgreSQL.

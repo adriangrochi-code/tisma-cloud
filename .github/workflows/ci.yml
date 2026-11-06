@@ -50,6 +50,9 @@ jobs:
           master=$!
           for _ in $(seq 1 30); do curl -sf http://127.0.0.1:18980/v1/health > /dev/null 2>&1 && break; sleep 1; done
           python deploy/loadtest.py --url http://127.0.0.1:18980 --users 100 --jobs 5 --nodes 8 | tee load-report.json
+          # Scans in pieces at the same time as slicing jobs (other accounts, the same master and nodes).
+          python deploy/loadtest.py --url http://127.0.0.1:18980 --users 30 --jobs 2 --nodes 8 --scans 1 --scan-mb 24 \
+            --prefix escaneo | tee load-scan-report.json
           kill $master || true
           if grep -i "traceback" load-master.log; then exit 1; fi
 

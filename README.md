@@ -720,8 +720,16 @@ usuarios: ahora un resultado nunca espera esos lugares, y el nodo reintenta mand
 reiniciando (hasta 15 min) en vez de dar el trabajo por fallido. Las subidas de los usuarios por encima de 8 a la vez
 reciben 429 con `Retry-After` y se reintentan.
 
+**Con escaneos 3D** (`--scans 1 --scan-mb 40`): 50 usuarios que, al mismo tiempo, suben cada uno un escaneo de 40 MB en
+partes de 16 MB (como Tisma Scanner) y mandan 4 trabajos de laminado; 8 nodos. Los 250 trabajos (50 escaneos y 200
+laminados) terminaron y ninguno falló: 2 GB subidos en 30 s, en la misma máquina. Crear la subida tardó 0,65 / 3,4 s
+(mediana / p95), cada parte 0,49 / 2,9 s, cerrar el escaneo 46 / 214 ms. 94 de 244 partes recibieron 429 por los lugares
+de subida y se mandaron de nuevo después de `Retry-After`, como hace la app. Las consultas siguieron en 5 / 100 ms.
+Por internet manda el ancho de banda de subida de cada persona, no el maestro.
+
 ```
 TISMA_DATABASE_URL=... TISMA_STORAGE_DIR=... python deploy/loadtest.py --url http://127.0.0.1:8000 --users 100 --nodes 8
+TISMA_DATABASE_URL=... TISMA_STORAGE_DIR=... python deploy/loadtest.py --url http://127.0.0.1:8000 --users 50 --jobs 4 --nodes 8 --scans 1 --scan-mb 40
 ```
 
 ### Puentes conectados (impresoras remotas)
