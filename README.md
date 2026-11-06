@@ -609,7 +609,8 @@ terminados, su copia, y en una máquina vacía la copia más `data.key`, `tisma-
 los tokens de las personas siguen andando con su correo, que están todas las cuentas, sus trabajos y sus horas usadas,
 y que **sin `data.key` el maestro no arranca** y dice por qué (no sirve datos que no puede leer). Lo corre el CI en
 Windows y Linux con el programa del paquete. Medido (SQLite, 300 cuentas): la copia 0,35 s (424 KB), restaurarla
-0,08 s y el maestro nuevo responde 1,3 s después de iniciarlo: lo que más tarda es copiar los archivos a la otra
+0,08 s y el maestro nuevo responde 1,3 s después de iniciarlo (Linux); con el `.exe` en Windows Server 2022 (30
+cuentas), restaurar 3 s y responder 7,8 s después de iniciarlo. Lo que más tarda es copiar los archivos a la otra
 máquina.
 
 ```
