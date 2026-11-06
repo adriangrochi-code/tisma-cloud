@@ -210,6 +210,29 @@ jobs:
           TISMA_SLICER_BIN="$PWD/$slicer" TISMA_FEA_BIN="$PWD/$fea" pytest -q tests/test_node.py -k real_programs -rs \
             | tee real.log
           grep -q "1 passed" real.log
+      # The beta as it will run (deploy/BETA.md): the packaged master as a service, computing with its own node and the
+      # Tisma Slicer of the package, and deploy/smoke.py from outside the process: health, public plans, the account and
+      # a real project sliced by that node, its G-code back.
+      - name: Packaged master and its node, smoke test with a real job
+        run: |
+          set -e
+          exe="$PWD/dist/${{ matrix.exe }}"
+          export TISMA_HOME="$PWD/smoke-home"
+          "$exe" role master
+          "$exe" config port 18994
+          "$exe" admin plan-set beta --hours 5 --concurrent 2 --classes all --public
+          "$exe" admin user-add smoke@tisma.test --plan beta > /dev/null
+          "$exe" admin user-set smoke@tisma.test --paid-until 2099-01-01 > /dev/null
+          token=$("$exe" admin user-token smoke@tisma.test | grep -o 'tu_[A-Za-z0-9_-]*' | head -n 1)
+          "$exe" start
+          for _ in $(seq 1 40); do curl -sf http://127.0.0.1:18994/v1/health > /dev/null 2>&1 && break; sleep 1; done
+          if ! python deploy/smoke.py --url http://127.0.0.1:18994 --local --token "$token" \
+               --project tests/data/bar_project.3mf --timeout 900; then
+            "$exe" logs 120
+            "$exe" stop || true
+            exit 1
+          fi
+          "$exe" stop
       # The runners of GitHub are Windows Server 2022 with an administrator: what a server does at boot.
       - name: Windows Server (start with the machine as SYSTEM, firewall, supervisor)
         if: matrix.name == 'windows'
