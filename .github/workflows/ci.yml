@@ -358,4 +358,4 @@ jobs:
             dist/tisma-engine
             .env.example
             deploy/node.example.toml
-          retention-days: 30
+          retention-days: 7
