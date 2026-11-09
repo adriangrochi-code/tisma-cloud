@@ -571,6 +571,8 @@ class FailBody(BaseModel):
     cancelled: bool = False
     # From the engine: its stable error "code" and "error_es", the text in Spanish (cloud.md, rule 18).
     details: dict[str, str] = Field(default_factory=dict)
+    # The node's own trouble (a full disk, an error of the node program), not the job's: back to the queue.
+    node_error: bool = False
 
 
 class JoinBody(BaseModel):
@@ -1876,6 +1878,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             job = node_job(s, node, job_id)
             if body.cancelled and job.cancel_requested:
                 scheduler.stopped_by_node(s, job)
+            elif body.node_error and not job.cancel_requested and job.attempts < cfg.max_attempts:
+                # Another node takes it: its project stays.
+                log.warning("Job %s back to the queue: node %s could not run it (%s)", job.id, node.name,
+                            body.error[:300])
+                scheduler.release(s, job, cfg.max_attempts)
+                return {"ok": True, "requeued": True}
             else:
                 scheduler.fail(s, job, body.error, body.details)
             services.storage.remove_input(job.id)

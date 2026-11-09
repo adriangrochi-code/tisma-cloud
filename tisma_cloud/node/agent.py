@@ -34,6 +34,10 @@ RESULT_RETRY_S = 900.
 # How often a node asks tisma_scan --check again (a COLMAP installed meanwhile, a card removed) [s].
 SCAN_CHECK_S = 600.
 PROGRESS_EVERY_S = 2.
+# Free space a node keeps in its work folder before it takes another job (a project or a scan, its result and the
+# programs' own files); below it the node waits, and says so, instead of failing people's jobs on a full disk.
+MIN_FREE_BYTES = 2 << 30
+DISK_WAIT_S = 30.
 
 
 def machine_info(cfg: NodeConfig) -> dict:
@@ -155,8 +159,10 @@ class Agent:
             log.info("Job %s failed: %s", job_id, ex)
             return "failed"
         except Exception as ex:  # noqa: BLE001 (a node error must not stop the node)
+            # The node's own trouble (a full disk, an error of this program), not the person's: the job goes back to
+            # the queue for another node (up to the master's limit of attempts).
             log.exception("Job %s failed on the node", job_id)
-            self._report_failure(job_id, _without_paths(f"Error of the computing server: {ex}", work))
+            self._report_failure(job_id, _without_paths(f"Error of the computing server: {ex}", work), node_error=True)
             return "failed"
         finally:
             with self._lock:
@@ -188,8 +194,11 @@ class Agent:
             self._stop.wait(pause)
             wait = min(wait * 2, 60.)
 
-    def _report_failure(self, job_id: str, error: str, cancelled: bool = False, details: dict | None = None) -> None:
+    def _report_failure(self, job_id: str, error: str, cancelled: bool = False, details: dict | None = None,
+                        node_error: bool = False) -> None:
         body: dict = {"error": error[:4000], "cancelled": cancelled}
+        if node_error:
+            body["node_error"] = True
         if details:
             body["details"] = details
         try:
@@ -222,9 +231,28 @@ class Agent:
         self._fea.release()
 
     # ---- the service
+    def disk_full(self) -> bool:
+        """Less than MIN_FREE_BYTES free in the work folder (said once in the log until there is room again)."""
+        try:
+            free = shutil.disk_usage(self.cfg.work_dir).free
+        except OSError:
+            return False
+        full = free < MIN_FREE_BYTES
+        if full != getattr(self, "_disk_was_full", False):
+            self._disk_was_full = full
+            if full:
+                log.warning("Only %.1f GB free in %s: no new jobs until there are %d GB", free / 2 ** 30,
+                            self.cfg.work_dir, MIN_FREE_BYTES >> 30)
+            else:
+                log.info("There is room again in %s: taking jobs", self.cfg.work_dir)
+        return full
+
     def _slot(self, index: int) -> None:
         backoff = 1.
         while not self._stop.is_set():
+            if self.disk_full():
+                self._stop.wait(DISK_WAIT_S)
+                continue
             try:
                 job, holds = self.claim_for_slot()
                 backoff = 1.

@@ -210,6 +210,66 @@ def test_agent_reports_failures(client, f, node_cfg):
 
 
 @posix_only
+def test_a_node_error_sends_the_job_back_to_the_queue(client, f, node_cfg, monkeypatch, settings):
+    # A full disk or an error of the node program is the node's trouble, not the person's: another node takes the job.
+    from tisma_cloud.node import runners
+
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), node_cfg)
+    job = f.submit(user)
+
+    def no_space(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setitem(runners.RUNNERS, "slice", no_space)
+    assert agent.run_once() == "failed"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["status"] == "queued" and not view.get("error"), view
+    # Its project is kept, and a node in order finishes it.
+    monkeypatch.setitem(runners.RUNNERS, "slice", runners.run_slice)
+    assert agent.run_once() == "done"
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
+    # Not forever: after the master's limit of attempts the job fails with the node's error.
+    job = f.submit(user)
+    monkeypatch.setitem(runners.RUNNERS, "slice", no_space)
+    for _ in range(settings.max_attempts):
+        assert agent.run_once() == "failed"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["status"] == "failed" and "No space left" in view["error"], view
+    assert agent.run_once() is None
+
+
+def test_a_node_with_a_full_disk_takes_no_jobs(client, f, node_cfg, monkeypatch):
+    from collections import namedtuple
+
+    from tisma_cloud.node import agent as agent_mod
+
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), node_cfg)
+    node_cfg.work_dir.mkdir(parents=True, exist_ok=True)
+    usage = namedtuple("usage", "total used free")
+    free = {"bytes": 1 << 30}
+    monkeypatch.setattr(agent_mod.shutil, "disk_usage", lambda path: usage(1 << 40, 0, free["bytes"]))
+    assert agent.disk_full()
+    f.submit(user)
+    claims = []
+    monkeypatch.setattr(agent, "claim_for_slot", lambda *a, **k: claims.append(1) or (None, False))
+    monkeypatch.setattr(agent_mod, "DISK_WAIT_S", 0.01)
+    import threading
+
+    slot = threading.Thread(target=agent._slot, args=(0,), daemon=True)
+    slot.start()
+    slot.join(0.2)
+    assert claims == []
+    free["bytes"] = 50 << 30
+    assert not agent.disk_full()
+    slot.join(0.2)
+    agent._stop.set()
+    slot.join(5)
+    assert claims, "the node takes jobs again once there is room"
+
+
+@posix_only
 def test_agent_runs_analyses(client, f, node_cfg):
     user = f.user()
     agent = agent_for(client, f.node("n", "fea_optimize,fea"), node_cfg)

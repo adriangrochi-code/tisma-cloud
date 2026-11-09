@@ -19,7 +19,9 @@ Tisma / app / página web ──HTTPS──► MAESTRO (Caddy + API + PostgreSQL
 - **El maestro** recibe todo lo que llega de internet, controla las cuentas y guarda los trabajos en una cola
   (PostgreSQL). No calcula nada.
 - **Los nodos** se instalan aparte (solo el paquete del nodo y los programas de Tisma). Cada uno **pide** trabajo al
-  maestro cuando tiene una ranura libre; si un nodo se apaga, los demás siguen y sus trabajos vuelven a la cola.
+  maestro cuando tiene una ranura libre; si un nodo se apaga, los demás siguen y sus trabajos vuelven a la cola. Un
+  problema del propio nodo (disco lleno, un error del programa del nodo) también devuelve el trabajo a la cola, hasta el
+  límite de intentos; con menos de 2 GB libres en su carpeta de trabajo, el nodo no toma trabajos y lo dice en su registro.
 - **Prioridades por nodo:** cada nodo tiene una lista ordenada de clases de trabajo. Toma primero la primera clase
   que tenga trabajos esperando; si no hay, la siguiente. Una clase que no está en su lista nunca la toma. Las cambias
   desde el maestro, sin tocar el nodo:
