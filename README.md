@@ -334,7 +334,8 @@ o un **nodo de cómputo** (esclavo).
 **Trae todo lo que necesita:** el paquete es `dist/tisma-cloud.exe` y, al lado, la carpeta `dist/tisma-slicer/` con
 los programas que corren los trabajos (`tisma-slicer-console.exe` y `tisma-fea.exe` en Windows; en Linux el AppImage
 de Tisma Slicer ya extraído, `usr/bin/tisma-slicer` y `usr/bin/tisma-fea`), de la última compilación de `main` que
-pasó el CI. No hace falta instalar Tisma Slicer ni nada más en ninguna máquina: se descomprime el paquete entero y
+pasó el CI y todavía tiene su paquete (GitHub los guarda 30 días; si no hay ninguna, la última de `dev`). `SOURCE.txt`
+dice de qué compilación es. No hace falta instalar Tisma Slicer ni nada más en ninguna máquina: se descomprime el paquete entero y
 `tisma-cloud` encuentra los programas solo (la carpeta `tisma-slicer` tiene que quedar junto a `tisma-cloud.exe`).
 En Linux los programas usan GTK 3, WebKitGTK 4.1 y hidapi del sistema, como el AppImage (Ubuntu 24.04:
 `sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0 libhidapi-hidraw0`). La carpeta lleva la licencia de Tisma Slicer (AGPL-3.0) y en
