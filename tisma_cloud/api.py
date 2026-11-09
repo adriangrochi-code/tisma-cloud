@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import errno
 import multiprocessing
 import os
 import hashlib
@@ -10,6 +11,7 @@ import ipaddress
 import json
 import logging
 import re
+import shutil
 import threading
 import time
 from collections import Counter
@@ -61,6 +63,8 @@ JOIN_PER_MINUTE = 30
 # to one address.
 LOGIN_FAILURES_PER_HOUR = 20
 CODES_PER_DAY = 10
+# Free space a scan leaves on the master's disk once it is there (results, the database, the copies) [bytes].
+SCAN_ROOM_LEFT = 2 << 30
 
 
 def bridge_key(bridge_id: str) -> str:
@@ -784,6 +788,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(Busy)
     async def busy(_request: Request, ex: Busy) -> Response:
         return JSONResponse({"detail": str(ex)}, status_code=503, headers={"Retry-After": "5"})
+
+    @app.exception_handler(OSError)
+    async def disk_trouble(request: Request, ex: OSError) -> Response:
+        # A full disk of the master (a project, a scan or a result that does not fit) is said as such, with a time to
+        # try again, not as an error of the server; the alert of the disk tells the owner (alerts.py).
+        if ex.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)):
+            log.error("No room on the master's disk for %s %s", request.method, request.url.path)
+            return JSONResponse({"detail": "The server has no room for files right now: try again later"},
+                                status_code=507, headers={"Retry-After": "300"})
+        raise ex
     app.state.services = services
     db = services.db
     cfg = services.settings
@@ -1557,6 +1571,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except TooLarge:
                 services.storage.remove_job(job.id)
                 raise HTTPException(413, f"The project is larger than {cfg.max_upload_mb} MB") from None
+            except OSError:
+                services.storage.remove_job(job.id)
+                raise
             # Checked before it is queued (the job is not kept when it is refused).
             inspected(services.storage.input_path(job.id), "project", lambda: services.storage.remove_job(job.id))
             view = job_view(job)
@@ -1631,6 +1648,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if s.execute(select(func.count()).select_from(ScanUpload).where(
                     ScanUpload.user_id == u.id, ScanUpload.job_id.is_(None))).scalar_one() >= 3:
                 raise HTTPException(429, "Three scans are being sent already: finish or delete one")
+            # Refused before it is sent when it does not fit (with room left for the results and the database).
+            folder = services.storage.root
+            if shutil.disk_usage(folder).free < body.size + SCAN_ROOM_LEFT:
+                raise OSError(errno.ENOSPC, "No room for the scan", str(folder))
             up = ScanUpload(user_id=u.id, name=safe_filename(body.name, "scan.zip"), size=body.size)
             s.add(up)
             s.flush()

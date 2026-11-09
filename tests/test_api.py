@@ -373,6 +373,38 @@ def test_failure_keeps_the_engine_code_and_spanish_text(client, f):
     assert view["error"] == "this analysis does not run in the cloud yet"
     assert view["summary"] == {"code": "not_in_cloud", "error_es": "este análisis todavía no corre en la nube"}
 
+def test_a_full_disk_of_the_master_is_said_as_such(client, f, monkeypatch):
+    import errno
+
+    from tisma_cloud.storage import Storage
+
+    user = f.user()
+    node = f.node("n", "slice")
+
+    def full(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    real = Storage.__dict__["save_stream"]
+    monkeypatch.setattr(Storage, "save_stream", staticmethod(full))
+    r = f.submit(user, expect=507)
+    assert "no room" in r["detail"]
+    # No job is left of it.
+    assert client.get("/v1/jobs", headers=user).json()["jobs"] == []
+    assert list((f.client.app.state.services.storage.root / "jobs").iterdir()) == []
+    # A result that does not fit: the job stays running and the node sends it again later (agent.RETRY_STATUS).
+    monkeypatch.setattr(Storage, "save_stream", real)
+    job = f.submit(user)
+    f.claim(node)
+    monkeypatch.setattr(Storage, "save_stream", staticmethod(full))
+    r = client.post(f"/v1/node/jobs/{job['id']}/result", headers=node,
+                    files={"file": ("p.gcode", b"G1 X1\n", "text/plain")}, data={"summary": "{}"})
+    assert r.status_code == 507
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "running"
+    monkeypatch.setattr(Storage, "save_stream", real)
+    finish_job(client, f, node, job["id"])
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
+
+
 def test_cancel(client, f):
     user = f.user()
     node = f.node("n", "slice")

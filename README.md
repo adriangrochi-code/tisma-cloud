@@ -567,6 +567,10 @@ de `TISMA_ALERT_EMAILS`) cuando:
   todos ocupados o caídos;
 - quedan menos de `TISMA_ALERT_DISK_FREE_GB` (5) GB libres en el disco del central.
 
+Si el disco del central se llena del todo, lo que no entra (un proyecto, un escaneo, un resultado) se responde con 507 y
+«el servidor no tiene lugar para archivos ahora» en vez de un error del servidor; un escaneo que no entraría se rechaza antes
+de mandarlo, y un nodo vuelve a mandar su resultado más tarde.
+
 Cada problema manda un correo cuando empieza, un recordatorio cada `TISMA_ALERT_REPEAT_H` horas (12) mientras sigue, y
 otro cuando se resuelve. Los activos aparecen en rojo arriba del panel `/admin` (y los resueltos de la semana). Los
 correos usan el mismo servidor SMTP que los códigos de las cuentas.

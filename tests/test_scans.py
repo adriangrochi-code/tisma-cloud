@@ -191,6 +191,23 @@ summary.write_text(json.dumps({"size_mm": [40, 30, 20], "photos": len(names), "a
 '''
 
 
+def test_a_scan_that_does_not_fit_is_refused_before_it_is_sent(c, monkeypatch):
+    from collections import namedtuple
+
+    from tisma_cloud import api
+
+    f = Factory(c)
+    scan_plan(f)
+    user = f.user("ana@x.com", plan="escaneo")
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr(api.shutil, "disk_usage", lambda path: usage(1 << 40, 0, (3 << 30)))
+    r = c.post("/v1/scans", headers=user, json={"size": 2 << 30, "name": "a.zip"})
+    assert r.status_code == 507 and "no room" in r.json()["detail"] and r.headers["retry-after"] == "300"
+    with f.db.session() as s:
+        assert s.query(ScanUpload).count() == 0
+    assert c.post("/v1/scans", headers=user, json={"size": 100 << 20, "name": "a.zip"}).status_code == 201
+
+
 def test_runner_runs_tisma_scan_and_zips_its_files(tmp_path):
     from tisma_cloud.node.config import NodeConfig
     from tisma_cloud.node.runners import JobFailed, run_scan

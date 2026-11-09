@@ -29,7 +29,7 @@ log = logging.getLogger("tisma_cloud.node")
 
 HEARTBEAT_S = 15
 # A result is sent again while the master answers these (busy, restarting) or is out of reach, for this long [s].
-RETRY_STATUS = (429, 502, 503, 504)
+RETRY_STATUS = (429, 502, 503, 504, 507)
 RESULT_RETRY_S = 900.
 # How often a node asks tisma_scan --check again (a COLMAP installed meanwhile, a card removed) [s].
 SCAN_CHECK_S = 600.
@@ -170,7 +170,7 @@ class Agent:
             shutil.rmtree(work, ignore_errors=True)
 
     def _send_result(self, job_id: str, outcome) -> None:  # noqa: ANN001
-        """Sends the result, trying again while the master is busy (429, 502-504: a restart, an update) or out of
+        """Sends the result, trying again while the master is busy (429, 502-504: a restart, an update; 507: its disk is full) or out of
         reach, as long as RESULT_RETRY_S: a computed job is not failed for a moment of the master."""
         deadline = time.monotonic() + RESULT_RETRY_S
         wait = 2.
