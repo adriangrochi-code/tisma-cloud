@@ -714,7 +714,10 @@ class App:
     def toggle_node(self) -> None:
         node = self.selected_node()
         if node:
-            self.m.set_node(node["name"], enabled=not node["enabled"])
+            try:
+                self.m.set_node(node["name"], enabled=not node["enabled"])
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror("Tisma Cloud", str(e), parent=self.root)
             self.refresh(reschedule=False)
 
     def edit_node(self) -> None:

@@ -140,8 +140,17 @@ def test_what_each_node_does(tmp_path, monkeypatch, capsys):
     for bad in ([], ["slice", "slice"], ["render"]):
         with pytest.raises(ValueError):
             m.set_node("i7-1", priorities=bad)
-    with pytest.raises(ValueError):
+    # What the window shows the owner is in Spanish, also when another admin acted first from the panel.
+    with pytest.raises(ValueError, match="al menos un tipo"):
+        m.set_node("i7-1", priorities=[])
+    with pytest.raises(ValueError, match="Ya no hay un nodo nobody"):
         m.set_node("nobody", enabled=True)
+    with pytest.raises(ValueError, match="Ya no hay un nodo nobody"):
+        m.delete_node("nobody")
+    with pytest.raises(ValueError, match="ya no espera respuesta"):
+        m.accept_join("no-such-request", "x")
+    with pytest.raises(ValueError, match="ya no espera respuesta"):
+        m.reject_join("no-such-request")
     assert (tmp_path / "tisma.db").is_file()
     # The console: node 1 (i5, by name) does slicing and large plates, then it is enabled again.
     monkeypatch.setattr(sys, "stdin", io.StringIO("10\n1\n1,2\n10\n1\nh\n0\n"))

@@ -4,8 +4,8 @@ Repository `adriangrochi-code/tisma-cloud` (private, owner's decision 2026-11-04
 public slicer repository, moved here with its history (`git subtree split`). Spec/QA contact:
 `session_01QadJfL7KViJEaJL92p8Swb`.
 
-Tests: venv, `pip install -e '.[master,test]'`, `python -m pytest -q` (249 passed, 2 skipped
-at the last commit).
+Tests: venv, `pip install -e '.[master,test]'`, `python -m pytest -q` (265 passed, 3 skipped
+at caeb35e).
 
 Dates (owner, relayed by QA 2026-11-04, corrected): closed beta in December 2026 on the owner's real server (tunnel,
 Windows service), which must be up and stable for it; 1.0 in the second week of January 2027.
@@ -30,6 +30,15 @@ Windows service), which must be up and stable for it; 1.0 in the second week of 
    other request body is capped (TISMA_MAX_BODY_KB, 1 MB). Queue under load: deploy/loadtest.py, 100 users / 500 jobs / 8 nodes
    on SQLite: 500 done, 0 failed (after fixing node results refused by the users' upload places). Next: Windows
    installer review.
+
+## Bug hunt (owner, 2026-11-09: «Continúa buscando errores»)
+
+Fixed and told to QA: fd2fa78 (panel class names), 94ed2aa (cuenta.html re-login, plan contents, payment form),
+c0f00d4 (/docs local-only), d8be574 (mail check), 7c0046e (master_url without scheme), 90b5af8 (a node's own
+failure requeues the job; < 2 GB free pauses a node), caeb35e (a full master disk is 507, told the Scanner session).
+CI: red since 11-09 because the slicer has no green build of main/dev since 10-23 and its artifacts expire (14 days;
+the last ones, dev run 40347874688, on 11-09 ~16 UTC). 99dc53e keeps a copy in the release `tisma-slicer-cache` of
+this repository and uses it when no artifact is left. The window's Nodos actions: errors in Spanish, toggle guarded (next commit).
 
 ## Done for QA
 

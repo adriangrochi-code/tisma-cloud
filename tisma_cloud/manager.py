@@ -17,6 +17,7 @@ the master of the same machine.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import signal
@@ -81,6 +82,29 @@ JOB_CLASS_NAMES = {
     "orient": "Orientación automática",
     "scan": "Escaneo 3D (fotogrametría de Tisma Scanner)",
 }
+# The errors of pairing.py (in English, for the API) as the window and the console show them to the owner.
+_PAIRING_ES = (
+    ("No such request waiting for an answer", "Esa máquina ya no espera respuesta: la aceptaron o rechazaron desde otro "
+                                              "lado, o dejó de pedir"),
+    ("No node ", "Ya no hay un nodo {} (lo eliminaron desde otro lado)"),
+    ("A node does at least one of", "Marcá al menos un tipo de trabajo, cada uno una vez"),
+)
+
+
+@contextlib.contextmanager
+def spanish():
+    from .pairing import PairingError
+
+    try:
+        yield
+    except PairingError as ex:
+        text = str(ex)
+        for start, said in _PAIRING_ES:
+            if text.startswith(start):
+                raise ValueError(said.format(text[len(start):])) from None
+        raise
+
+
 NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_engine": "", "tisma_slicer": "",
                  "tisma_fea": "", "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,
                  "cuda_cores": 0, "verify_tls": True}
@@ -408,13 +432,16 @@ class Manager:
 
         if priorities is not None:
             unknown = [p for p in priorities if p not in JOB_CLASSES]
-            if not priorities or unknown or len(set(priorities)) != len(priorities):
-                raise ValueError(f"A node does at least one of {', '.join(JOB_CLASSES)}, each once")
+            if not priorities:
+                raise ValueError("Marcá al menos un tipo de trabajo: un nodo sin ninguno no haría nada (para frenarlo, "
+                                 "deshabilitalo)")
+            if unknown or len(set(priorities)) != len(priorities):
+                raise ValueError(f"Tipos de trabajo: {', '.join(JOB_CLASSES)}, cada uno una vez")
         db, _settings = self._database()
         with db.session() as s:
             node = s.execute(select(Node).where(Node.name == name)).scalar_one_or_none()
             if node is None:
-                raise ValueError(f"No node {name}")
+                raise ValueError(f"Ya no hay un nodo {name} (lo eliminaron desde otro lado)")
             if priorities is not None:
                 node.priorities = ",".join(priorities)
             if enabled is not None:
@@ -433,7 +460,7 @@ class Manager:
         from . import pairing
 
         db, _settings = self._database()
-        with db.session() as s:
+        with spanish(), db.session() as s:
             return pairing.accept(s, request_id, name, priorities).name
 
     def add_node(self, name: str, priorities: list[str] | None = None) -> str:
@@ -458,7 +485,7 @@ class Manager:
         from . import pairing
 
         db, _settings = self._database()
-        with db.session() as s:
+        with spanish(), db.session() as s:
             pairing.reject(s, request_id)
 
     def delete_node(self, name: str) -> int:
@@ -469,7 +496,7 @@ class Manager:
         if name == MASTER_NODE and self.role() == "master" and self.master_computes():
             raise ValueError("Es el nodo del propio maestro: apagá «El maestro también calcula» en Configuración")
         db, _settings = self._database()
-        with db.session() as s:
+        with spanish(), db.session() as s:
             return pairing.delete_node(s, name)
 
     # ---- what the master is doing: the window shows it, read from the database (also while the service is stopped)

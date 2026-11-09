@@ -219,7 +219,7 @@ def test_the_window_accepts_rejects_and_removes(tmp_path, monkeypatch):
     assert m.accept_join(first, "i7") == "i7"
     m.reject_join(second)
     assert m.join_requests() == [] and [n["name"] for n in m.nodes()] == ["i7"]
-    with pytest.raises(pairing.PairingError):
+    with pytest.raises(ValueError, match="ya no espera respuesta"):
         m.reject_join(second)
     # By hand: the token is shown once; the same name twice is refused.
     assert m.add_node("i5 taller").startswith("tn_")
