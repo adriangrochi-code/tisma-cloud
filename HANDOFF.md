@@ -47,7 +47,7 @@ this repository and uses it when no artifact is left. The window's Nodos actions
 
 ## Open from QA (2026-11-04)
 
-- Content-Length on uploads (411): keep, make the error text clear (check against cloud.md once readable).
+- Content-Length on uploads (411): closed 11-09, the text «Content-Length is required» is the one cloud.md (spec/next, line 67) gives.
 - After a container restart the master logs «El nodo qa1 no responde hace 25 min»: the alert closes on the node's next
   request (any request updates last_seen) and its jobs are requeued after node_timeout_s; a node that comes back at
   once had its jobs stuck as running: fixed (heartbeat orphans).
