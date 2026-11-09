@@ -90,6 +90,11 @@ class NodeConfig:
         for key in required:
             if not data.get(key):
                 raise ValueError(f"'{key}' is missing in {path}")
+        url = str(data["master_url"]).strip()
+        if not url.lower().startswith(("http://", "https://")) or len(url.split("://", 1)[1].strip("/")) == 0:
+            # Without the scheme no request can ever reach the master: say so instead of retrying for ever.
+            raise ValueError(f"master_url in {path} must start with http:// or https:// "
+                             f"(for example http://192.168.1.10:8000), not {url!r}")
         cfg = NodeConfig(**data)
         # A relative folder is the one next to node.toml: the programs run inside the folder of each job, so the paths
         # given to them must not depend on the current folder.

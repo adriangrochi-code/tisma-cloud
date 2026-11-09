@@ -260,15 +260,15 @@ def test_node_config(tmp_path, monkeypatch):
     # 0: automatic, from the cores and the memory of the machine.
     assert cfg.master_url == "https://cloud.example" and cfg.token == "tn_x"
     assert cfg.slots == auto_slots(os.cpu_count() or 1, memory_gb()) and cfg.slots >= 1 and cfg.fea_slots == 1
-    p.write_text('master_url = "x"\ntisma_slicer = "s"\ntisma_fea = "f"\nslots = 3\nfea_slots = 0\n')
+    p.write_text('master_url = "http://x"\ntisma_slicer = "s"\ntisma_fea = "f"\nslots = 3\nfea_slots = 0\n')
     cfg = NodeConfig.load(p)
     assert cfg.slots == 3 and cfg.fea_slots == 1
     # The work folder (relative: next to node.toml) is absolute, whatever the current folder: the programs run in it.
     assert cfg.work_dir == (tmp_path / "node-work").resolve()
-    p.write_text('master_url = "x"\ntisma_slicer = "s"\ntisma_fea = "f"\nwork_dir = "trabajos"\n')
+    p.write_text('master_url = "http://x"\ntisma_slicer = "s"\ntisma_fea = "f"\nwork_dir = "trabajos"\n')
     monkeypatch.chdir(tmp_path.parent)
     assert NodeConfig.load(p).work_dir == (tmp_path / "trabajos").resolve()
-    p.write_text('master_url = "x"\ntisma_slicer = "s"\ntisma_fea = "f"\ncolour = 1\n')
+    p.write_text('master_url = "http://x"\ntisma_slicer = "s"\ntisma_fea = "f"\ncolour = 1\n')
     with pytest.raises(ValueError, match="colour"):
         NodeConfig.load(p)
 
@@ -424,12 +424,12 @@ def test_engine_analysis_quality_and_errors(client, f, engine_cfg):
 
 def test_engine_node_config(tmp_path):
     p = tmp_path / "node.toml"
-    p.write_text('master_url = "x"\ntisma_engine = "/opt/tisma/tisma-engine"\n')
+    p.write_text('master_url = "http://x"\ntisma_engine = "/opt/tisma/tisma-engine"\n')
     cfg = NodeConfig.load(p)
     assert cfg.tisma_engine == "/opt/tisma/tisma-engine" and cfg.tisma_slicer == "" and cfg.tisma_fea == ""
     # Automatic slots: one job per core with the engine.
     assert cfg.slots == auto_slots(os.cpu_count() or 1, memory_gb(), engine=True)
-    p.write_text('master_url = "x"\ntisma_slicer = "s"\n')
+    p.write_text('master_url = "http://x"\ntisma_slicer = "s"\n')
     with pytest.raises(ValueError, match="tisma_fea"):
         NodeConfig.load(p)
 
@@ -645,3 +645,25 @@ def test_real_engine_slices_the_new_tisma_projects(client, f, tmp_path):
             problems.append(f"Tisma Slicer project: {view['summary']}")
     assert not problems, "\n".join(problems)
 
+
+
+def test_a_master_address_without_its_scheme_is_refused_at_start(tmp_path):
+    """«192.168.1.10:8000» can never be reached (no http://): the node says so instead of retrying for ever."""
+    for url, ok in (("192.168.1.10:8000", False), ("http://", False), ("http://192.168.1.10:8000", True),
+                    ("https://tismaservidores.net", True)):
+        path = tmp_path / "node.toml"
+        path.write_text(f'master_url = "{url}"\ntoken = "tn_x"\ntisma_slicer = "s"\ntisma_fea = "f"\n')
+        if ok:
+            assert NodeConfig.load(path).master_url == url.rstrip("/")
+        else:
+            with pytest.raises(ValueError, match="http:// or https://"):
+                NodeConfig.load(path)
+    # The window and «tisma-cloud config master_url» refuse it before the service tries it.
+    from tisma_cloud.manager import Manager
+
+    m = Manager(tmp_path / "home")
+    m.set_role("node")
+    with pytest.raises(ValueError, match="http:// o https://"):
+        m.set_setting("master_url", "192.168.1.10:8000")
+    m.set_setting("master_url", " http://192.168.1.10:8000 ")
+    assert m.read_node()["master_url"] == "http://192.168.1.10:8000"

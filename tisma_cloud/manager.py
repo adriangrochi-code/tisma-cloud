@@ -342,6 +342,12 @@ class Manager:
                 raise ValueError(f"Unknown setting of a node: {key}")
             if kind is bool and isinstance(value, str):
                 value = value.strip().lower() in ("1", "true", "yes", "si", "sí", "on")
+            if key == "master_url":
+                value = str(value).strip()
+                if not value.lower().startswith(("http://", "https://")) or not value.split("://", 1)[1].strip("/"):
+                    # The node could never reach it (node/config.py refuses it at start too).
+                    raise ValueError(f"La dirección del maestro empieza con http:// o https:// (por ejemplo "
+                                     f"http://192.168.1.10:8000), no «{value}»")
             data[key] = kind(value)
         lines = ["# Settings of this computing node (see deploy/node.example.toml)."]
         lines += [f"{k} = {_toml_value(v)}" for k, v in data.items()]
