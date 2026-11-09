@@ -82,7 +82,8 @@ jobs:
             exe: tisma-cloud
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: read
+      # write: the copy of the Tisma Slicer package kept in the release tisma-slicer-cache of this repository.
+      contents: write
       # The package of Tisma Slicer of the last build of main (an artifact of ci.yml).
       actions: read
     defaults:
@@ -106,22 +107,46 @@ jobs:
       - name: Tisma Slicer programs (last build of main)
         env:
           GH_TOKEN: ${{ secrets.TISMA_SLICER_TOKEN || github.token }}
+          CLOUD_TOKEN: ${{ github.token }}
           SLICER_REPO: adriangrochi-code/Nuevo-slicer-basado-en-prusa-
         run: |
           set -e
-          # The newest successful build that still has its package (artifacts expire after 30 days): main first, then
-          # dev, where the slicer is developed between releases.
+          # The newest build whose package of this system was made (its other systems may have failed), main first,
+          # then dev, where the slicer is developed between releases. Artifacts expire, and the slicer can go weeks
+          # without a build of main or dev: the last package found is kept in the release tisma-slicer-cache of this
+          # repository (private, as the package runs only on the owner's machines) and used when there is none.
+          pkg="TismaSlicer-${{ matrix.name }}"
+          cache=tisma-slicer-cache
           run_id=""
           for branch in main dev; do
             while read -r id head; do
               rm -rf tisma-download
-              if gh run download "$id" -R "$SLICER_REPO" -n "TismaSlicer-${{ matrix.name }}" -D tisma-download 2>/dev/null; then
+              if gh run download "$id" -R "$SLICER_REPO" -n "$pkg" -D tisma-download 2>/dev/null; then
                 run_id=$id; sha=$head; break 2
               fi
-            done < <(gh run list -R "$SLICER_REPO" --workflow ci.yml --branch "$branch" --status success --limit 15 \
-                       --json databaseId,headSha -q '.[] | "\(.databaseId) \(.headSha)"')
+            done < <(gh run list -R "$SLICER_REPO" --workflow ci.yml --branch "$branch" --limit 20 \
+                       --json databaseId,headSha,status -q '.[] | select(.status == "completed") | "\(.databaseId) \(.headSha)"')
           done
-          if [ -z "$run_id" ]; then echo "no build of Tisma Slicer with its package in the last 30 days"; exit 1; fi
+          kept=$(GH_TOKEN=$CLOUD_TOKEN gh release download "$cache" -R "$GITHUB_REPOSITORY" -p "$pkg.txt" -O - 2>/dev/null || true)
+          if [ -n "$run_id" ]; then
+            if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && [ "$kept" != "$run_id $branch $sha" ]; then
+              python -m zipfile -c "$pkg.zip" tisma-download
+              echo "$run_id $branch $sha" > "$pkg.txt"
+              GH_TOKEN=$CLOUD_TOKEN gh release create "$cache" -R "$GITHUB_REPOSITORY" --prerelease --title "Tisma Slicer (copy for the CI)" \
+                --notes "The last package of Tisma Slicer the CI found, used when its artifacts have expired." 2>/dev/null || true
+              GH_TOKEN=$CLOUD_TOKEN gh release upload "$cache" -R "$GITHUB_REPOSITORY" "$pkg.zip" "$pkg.txt" --clobber
+              rm -f "$pkg.zip" "$pkg.txt"
+            fi
+          elif [ -n "$kept" ]; then
+            read -r run_id branch sha <<< "$kept"
+            echo "::warning::No build of Tisma Slicer with its package: the copy kept from run $run_id of $branch"
+            rm -rf tisma-download
+            GH_TOKEN=$CLOUD_TOKEN gh release download "$cache" -R "$GITHUB_REPOSITORY" -p "$pkg.zip"
+            python -m zipfile -e "$pkg.zip" .
+            rm -f "$pkg.zip"
+          else
+            echo "no build of Tisma Slicer with its package, and no copy kept"; exit 1
+          fi
           echo "Tisma Slicer of the CI run $run_id of $branch ($sha)"
           rm -rf dist/tisma-slicer
           if [ "${{ matrix.name }}" = windows ]; then
