@@ -283,6 +283,13 @@ def test_the_master_computes_too(tmp_path, monkeypatch):
     children = m.children()
     assert list(children) == ["main", "node"] and children["node"][-2:] == ["--child", "--local-node"]
     assert any(c.name == "El maestro calcula" and c.ok for c in m.checks())
+    # Without a mail server nobody can confirm an account: the diagnosis says so, and is happy once it is set.
+    monkeypatch.delenv("TISMA_SMTP_HOST", raising=False)
+    mail = next(c for c in m.checks() if c.name == "Correo de los códigos")
+    assert mail.ok is False and "nadie puede confirmar" in mail.detail
+    m.write_env({"TISMA_SMTP_HOST": "mail.tisma.com.uy"})
+    mail = next(c for c in m.checks() if c.name == "Correo de los códigos")
+    assert mail.ok is True and "mail.tisma.com.uy" in mail.detail
     # Turned off: only the master.
     m.set_setting("master_computes", "false")
     assert not m.master_computes() and list(m.children()) == ["main"]

@@ -864,6 +864,13 @@ class Manager:
                                  "«Microsoft Edge WebView2 Runtime» o abrí el panel desde otra PC en "
                                  f"http://<IP de este servidor>:{self.port()}/admin"))
             out.append(self._backup_check())
+            # The codes to confirm an account and to choose a new password go by e-mail: without a mail server they only
+            # reach the log, and nobody can confirm an account.
+            smtp = os.environ.get("TISMA_SMTP_HOST") or self.read_env().get("TISMA_SMTP_HOST", "")
+            out.append(Check("Correo de los códigos", bool(smtp),
+                             f"Servidor de correo {smtp}" if smtp else
+                             "Sin servidor de correo (TISMA_SMTP_HOST): los códigos para confirmar una cuenta y elegir "
+                             "una contraseña nueva van solo al registro, así que nadie puede confirmar su cuenta"))
             env = self.read_env()
             url = env.get("TISMA_PUBLIC_URL", "")
             if url:
