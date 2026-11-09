@@ -180,13 +180,15 @@ def create_task(name: str, cmd: list[str], working_dir: Path, description: str) 
     finally:
         os.unlink(path)
     if r.returncode != 0:
-        raise RuntimeError((r.stderr or r.stdout).strip() or "schtasks failed (run as administrator)")
+        raise RuntimeError((r.stderr or r.stdout).strip()
+                           or "No se pudo crear la tarea de Windows (abrí Tisma Cloud como administrador)")
 
 
 def delete_task(name: str) -> None:
     r = _run(["schtasks", "/Delete", "/F", "/TN", name])
     if r.returncode != 0:
-        raise RuntimeError((r.stderr or r.stdout).strip() or "schtasks failed (run as administrator)")
+        raise RuntimeError((r.stderr or r.stdout).strip()
+                           or "No se pudo quitar la tarea de Windows (abrí Tisma Cloud como administrador)")
 
 
 def task_definition(name: str) -> str | None:
@@ -208,7 +210,7 @@ def task_problems(xml: str) -> list[str]:
 def run_task(name: str) -> None:
     r = _run(["schtasks", "/Run", "/TN", name])
     if r.returncode != 0:
-        raise RuntimeError((r.stderr or r.stdout).strip() or "schtasks /Run failed")
+        raise RuntimeError((r.stderr or r.stdout).strip() or "No se pudo iniciar la tarea de Windows")
 
 
 def end_task(name: str) -> None:
@@ -230,15 +232,15 @@ def set_firewall(port: int | None) -> None:
     """Opens the TCP port of the master to the network in the Windows firewall (one inbound rule), or closes it
     (None). Needs an administrator."""
     if os.name != "nt":
-        raise RuntimeError("The firewall rule is made by Tisma Cloud only on Windows (on Linux see deploy/firewall.nft)")
+        raise RuntimeError("La regla del firewall la hace Tisma Cloud solo en Windows (en Linux, deploy/firewall.nft)")
     script = f"Remove-NetFirewallRule -DisplayName '{FIREWALL_RULE}' -ErrorAction SilentlyContinue"
     if port is not None:
         script += (f"; New-NetFirewallRule -DisplayName '{FIREWALL_RULE}' -Description 'Tisma Cloud master' "
                    f"-Direction Inbound -Action Allow -Protocol TCP -LocalPort {int(port)} -Profile Any | Out-Null")
     r = _powershell(script)
     if r.returncode != 0 or (port is not None and firewall_port() != int(port)):
-        raise RuntimeError((r.stderr or r.stdout).strip() or "The firewall rule could not be changed "
-                                                             "(run as administrator)")
+        raise RuntimeError((r.stderr or r.stdout).strip() or "No se pudo cambiar la regla del firewall "
+                                                             "(abrí Tisma Cloud como administrador)")
 
 
 # ---- the panel window

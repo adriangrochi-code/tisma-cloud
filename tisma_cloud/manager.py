@@ -227,9 +227,9 @@ class Manager:
 
     def set_role(self, role: str) -> None:
         if role not in ROLES:
-            raise ValueError(f"The role is master or node, not {role!r}")
+            raise ValueError(f"El rol es maestro (master) o nodo (node), no {role!r}")
         if self.status().running and role != self.role():
-            raise RuntimeError("Stop the service before changing its role")
+            raise RuntimeError("Detené el servicio antes de cambiar el rol")
         data = self._settings()
         data["role"] = role
         self._save_settings(data)
@@ -312,7 +312,7 @@ class Manager:
 
     def set_port(self, port: int) -> None:
         if not 1 <= int(port) <= 65535:
-            raise ValueError(f"Bad port {port}")
+            raise ValueError(f"El puerto va de 1 a 65535, no {port}")
         data = self._settings()
         data["port"] = int(port)
         self._save_settings(data)
@@ -629,7 +629,7 @@ class Manager:
             admin = s.execute(select(User).where(User.is_admin.is_(True), User.enabled.is_(True))
                               .order_by(User.id)).scalars().first()
             if admin is None:
-                raise RuntimeError("No administrator: create one first")
+                raise RuntimeError("Todavía no hay administrador: crealo primero")
             # The labels are encrypted in the database: compared here.
             for old in s.execute(select(ApiToken).where(ApiToken.user_id == admin.id)).scalars():
                 if old.label == self.PANEL_TOKEN_LABEL:
@@ -673,7 +673,7 @@ class Manager:
 
     def start(self, wait_s: float = 20.) -> Status:
         if not self.role():
-            raise RuntimeError("Choose the role first (master or node)")
+            raise RuntimeError("Elegí primero el rol: maestro o nodo")
         if self.status().running:
             return self.status()
         self.log_path.parent.mkdir(parents=True, exist_ok=True)

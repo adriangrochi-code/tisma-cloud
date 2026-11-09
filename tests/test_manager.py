@@ -304,3 +304,18 @@ def test_the_master_computes_too(tmp_path, monkeypatch):
     # Turned off: only the master.
     m.set_setting("master_computes", "false")
     assert not m.master_computes() and list(m.children()) == ["main"]
+
+
+def test_the_window_errors_of_the_role_and_the_service_are_in_spanish(tmp_path, monkeypatch):
+    m = Manager(tmp_path)
+    with pytest.raises(RuntimeError, match="Elegí primero el rol"):
+        m.start()
+    m.set_role("master")
+    import dataclasses
+
+    running = dataclasses.replace(m.status(), running=True)
+    monkeypatch.setattr(m, "status", lambda: running)
+    with pytest.raises(RuntimeError, match="Detené el servicio"):
+        m.set_role("node")
+    with pytest.raises(ValueError, match="El puerto va de 1 a 65535"):
+        m.set_port(70000)
