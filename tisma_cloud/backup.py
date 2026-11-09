@@ -91,19 +91,19 @@ def _order(path: Path) -> tuple[datetime, str]:
 
 def check_sqlite(path: Path) -> None:
     if not path.is_file():
-        raise BackupError(f"{path} does not exist")
+        raise BackupError(f"{path} no existe")
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         result = con.execute("PRAGMA integrity_check").fetchone()
         tables = con.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0]
     except sqlite3.DatabaseError as ex:
-        raise BackupError(f"{path.name} is not a good SQLite database: {ex}") from ex
+        raise BackupError(f"{path.name} no es una base SQLite sana: {ex}") from ex
     finally:
         con.close()
     if not result or result[0] != "ok":
-        raise BackupError(f"{path.name} failed the integrity check: {result[0] if result else '?'}")
+        raise BackupError(f"{path.name} no pasó la revisión de integridad: {result[0] if result else '?'}")
     if tables == 0:
-        raise BackupError(f"{path.name} has no tables")
+        raise BackupError(f"{path.name} no tiene tablas")
 
 
 def _postgres_url(database_url: str) -> str:
@@ -116,7 +116,7 @@ def _dump(database_url: str, part: Path) -> None:
     db_file = sqlite_path(database_url)
     if db_file is not None:
         if not db_file.is_file():
-            raise BackupError(f"The database {db_file} does not exist")
+            raise BackupError(f"La base de datos {db_file} no existe")
         src = sqlite3.connect(str(db_file))
         dst = sqlite3.connect(str(part))
         try:
@@ -132,15 +132,15 @@ def _dump(database_url: str, part: Path) -> None:
         return
     pg_dump, pg_restore = shutil.which("pg_dump"), shutil.which("pg_restore")
     if not pg_dump or not pg_restore:
-        raise BackupError("pg_dump and pg_restore are needed to back up PostgreSQL (the PostgreSQL client programs)")
+        raise BackupError("Para copiar PostgreSQL hacen falta pg_dump y pg_restore (los programas cliente de PostgreSQL)")
     url = _postgres_url(database_url)
     run = subprocess.run([pg_dump, "--format=custom", "--compress=6", f"--file={part}", f"--dbname={url}"],
                          capture_output=True, text=True, timeout=3600)
     if run.returncode != 0:
-        raise BackupError(f"pg_dump failed: {run.stderr.strip()[-500:]}")
+        raise BackupError(f"pg_dump falló: {run.stderr.strip()[-500:]}")
     check = subprocess.run([pg_restore, "--list", str(part)], capture_output=True, text=True, timeout=600)
     if check.returncode != 0:
-        raise BackupError(f"The dump does not read back: {check.stderr.strip()[-500:]}")
+        raise BackupError(f"La copia de PostgreSQL no se puede leer: {check.stderr.strip()[-500:]}")
 
 
 def prune(folder: Path, keep: int) -> None:
@@ -216,7 +216,7 @@ def restore_sqlite(backup: Path, database_url: str) -> Path:
     next to it as .before-restore. Returns the path of the database."""
     db_file = sqlite_path(database_url)
     if db_file is None:
-        raise BackupError("Restore by hand with pg_restore for PostgreSQL (deploy/restore.sh)")
+        raise BackupError("PostgreSQL se restaura a mano con pg_restore (deploy/restore.sh)")
     check_sqlite(backup)
     if db_file.exists():
         # With what is still in its -wal file: SQLite's backup API reads the database as it is.

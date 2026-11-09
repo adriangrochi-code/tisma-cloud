@@ -355,7 +355,7 @@ def _master_settings(manager):
     from .settings import Settings
 
     if manager.role() != "master":
-        raise RuntimeError("Backups are made on the master")
+        raise RuntimeError("Las copias de seguridad se hacen en el maestro")
     load_env(manager.env_path)
     return Settings()
 
