@@ -47,7 +47,7 @@
 <body>
 <main>
   <h1>Tisma Cloud</h1>
-  <p class="muted">Laminado y análisis estructural en nuestros servidores, desde Tisma Slicer.</p>
+  <p class="muted">Laminado, análisis y escaneos 3D en nuestros servidores, desde Tisma y Tisma Scanner.</p>
 
   <div id="notice" class="box hidden"></div>
 
@@ -149,7 +149,23 @@ async function api(path, opts = {}) {
   if (!r.ok) { const e = new Error(ERRORS[r.status] || (typeof body.detail === "string" ? body.detail : `Error ${r.status}`)); e.status = r.status; throw e; }
   return body;
 }
-function setToken(t) { token = t; try { t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY); } catch (e) {} }
+function setToken(t) {
+  token = t;
+  try { t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY); } catch (e) {}
+  // In the account (by password, code or Google): leaving it later shows "Entrar", not the form it was made with.
+  if (t) setMode("login");
+}
+
+// What a plan includes, in the person's words (the job classes of GET /v1/plans; a large plate is still slicing).
+const INCLUDES = [["slice", "laminar"], ["fea", "análisis estructural"], ["fea_optimize", "relleno mínimo y paredes de resina"],
+  ["aero", "análisis aerodinámico"], ["orient", "orientación automática"], ["scan", "escaneos 3D (Tisma Scanner)"]];
+function planIncludes(classes) {
+  const names = INCLUDES.filter(([c]) => classes.includes(c) || (c === "slice" && classes.includes("slice_large")))
+    .map(([, name]) => name);
+  if (!names.length) return "—";
+  const text = names.length > 1 ? `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}` : names[0];
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 function setMode(m) {
   mode = m;
@@ -273,6 +289,7 @@ function planCard(p) {
   return el("div", { class: "plan" + (current ? " current" : "") },
     el("b", {}, p.name), price,
     p.monthly_hours > 0 ? el("span", { class: "muted" }, `${p.monthly_hours} h de cálculo por mes · ${p.max_concurrent} trabajo${p.max_concurrent > 1 ? "s" : ""} a la vez`) : null,
+    p.classes && p.classes.length ? el("span", { class: "muted" }, "Incluye: " + planIncludes(p.classes)) : null,
     p.remote_printers > 0 ? el("span", { class: "muted" }, `Impresoras y cámaras a distancia: ${p.remote_printers} incluidas` +
       (p.extra_printer_cents > 0 ? `, ${money(p.extra_printer_cents, p.currency)} por mes cada una más` : "")) : null,
     extra ? el("label", { class: "muted" }, "Impresoras de más: ", extra) : null,

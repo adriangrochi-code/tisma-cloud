@@ -173,6 +173,7 @@
 const NAMES = { slice: "Laminar", slice_large: "Laminar placa grande", fea: "Análisis estructural",
                 fea_optimize: "Relleno mínimo / paredes de resina", aero: "Análisis aerodinámico",
                 orient: "Orientación automática", scan: "Escaneo 3D (Tisma Scanner)" };
+const PAYMENT_STATUS = { approved: "aprobado", rejected: "rechazado", pending: "pendiente" };
 const STATUS = { queued: "esperando", running: "corriendo", done: "terminado", failed: "falló", cancelled: "cancelado" };
 const KEY = "tisma-admin-token";
 let token = null;
@@ -367,10 +368,21 @@ function jobTable(table, jobs, ended) {
 function money(cents, cur) { return `${cur} ${(cents / 100).toFixed(2)}`; }
 
 async function recordPayment(u) {
-  const months = parseInt(prompt(`Meses pagados por ${u.email}:`, "1") || "", 10);
-  if (!(months >= 1 && months <= 24)) return;
-  const amount = parseFloat((prompt("Importe recibido (por ejemplo 10 o 10.50):", "") || "").replace(",", "."));
-  if (!(amount >= 0)) return;
+  // Cancel ends quietly; an answer that is not valid says so (the payment would not be recorded).
+  const monthsText = prompt(`Meses pagados por ${u.email}:`, "1");
+  if (monthsText === null) return;
+  const months = Number(monthsText.trim());
+  if (!(Number.isInteger(months) && months >= 1 && months <= 24)) {
+    alert(`Meses: «${monthsText}» no es un número de 1 a 24. El pago no se registró.`);
+    return;
+  }
+  const amountText = prompt("Importe recibido (por ejemplo 10 o 10.50):", "");
+  if (amountText === null) return;
+  const amount = Number(amountText.trim().replace(",", "."));
+  if (!(amountText.trim() !== "" && amount >= 0)) {
+    alert(`Importe: «${amountText}» no es un número. El pago no se registró.`);
+    return;
+  }
   const currency = (prompt("Moneda (USD, UYU…):", "USD") || "USD").trim().toUpperCase().slice(0, 3);
   const note = prompt("Nota (transferencia, efectivo…):", "Transferencia") || "";
   try {
@@ -498,7 +510,8 @@ function renderUsers(users, pays) {
     ...(pays.length ? pays.map((p) => el("tr", {},
       el("td", { class: "muted" }, ago(p.created_at)), el("td", {}, p.user), el("td", {}, `${p.plan} · ${p.months} m`),
       el("td", {}, money(p.amount_cents, p.currency)), el("td", {}, p.provider),
-      el("td", { class: p.status === "approved" ? "status-done" : p.status === "rejected" ? "status-failed" : "status-queued" }, p.status),
+      el("td", { class: p.status === "approved" ? "status-done" : p.status === "rejected" ? "status-failed" : "status-queued" },
+        PAYMENT_STATUS[p.status] || p.status),
       el("td", { class: "muted" }, p.note)))
     : [el("tr", {}, el("td", { colspan: 8, class: "muted" }, "Ninguno"))]));
 }
