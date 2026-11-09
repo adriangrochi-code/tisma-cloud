@@ -927,7 +927,7 @@ python -m tisma_cloud.admin reports --format jsonl --app android
 | usuario | `POST /v1/remote/bridges/{id}/printers/{imp}/print` (multipart `file`, G-code), `.../pause`, `.../resume`, `.../stop`, `GET /v1/remote/commands/{orden}`, `GET .../camera` | imprimir y controlar desde afuera |
 
 Parámetros de `fea`: `mode` (`analyze`, `lightest-infill`, `resin-structure`), `quality` (`fast`, `normal`, `high`,
-`ultra`), `object`, `instance`, `solid`, `zones`, `ribs`. La documentación interactiva queda en `/docs`.
+`ultra`), `object`, `instance`, `solid`, `zones`, `ribs`. La documentación interactiva queda en `/docs`, solo desde la red local, como `/admin` (lista todas las rutas, también las de la administración y los nodos).
 
 Para agregar otro tipo de trabajo: una clase en `jobs.py` (con sus parámetros) y un ejecutor en `node/runners.py`.
 

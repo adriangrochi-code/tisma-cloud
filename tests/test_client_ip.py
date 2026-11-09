@@ -57,3 +57,19 @@ def test_trusted_proxies_can_be_narrowed(settings):
         f = Factory(c)
         admin = f.user("root2@x.com", admin=True)
         assert _admin_status(c, {**admin, "cf-connecting-ip": "203.0.113.9"}) == 404
+
+
+def test_the_api_documentation_is_only_for_the_local_network(settings):
+    """/docs and /openapi.json list every route (the administration's and the nodes' too): like /admin, they answer
+    only to the local network; /redoc is not served."""
+    from conftest import new_app
+    from fastapi.testclient import TestClient
+
+    app = new_app(settings)
+    with TestClient(app, client=("200.40.10.7", 40000)) as internet:
+        for path in ("/docs", "/openapi.json", "/redoc"):
+            assert internet.get(path).status_code == 404, path
+    with TestClient(app, client=("192.168.1.20", 40000)) as lan:
+        assert lan.get("/openapi.json").json()["info"]["title"] == "Tisma Cloud"
+        assert "swagger" in lan.get("/docs").text.lower()
+        assert lan.get("/redoc").status_code == 404

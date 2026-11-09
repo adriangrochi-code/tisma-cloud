@@ -774,7 +774,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # The processes that read G-code and the connections to the database end with the server.
             services.close()
 
-    app = FastAPI(title="Tisma Cloud", version=__version__, lifespan=lifespan)
+    # The interactive documentation lists every route, the administration's and the nodes' too: it is served only to
+    # the local network (local_only, below), not by FastAPI to everyone.
+    app = FastAPI(title="Tisma Cloud", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None,
+                  openapi_url=None)
 
     @app.exception_handler(Busy)
     async def busy(_request: Request, ex: Busy) -> Response:
@@ -842,6 +845,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The administration exists only for the local network: from internet it answers as an unknown page."""
         if not address_in(client_key(request), admin_networks):
             raise HTTPException(404, "Not Found")
+
+    @app.get("/openapi.json", include_in_schema=False, dependencies=[Depends(local_only)])
+    def openapi_schema() -> dict:
+        return app.openapi()
+
+    @app.get("/docs", include_in_schema=False, dependencies=[Depends(local_only)])
+    def api_docs() -> Response:
+        from fastapi.openapi.docs import get_swagger_ui_html
+
+        return get_swagger_ui_html(openapi_url="/openapi.json", title="Tisma Cloud API")
 
     # ---- authentication
     def session_expired(api_token: ApiToken, now: datetime) -> bool:
