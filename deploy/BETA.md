@@ -14,9 +14,8 @@ se prueba recién en la máquina real.
 
 ## 1. El paquete
 
-- [ ] Armar el paquete: pestaña *Actions* de `tisma-cloud` › *Cloud server* › *Run workflow* (rama `main`). Solo se
-      sube como artefacto `tisma-cloud-windows` con el repositorio **privado** (en uno público se arma y se prueba, pero
-      no se publica: el paquete es solo para tus máquinas). Bajarlo y descomprimirlo entero en `C:\TismaCloud\`. Queda `tisma-cloud.exe` con la carpeta `tisma-slicer\` al lado.
+- [ ] Bajar el artefacto `tisma-cloud-windows` del último CI verde de `main` (pestaña *Actions* de `tisma-cloud`) y
+      descomprimirlo entero en `C:\TismaCloud\`. Queda `tisma-cloud.exe` con la carpeta `tisma-slicer\` al lado.
       **(probado: el CI arranca el paquete y lamina y analiza un proyecto real con él)**
 - [ ] Si el i5 también va a hacer escaneos 3D: el artefacto `TismaScan-windows` del CI de `openscanner`, descomprimido
       en la misma carpeta, de modo que quede `C:\TismaCloud\tisma-scan\`. **(probado en Windows sin NVIDIA: un
