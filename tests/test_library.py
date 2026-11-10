@@ -155,7 +155,7 @@ def test_an_address_is_blocked_for_a_day_and_then_forgotten(client, f):
     assert r.status_code == 201
     until = r.json()["until"]
     listed = signed(client, "blocklist")["addresses"]
-    assert listed == [{"ip": "203.0.113.5/32", "until": until + "Z"}]
+    assert listed == [{"ip": "203.0.113.5/32", "until": until}]
     assert client.post("/v1/admin/library/blocks", headers=admin,
                        json={"kind": "address", "value": "no es una ip"}).status_code == 422
     # When it ends, the row is deleted (a personal datum) and the list moves on.

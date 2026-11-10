@@ -2359,7 +2359,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "model": library.model_entry(m) if m else {"id": r.model_id},
                         "removed": bool(m and m.removed_at), "reports": []}
                 g["reports"].append({"id": r.id, "sha256": r.sha256, "reason": r.reason,
-                                     "created_at": r.created_at.isoformat(timespec="seconds"), "outcome": r.outcome})
+                                     "created_at": r.created_at.isoformat(timespec="seconds") + "Z", "outcome": r.outcome})
             return {"models": sorted(groups.values(), key=lambda g: -len(g["reports"]))}
 
     @app.post("/v1/admin/library/models/{model_id}/remove")
@@ -2397,8 +2397,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with db.session() as s:
             library.purge_addresses(s)
             return {"blocks": [{"id": b.id, "kind": b.kind, "value": b.value, "reason": b.reason,
-                                "until": b.until.isoformat(timespec="seconds") if b.until else None,
-                                "created_at": b.created_at.isoformat(timespec="seconds")}
+                                "until": b.until.isoformat(timespec="seconds") + "Z" if b.until else None,
+                                "created_at": b.created_at.isoformat(timespec="seconds") + "Z"}
                                for b in s.execute(select(LibraryBlock).order_by(LibraryBlock.id.desc())).scalars()]}
 
     @app.post("/v1/admin/library/blocks", status_code=201)
@@ -2417,7 +2417,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(422, str(ex)) from None
             s.flush()
             return {"id": b.id, "kind": b.kind, "value": b.value,
-                    "until": b.until.isoformat(timespec="seconds") if b.until else None}
+                    "until": b.until.isoformat(timespec="seconds") + "Z" if b.until else None}
 
     @app.delete("/v1/admin/library/blocks/{block_id}")
     def admin_library_unblock(_admin: AdminDep, block_id: int) -> dict:

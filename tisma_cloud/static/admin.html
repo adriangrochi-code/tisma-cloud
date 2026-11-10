@@ -165,6 +165,21 @@
     <p><button type="button" id="catalog-md">Descargar catálogo (Markdown)</button>
       <button type="button" id="catalog-jsonl">Descargar catálogo (JSON lines)</button></p>
     <div class="table-wrap"><table id="reports"></table></div>
+
+    <h2>Biblioteca: denuncias</h2>
+    <p class="muted">Los modelos que la gente denunció desde la biblioteca, con sus motivos. «Retirar» lo saca del índice y pone
+      sus archivos en la lista de bloqueo: las apps dejan de compartirlos y borran su copia. Los archivos no están en este
+      servidor: se ven con «Abrir en Tisma» desde la biblioteca.</p>
+    <div class="table-wrap"><table id="library-reports"></table></div>
+    <h2>Biblioteca: bloqueos</h2>
+    <div class="filters">
+      <select id="lb-kind"><option value="account">Cuenta (ua_…)</option><option value="peer">Clave de una app</option>
+        <option value="file">Archivo (SHA-256)</option><option value="address">Dirección IP (24 h)</option></select>
+      <input id="lb-value" placeholder="Qué bloquear">
+      <input id="lb-reason" placeholder="Motivo">
+      <button type="button" id="lb-add">Bloquear</button>
+    </div>
+    <div class="table-wrap"><table id="library-blocks"></table></div>
   </main>
 </div>
 
@@ -694,6 +709,56 @@ async function refresh() {
   }
 }
 
+// ---- the library shared between users: reports and blocks (library.py)
+const BLOCK_KINDS = { account: "Cuenta", peer: "Clave de app", file: "Archivo", address: "Dirección IP" };
+async function libraryAction(path, body, question) {
+  if (question && !confirm(question)) return;
+  try { await api(path, { method: "POST", body: JSON.stringify(body || {}) }); refreshLibrary(); }
+  catch (e) { if (e.message !== "auth") alert(`No se pudo: ${e.message}`); }
+}
+function renderLibrary(reports, blocks) {
+  const rows = reports.models.map((g) => {
+    const m = g.model;
+    const author = m.author ? `${m.author.name} (${m.author.account})` : "–";
+    return el("tr", {},
+      el("td", {}, m.name || m.id, el("div", { class: "muted" }, `${m.license || ""} · ${author}`)),
+      el("td", {}, g.reports.length),
+      el("td", {}, ...g.reports.slice(0, 5).map((r) => el("div", {}, `«${r.reason}» `, el("span", { class: "muted" }, ago(r.created_at))))),
+      el("td", {},
+        el("button", { type: "button", onclick: () => {
+          const reason = prompt(`Retirar «${m.name || m.id}» de la biblioteca. Motivo (lo ve el autor):`, "retirado por la revisión");
+          if (reason !== null) libraryAction(`/v1/admin/library/models/${encodeURIComponent(m.id)}/remove`,
+            { reason: reason.trim() || "retirado por la revisión" });
+        } }, "Retirar"), " ",
+        el("button", { type: "button", onclick: async () => {
+          for (const r of g.reports) await api(`/v1/admin/library/reports/${r.id}/dismiss`, { method: "POST", body: "{}" });
+          refreshLibrary(); } }, "Descartar"), " ",
+        m.author ? el("button", { type: "button", onclick: () => libraryAction("/v1/admin/library/blocks",
+          { kind: "account", value: m.author.account, reason: "suspendida por la revisión" },
+          `¿Suspender la cuenta ${m.author.account} en la biblioteca? Sus modelos salen del índice.`) }, "Suspender cuenta") : ""));
+  });
+  $("library-reports").replaceChildren(el("tr", {}, el("th", {}, "Modelo"), el("th", {}, "Denuncias"), el("th", {}, "Motivos"),
+    el("th", {}, "")), ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 4, class: "muted" }, "Sin denuncias pendientes."))]));
+  $("library-blocks").replaceChildren(el("tr", {}, el("th", {}, "Qué"), el("th", {}, "Valor"), el("th", {}, "Motivo"),
+    el("th", {}, "Hasta"), el("th", {}, "")),
+    ...blocks.blocks.map((b) => el("tr", {}, el("td", {}, BLOCK_KINDS[b.kind] || b.kind), el("td", {}, el("code", {}, b.value)),
+      el("td", {}, b.reason), el("td", {}, b.until ? new Date(b.until).toLocaleString() : "siempre"),
+      el("td", {}, el("button", { type: "button", onclick: async () => {
+        if (!confirm("¿Quitar este bloqueo?")) return;
+        try { await api(`/v1/admin/library/blocks/${b.id}`, { method: "DELETE" }); refreshLibrary(); }
+        catch (e) { if (e.message !== "auth") alert(`No se pudo: ${e.message}`); } } }, "Quitar")))));
+}
+async function refreshLibrary() {
+  try { renderLibrary(await api("/v1/admin/library/reports"), await api("/v1/admin/library/blocks")); }
+  catch (e) { if (e.message !== "auth") $("library-reports").replaceChildren(el("tr", {}, el("td", { class: "error" }, `No se pudo leer: ${e.message}`))); }
+}
+$("lb-add").onclick = () => {
+  const value = $("lb-value").value.trim();
+  if (!value) { alert("Escribí qué bloquear."); return; }
+  libraryAction("/v1/admin/library/blocks", { kind: $("lb-kind").value, value, reason: $("lb-reason").value.trim() });
+  $("lb-value").value = ""; $("lb-reason").value = "";
+};
+
 let reportsTimer = null;
 
 function start() {
@@ -701,11 +766,12 @@ function start() {
   $("app").classList.remove("hidden");
   refresh();
   refreshReports();
+  refreshLibrary();
   if (timer) clearInterval(timer);
   timer = setInterval(refresh, 5000);
   // The reports change slowly (and grouping them reads them all): once a minute.
   if (reportsTimer) clearInterval(reportsTimer);
-  reportsTimer = setInterval(refreshReports, 60000);
+  reportsTimer = setInterval(() => { refreshReports(); refreshLibrary(); }, 60000);
 }
 
 if (token) start(); else showLogin();
