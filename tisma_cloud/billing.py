@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from .models import Payment, Plan, User, utcnow
@@ -96,7 +97,15 @@ def apply(session: Session, notice: Notice, provider: str) -> Payment | None:
     if notice.status == "approved":
         if notice.amount_cents != payment.amount_cents or notice.currency.upper() != payment.currency.upper():
             raise BillingError("The amount paid is not the price of the plan")
-        payment.provider_ref = notice.provider_ref or None
+        # Providers send a notice again when it is not answered in time: two of the same payment may arrive together.
+        # Only the one that turns the payment approved (one UPDATE, by its state) moves the paid time forward.
+        won = session.execute(update(Payment).where(Payment.id == payment.id, Payment.status != "approved")
+                              .values(status="approved", provider_ref=notice.provider_ref or None)
+                              .execution_options(synchronize_session=False)).rowcount
+        if won != 1:
+            session.refresh(payment)
+            return payment
+        session.refresh(payment)
         approve(session, payment)
     elif notice.status == "rejected":
         payment.status = "rejected"
@@ -104,7 +113,8 @@ def apply(session: Session, notice: Notice, provider: str) -> Payment | None:
 
 
 def approve(session: Session, payment: Payment) -> None:
-    user = session.get(User, payment.user_id)
+    # Held until the payment is recorded: two payments of one person approved at once both count.
+    user = session.get(User, payment.user_id, with_for_update={"of": User}, populate_existing=True)
     now = utcnow()
     start = user.paid_until if user.paid_until and user.paid_until > now else now
     user.paid_until = start + MONTH * payment.months

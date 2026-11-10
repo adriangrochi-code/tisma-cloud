@@ -169,3 +169,57 @@ def test_remote_printers_plan(shop):
     assert r.status_code == 402 and "3 remote printers" in r.json()["detail"]
     # A plan without more printers does not sell them.
     assert shop.post("/v1/billing/checkout", headers=user, json={"plan": "pro", "extra_printers": 1}).status_code == 422
+
+
+def test_one_payment_notified_twice_at_once_pays_one_month(shop):
+    """Providers send their notices again when they do not get an answer in time: two of the same payment arrive
+    together. It pays the months it was for, once."""
+    import threading
+
+    user = register(shop)
+    pid = shop.post("/v1/billing/checkout", headers=user, json={"plan": "pro"}).json()["payment"]["id"]
+    db = shop.app.state.services.db
+    barrier = threading.Barrier(4)
+    errors = []
+
+    def notify():
+        barrier.wait()
+        try:
+            with db.session() as s:
+                billing.apply(s, billing.Notice(pid, "mp-1", "approved", 2500, "USD"), "test")
+        except Exception as ex:  # noqa: BLE001
+            errors.append(repr(ex))
+
+    threads = [threading.Thread(target=notify) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    with db.session() as s:
+        u = s.query(User).filter_by(email_index=crypto.index("ana@correo.com")).one()
+        months = (u.paid_until - utcnow()) / billing.MONTH
+    assert 0.99 < months < 1.01, (months, errors)
+
+
+def test_two_payments_of_one_person_approved_at_once_both_count(shop):
+    import threading
+
+    user = register(shop)
+    pids = [shop.post("/v1/billing/checkout", headers=user, json={"plan": "pro"}).json()["payment"]["id"] for _ in range(3)]
+    db = shop.app.state.services.db
+    barrier = threading.Barrier(len(pids))
+
+    def notify(pid):
+        barrier.wait()
+        with db.session() as s:
+            billing.apply(s, billing.Notice(pid, "mp-" + pid, "approved", 2500, "USD"), "test")
+
+    threads = [threading.Thread(target=notify, args=(p,)) for p in pids]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    with db.session() as s:
+        u = s.query(User).filter_by(email_index=crypto.index("ana@correo.com")).one()
+        months = (u.paid_until - utcnow()) / billing.MONTH
+    assert 2.99 < months < 3.01, months
