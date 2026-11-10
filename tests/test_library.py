@@ -554,3 +554,22 @@ def test_keeping_the_same_scan_at_once_makes_one_item(client, f):
     assert all(a.status_code in (200, 201) for a in answers), [a.text for a in answers]
     assert len({a.json()["id"] for a in answers}) == 1
     assert len(client.get("/v1/files", headers=user).json()["files"]) == 1
+
+
+def test_revisions_published_at_once_get_their_own_numbers(client, f):
+    from concurrent.futures import ThreadPoolExecutor
+
+    user = f.user("lucia@x.com")
+    app = App(client, user)
+    app.bind()
+    model = app.publish()["id"]
+
+    def revise(i: int):
+        files = [{"path": "pieza.3mf", "role": "project", "size": 100 + i, "sha256": f"{i:064x}"}]
+        return client.post(f"/v1/library/models/{model}/revisions", headers=user, json=app.body(files))
+
+    with ThreadPoolExecutor(6) as pool:
+        answers = list(pool.map(revise, range(6)))
+    assert all(a.status_code in (201, 409) for a in answers), [(a.status_code, a.text[:80]) for a in answers]
+    made = sorted(a.json()["revision"] for a in answers if a.status_code == 201)
+    assert made == list(range(2, 2 + len(made))) and made

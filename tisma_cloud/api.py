@@ -1098,6 +1098,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(ex)) from None
         if not library.thumbnail_ok(thumb):
             raise HTTPException(422, f"'thumbnail_webp' is a WebP image of at most {library.MAX_THUMBNAIL_BYTES >> 10} KB")
+        # Two revisions of a model at once take the same number (or two first publications create the same counter):
+        # the one that loses is tried again with the next number.
+        for _attempt in range(5):
+            try:
+                return publish_once(user, body, model_id, pub, thumb)
+            except IntegrityError:
+                continue
+        raise HTTPException(409, "The model is being changed at the same time: try again", headers={"Retry-After": "2"})
+
+    def publish_once(user: User, body: dict, model_id: str | None, pub: library.Publication, thumb: bytes) -> dict:
         with db.session() as s:
             u = s.get(User, user.id)
             source: AccountFile | None = None
