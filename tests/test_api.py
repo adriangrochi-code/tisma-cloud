@@ -688,3 +688,18 @@ def test_a_daily_rate_limiter_forgets_its_old_keys_within_minutes():
     # A day later, one more request (after the cleanup interval): the ended keys are gone.
     assert daily.allow("mail-day:new@x.com", 10, now=1000. + 86400. + 601.)
     assert len(daily._hits) == 1
+
+
+def test_a_result_summary_with_nan_does_not_break_the_job_view(client, f):
+    """An older tisma_scan wrote NaN/Infinity in its summary (not JSON): the master keeps them as null."""
+    user = f.user()
+    node = f.node("n", "slice")
+    job = f.submit(user)
+    f.claim(node)
+    r = client.post(f"/v1/node/jobs/{job['id']}/result", headers=node, files={"file": ("p.gcode", b"G1")},
+                    data={"summary": '{"noise_mm": NaN, "area_mm2": Infinity, "volume_mm3": 12.5, "nested": {"x": -Infinity}}'})
+    assert r.status_code == 200, r.text
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user)
+    assert view.status_code == 200
+    assert view.json()["summary"]["noise_mm"] is None and view.json()["summary"]["volume_mm3"] == 12.5
+    assert view.json()["summary"]["nested"] == {"x": None}
