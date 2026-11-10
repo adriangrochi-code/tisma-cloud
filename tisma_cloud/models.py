@@ -89,6 +89,8 @@ class User(Base):
     play_account: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     # Remote printers paid for on top of those of the plan (set by the last payment).
     extra_printers: Mapped[int] = mapped_column(Integer, default=0)
+    # The name the account shows as author in the library (one for all its publications; never its e-mail).
+    library_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     plan: Mapped[Plan] = relationship(lazy="joined")

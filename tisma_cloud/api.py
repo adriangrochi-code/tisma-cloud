@@ -1150,6 +1150,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     raise HTTPException(422, "The files are not those of the account's file")
             if not library.owns_key(s, u, pub.peer_key):
                 raise HTTPException(409, "'peer_key' is not a key of this account (POST /v1/library/peer-key)")
+            # The author is the account (spec 967f7a3): one name for all its publications, set the first time.
+            if not u.library_name:
+                if not pub.author_name:
+                    raise HTTPException(422, "'author_name' is needed the first time the account publishes "
+                                             "(or PUT /v1/me/library-name)")
+                u.library_name = pub.author_name
             if library.blocked(s, "account", library.account_id(u.id)) or library.blocked(s, "peer", pub.peer_key):
                 raise HTTPException(403, "This account cannot publish in the library")
             if model_id is not None and library.blocked(s, "model", model_id):
@@ -1175,7 +1181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 path.write_bytes(thumb)
             row = LibraryModel(model_id=model_id, revision=revision, user_id=u.id, name=pub.name,
                                description=pub.description, tags=json.dumps(pub.tags, ensure_ascii=False),
-                               license=pub.license, author_name=pub.author_name, thumbnail_sha256=digest,
+                               license=pub.license, author_name=u.library_name, thumbnail_sha256=digest,
                                thumbnail_size=len(thumb), size=sum(f["size"] for f in pub.files),
                                files=json.dumps(pub.files), analysis=json.dumps(pub.analysis),
                                swarm=json.dumps(pub.swarm), peer_key=pub.peer_key,
@@ -1636,7 +1642,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             acc = scheduler.account(s, u, cfg.grace_days)
             return {"email": u.email, **acc.as_dict(), "remote_printers": remote.printer_allowance(u, acc.paid),
                     "extra_printers": u.extra_printers, "extra_printer_cents": u.plan.extra_printer_cents,
-                    "has_password": bool(u.password_hash)}
+                    "has_password": bool(u.password_hash), "library_name": u.library_name}
+
+    @app.put("/v1/me/library-name")
+    def set_library_name(user: UserDep, body: dict = Body(...)) -> dict:
+        """The name the account shows as author in the library (its publications, the old ones too)."""
+        try:
+            name = library._text(body, "name", 60)
+        except library.LibraryError as ex:
+            raise HTTPException(422, str(ex)) from None
+        with db.session() as s:
+            u = s.get(User, user.id)
+            u.library_name = name
+            s.execute(update(LibraryModel).where(LibraryModel.user_id == u.id).values(author_name=name))
+            library.bump(s, "index")
+        return {"library_name": name}
 
     # ---- problem reports (reports.py)
     @app.post("/v1/reports", status_code=201)

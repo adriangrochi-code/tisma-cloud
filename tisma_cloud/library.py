@@ -263,7 +263,8 @@ def parse_publication(body: dict) -> Publication:
     if not verify(unb64(peer_key, 32), unb64(signature, 64), manifest(clean)):
         raise LibraryError("'manifest_signature' is not the signature of the files with 'peer_key'")
     return Publication(name=_text(body, "name", 120), description=_text(body, "description", 500, needed=False),
-                       tags=[t.strip() for t in tags], license=license_, author_name=_text(body, "author_name", 60),
+                       tags=[t.strip() for t in tags], license=license_,
+                       author_name=_text(body, "author_name", 60, needed=False),
                        files=sorted(clean, key=lambda f: f["path"]), analysis=analysis, swarm=swarm, peer_key=peer_key,
                        manifest_signature=signature)
 

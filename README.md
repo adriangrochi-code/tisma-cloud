@@ -590,6 +590,10 @@ la denuncia, y bloquea cuentas, claves o direcciones (`/v1/admin/library/...`, s
 **aparte**, como `data.key`: si se pierde o la roban, se certifica una clave nueva y la vieja va a
 `TISMA_LIBRARY_REVOKED_KEYS`.
 
+**El autor es la cuenta** (ficha 967f7a3): todas las publicaciones de una cuenta llevan el mismo nombre de autor,
+`library_name` (en `GET /v1/me`; se cambia con `PUT /v1/me/library-name` y cambia en todas). La primera publicación lo
+toma de `author_name` si la cuenta no tiene uno; después `author_name` no cuenta. Nunca se muestra el correo.
+
 **Pares e intermediarios** (libp2p, acordado con el motor el 10-11-2026): cada app anuncia al central qué modelos
 comparte y sus direcciones, firmado con su clave (`POST /v1/library/peers/announce`, cada 10 min). Eso queda **solo
 en memoria** 30 min. `GET /v1/library/peers?model=` da con quién conectarse: la dirección propia solo entre dos apps

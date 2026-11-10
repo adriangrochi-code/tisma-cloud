@@ -728,3 +728,26 @@ def test_one_publication_is_blocked_by_its_code(client, f):
     assert client.post("/v1/admin/library/blocks", headers=admin, json={"kind": "model", "value": "lm_x"}).status_code == 422
     client.delete(f"/v1/admin/library/blocks/{r.json()['id']}", headers=admin)
     assert sorted(m["id"] for m in signed(client, "index")["models"]) == sorted([bad, good])
+
+
+def test_the_author_is_the_account_with_one_name_for_all_its_publications(client, f):
+    """Spec 967f7a3: the author of a publication is the account that publishes it (the scanning one for a scan)."""
+    user = f.user("sofia@x.com")
+    app = App(client, user)
+    app.bind()
+    assert client.get("/v1/me", headers=user).json()["library_name"] is None
+    # The first publication names the account; later ones cannot sign as someone else.
+    first = app.publish(author_name="Sofía R.")
+    second = app.publish(author_name="Otra persona",
+                         files=[{"path": "b.3mf", "role": "project", "size": 5, "sha256": "7" * 64}])
+    assert first["author"]["name"] == second["author"]["name"] == "Sofía R."
+    assert client.get("/v1/me", headers=user).json()["library_name"] == "Sofía R."
+    # Renamed from the account: every publication shows the new name.
+    assert client.put("/v1/me/library-name", headers=user, json={"name": "Sofía Rodríguez"}).status_code == 200
+    names = {m["author"]["name"] for m in signed(client, "index")["models"]}
+    assert names == {"Sofía Rodríguez"}
+    assert client.put("/v1/me/library-name", headers=user, json={"name": "a‮b"}).status_code == 422
+    # Without a name yet, the first publication needs one.
+    other = App(client, f.user("nuevo@x.com"))
+    other.bind()
+    other.publish(expect=422, author_name="", files=[{"path": "c.3mf", "role": "project", "size": 5, "sha256": "6" * 64}])
