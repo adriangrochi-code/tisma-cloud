@@ -1041,9 +1041,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             data, sig, etag = services.library.get(s, name)
         if signature:
             return Response(sig, media_type="application/octet-stream", headers={"Cache-Control": "no-cache"})
+        headers = {"Cache-Control": "no-cache", "ETag": etag, "Vary": "Accept-Encoding"}
         if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers={"ETag": etag})
-        return Response(data, media_type="application/json", headers={"Cache-Control": "no-cache", "ETag": etag})
+            return Response(status_code=304, headers=headers)
+        # The index of thousands of models is megabytes of JSON: sent compressed to whoever accepts it (the apps undo
+        # it before checking the signature, which is of the plain bytes).
+        packed = services.library.compressed(name)
+        if packed is not None and "gzip" in request.headers.get("accept-encoding", "") and len(packed) < len(data):
+            return Response(packed, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+        return Response(data, media_type="application/json", headers=headers)
 
     @app.get("/v1/library/index.json")
     def library_index(request: Request) -> Response:

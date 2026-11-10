@@ -15,6 +15,7 @@ also every RESIGN_S, so that its "expires" moves forward (the apps stop sharing 
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 import os
@@ -411,7 +412,7 @@ class Signed:
         self.key = key
         self.revoked = revoked
         self._lock = threading.Lock()
-        self._cache: dict[str, tuple[int, float, bytes, bytes, str, str, str]] = {}
+        self._cache: dict[str, tuple[int, float, bytes, bytes, str, str, str, bytes]] = {}
 
     def get(self, session: Session, name: str) -> tuple[bytes, bytes, str]:
         if name == "blocklist":
@@ -432,9 +433,15 @@ class Signed:
                 data = build_index(session) if name == "index" else build_blocklist(session, self.key, self.revoked)
                 sig = self.key.sign(data)
                 etag = '"' + hashlib.sha256(data).hexdigest()[:32] + '"'
-                cached = (seq, time.monotonic(), data, sig, etag, day, authors_off)
+                cached = (seq, time.monotonic(), data, sig, etag, day, authors_off, gzip.compress(data, 6))
                 self._cache[name] = cached
             return cached[2], cached[3], cached[4]
+
+    def compressed(self, name: str) -> bytes | None:
+        """The list as last built, compressed with gzip (built once with it; the signature is of the plain bytes)."""
+        with self._lock:
+            cached = self._cache.get(name)
+            return cached[7] if cached else None
 
 
 def bind_peer_key(session: Session, user: User, public_key_b64: str, most: int = 10) -> None:

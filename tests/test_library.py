@@ -573,3 +573,22 @@ def test_revisions_published_at_once_get_their_own_numbers(client, f):
     assert all(a.status_code in (201, 409) for a in answers), [(a.status_code, a.text[:80]) for a in answers]
     made = sorted(a.json()["revision"] for a in answers if a.status_code == 201)
     assert made == list(range(2, 2 + len(made))) and made
+
+
+def test_the_index_goes_compressed_and_its_signature_is_of_the_plain_bytes(client, f):
+    import gzip
+
+    app = App(client, f.user("lucia@x.com"))
+    app.bind()
+    for _ in range(3):
+        app.publish()
+    plain = client.get("/v1/library/index.json", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers
+    # Read raw, as it travels: gzip, and the plain bytes inside are the signed ones.
+    with client.stream("GET", "/v1/library/index.json", headers={"Accept-Encoding": "gzip"}) as r:
+        assert r.headers["content-encoding"] == "gzip" and "Accept-Encoding" in r.headers["vary"]
+        raw = b"".join(r.iter_raw())
+    data = gzip.decompress(raw)
+    assert data == plain.content and len(raw) < len(data)
+    key = library.unb64(client.get("/v1/library/key").json()["public_key"], 32)
+    assert library.verify(key, client.get("/v1/library/index.json.sig").content, data)
