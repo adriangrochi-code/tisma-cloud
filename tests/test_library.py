@@ -423,3 +423,13 @@ def test_the_tisma_apps_take_the_scans_into_mi_biblioteca_once_per_device(client
     assert client.get("/v1/me/scans", headers=other).json()["scans"] == []
     assert client.post(f"/v1/me/scans/{item['id']}/taken", headers=other, json={"device": "x"}).status_code == 404
     assert client.delete(f"/v1/files/{item['id']}", headers=user).status_code == 200
+
+
+def test_the_relay_cap_is_set_in_the_panel(client, f):
+    admin = f.user("root@x.com", admin=True)
+    assert client.get("/v1/admin/library/settings", headers=admin).json() == {"relay_mb_per_hour_per_account": 500}
+    r = client.put("/v1/admin/library/settings", headers=admin, json={"relay_mb_per_hour_per_account": 2000})
+    assert r.json() == {"relay_mb_per_hour_per_account": 2000}
+    for bad in ({"relay_mb_per_hour_per_account": -1}, {"relay_mb_per_hour_per_account": "x"}, {"other": 1}):
+        assert client.put("/v1/admin/library/settings", headers=admin, json=bad).status_code == 422
+    assert client.get("/v1/admin/library/settings", headers=f.user()).status_code == 403

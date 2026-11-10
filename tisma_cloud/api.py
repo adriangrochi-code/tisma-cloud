@@ -2568,6 +2568,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             r.handled_at, r.outcome = utcnow(), "dismissed"
         return {"ok": True}
 
+    @app.get("/v1/admin/library/settings")
+    def admin_library_settings(_admin: AdminDep) -> dict:
+        with db.session() as s:
+            return library.settings_view(s)
+
+    @app.put("/v1/admin/library/settings")
+    def admin_library_change_settings(_admin: AdminDep, body: dict = Body(...)) -> dict:
+        with db.session() as s:
+            try:
+                return library.change_settings(s, body)
+            except library.LibraryError as ex:
+                raise HTTPException(422, str(ex)) from None
+
     @app.get("/v1/admin/library/blocks")
     def admin_library_blocks(_admin: AdminDep) -> dict:
         with db.session() as s:

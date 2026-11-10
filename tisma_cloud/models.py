@@ -542,3 +542,10 @@ class AccountFileTaken(Base):
     file_id: Mapped[str] = mapped_column(ForeignKey("account_files.id", ondelete="CASCADE"), index=True)
     device: Mapped[str] = mapped_column(String(100))
     taken_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class LibrarySetting(Base):
+    """Settings of the library changed from the panel (the cap of the relays per hour and per account, 8 quater)."""
+    __tablename__ = "library_settings"
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200))

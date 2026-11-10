@@ -31,7 +31,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from .models import LibraryBlock, LibraryCounter, LibraryModel, LibraryPeerKey, User, utcnow
+from .models import LibraryBlock, LibraryCounter, LibraryModel, LibraryPeerKey, LibrarySetting, User, utcnow
 
 INDEX_FORMAT = "tisma-library-index"
 BLOCKLIST_FORMAT = "tisma-library-blocklist"
@@ -421,3 +421,35 @@ def bind_peer_key(session: Session, user: User, public_key_b64: str) -> None:
 def owns_key(session: Session, user: User, public_key_b64: str) -> bool:
     return session.execute(select(LibraryPeerKey).where(LibraryPeerKey.public_key == public_key_b64,
                                                         LibraryPeerKey.user_id == user.id)).scalar_one_or_none() is not None
+
+
+# ---- the settings of the panel
+# name: (default, lowest, highest). The relays of Tisma pass at most this many MB an hour for one account (8 quater).
+SETTINGS = {"relay_mb_per_hour_per_account": (500, 0, 100_000)}
+
+
+def settings_view(session: Session) -> dict[str, int]:
+    stored = {r.name: r.value for r in session.execute(select(LibrarySetting)).scalars()}
+    out = {}
+    for name, (default, _low, _high) in SETTINGS.items():
+        try:
+            out[name] = int(stored.get(name, default))
+        except ValueError:
+            out[name] = default
+    return out
+
+
+def change_settings(session: Session, values: dict) -> dict[str, int]:
+    for name, value in values.items():
+        if name not in SETTINGS:
+            raise LibraryError(f"No setting {name}")
+        _default, low, high = SETTINGS[name]
+        if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+            raise LibraryError(f"{name} is a whole number from {low} to {high}")
+        row = session.get(LibrarySetting, name)
+        if row is None:
+            session.add(LibrarySetting(name=name, value=str(value)))
+        else:
+            row.value = str(value)
+    session.flush()
+    return settings_view(session)

@@ -171,6 +171,9 @@
       sus archivos en la lista de bloqueo: las apps dejan de compartirlos y borran su copia. Los archivos no están en este
       servidor: se ven con «Abrir en Tisma» desde la biblioteca.</p>
     <div class="table-wrap"><table id="library-reports"></table></div>
+    <p class="filters"><label>Intermediarios: tope por cuenta <input id="lib-relay-mb" type="number" min="0" max="100000"
+      style="width:7em"> MB por hora</label> <button type="button" id="lib-relay-save">Guardar</button>
+      <span class="muted" id="lib-relay-note">Al llegar, las apps en «Directo» siguen y las demás esperan.</span></p>
     <h2>Biblioteca: bloqueos</h2>
     <div class="filters">
       <select id="lb-kind"><option value="account">Cuenta (ua_…)</option><option value="peer">Clave de una app</option>
@@ -749,9 +752,21 @@ function renderLibrary(reports, blocks) {
         catch (e) { if (e.message !== "auth") alert(`No se pudo: ${e.message}`); } } }, "Quitar")))));
 }
 async function refreshLibrary() {
-  try { renderLibrary(await api("/v1/admin/library/reports"), await api("/v1/admin/library/blocks")); }
+  try {
+    renderLibrary(await api("/v1/admin/library/reports"), await api("/v1/admin/library/blocks"));
+    if (document.activeElement !== $("lib-relay-mb"))
+      $("lib-relay-mb").value = (await api("/v1/admin/library/settings")).relay_mb_per_hour_per_account;
+  }
   catch (e) { if (e.message !== "auth") $("library-reports").replaceChildren(el("tr", {}, el("td", { class: "error" }, `No se pudo leer: ${e.message}`))); }
 }
+$("lib-relay-save").onclick = async () => {
+  const mb = Number($("lib-relay-mb").value);
+  if (!Number.isInteger(mb) || mb < 0) { alert("Un número entero de MB, 0 o más."); return; }
+  try {
+    await api("/v1/admin/library/settings", { method: "PUT", body: JSON.stringify({ relay_mb_per_hour_per_account: mb }) });
+    $("lib-relay-note").textContent = "Guardado.";
+  } catch (e) { if (e.message !== "auth") alert(`No se pudo: ${e.message}`); }
+};
 $("lb-add").onclick = () => {
   const value = $("lb-value").value.trim();
   if (!value) { alert("Escribí qué bloquear."); return; }
