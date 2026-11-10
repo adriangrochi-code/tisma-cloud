@@ -31,8 +31,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from . import (__version__, alerts, backup, billing, capacity, codes, crypto, google_play, library, pairing, remote, reports,
-               scans, scheduler, triage)
+from . import (__version__, alerts, backup, billing, capacity, codes, crypto, google_play, library, pairing, peers,
+               remote, reports, scans, scheduler, triage)
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
@@ -141,6 +141,8 @@ class Services:
         self.twins = Twins()
         self.updates = UpdateMirror(settings.updates_url, Path(settings.storage_dir) / "updates")
         # The library shared between users (library.py): its own signing key and the signed index and blocklist.
+        # Who shares which model, in memory only (peers.py).
+        self.peers = peers.Announcements()
         self.library = library.Signed(library.LibraryKey(Path(settings.storage_dir)),
                                       tuple(k.strip() for k in settings.library_revoked_keys.split(",") if k.strip()))
         # The last daily backup that failed (backup.py), for the alerts; None when the last one was good.
@@ -1139,6 +1141,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 source.published_model = model_id
             library.bump(s, "index")
             return library.model_entry(row)
+
+    # ---- the peers of the library (peers.py): relay tickets, announcements and who shares a model
+    relays = [r.strip() for r in cfg.library_relays.split(",") if r.strip()]
+
+    def peer_allowed(s, user: User, peer_key: str, request: Request) -> None:  # noqa: ANN001
+        if not library.owns_key(s, user, peer_key):
+            raise HTTPException(409, "'peer_key' is not a key of this account (POST /v1/library/peer-key)")
+        try:
+            address = str(ipaddress.ip_address(client_key(request)))
+        except ValueError:
+            address = client_key(request)
+        if (library.blocked(s, "account", library.account_id(user.id)) or library.blocked(s, "peer", peer_key)
+                or library.blocked(s, "address", address)):
+            raise HTTPException(403, "Blocked in the library")
+
+    @app.post("/v1/library/relay-ticket")
+    def library_relay_ticket(user: UserDep, request: Request, body: dict = Body(...)) -> dict:
+        peer_key = str(body.get("peer_key", ""))
+        with db.session() as s:
+            peer_allowed(s, user, peer_key, request)
+            cap = library.settings_view(s)["relay_mb_per_hour_per_account"]
+        made = peers.ticket(services.library.key, library.account_id(user.id), library.unb64(peer_key, 32), cap)
+        return {**made, "relays": relays}
+
+    @app.post("/v1/library/peers/announce")
+    def library_announce(user: UserDep, request: Request, body: dict = Body(...)) -> dict:
+        peer_key = str(body.get("peer_key", ""))
+        models, addrs, direct, when = body.get("models"), body.get("addrs"), body.get("direct"), body.get("time")
+        if not (isinstance(models, list) and len(models) <= peers.MAX_MODELS and all(isinstance(m, str) for m in models)
+                and isinstance(addrs, list) and len(addrs) <= peers.MAX_ADDRS
+                and all(isinstance(a, str) and a.startswith("/") and len(a) <= 300 for a in addrs)
+                and isinstance(direct, bool) and isinstance(when, int) and not isinstance(when, bool)):
+            raise HTTPException(422, "'models' (ids), 'addrs' (multiaddrs), 'direct' and 'time' (unix seconds)")
+        if abs(time.time() - when) > peers.CLOCK_SKEW_S:
+            raise HTTPException(422, "'time' is more than 5 minutes off: check the clock")
+        try:
+            ok = library.verify(library.unb64(peer_key, 32), library.unb64(str(body.get("signature", "")), 64),
+                                peers.announcement_bytes(body))
+        except library.LibraryError:
+            ok = False
+        if not ok:
+            raise HTTPException(422, "'signature' is not the peer key's signature of the announcement")
+        with db.session() as s:
+            peer_allowed(s, user, peer_key, request)
+        services.peers.announce(peers.Peer(peer_key=peer_key, account=library.account_id(user.id),
+                                           models=frozenset(models), addrs=tuple(addrs) if direct else (), direct=direct))
+        return {"ok": True, "again_in_s": peers.ANNOUNCE_TTL_S // 3}
+
+    @app.get("/v1/library/peers")
+    def library_peers(user: UserDep, model: str, peer_key: str = "") -> dict:
+        asker = services.peers.get(peer_key) if peer_key else None
+        asker_direct = bool(asker and asker.direct and asker.account == library.account_id(user.id))
+        with db.session() as s:
+            found = []
+            for p in services.peers.providers(model):
+                if p.peer_key == peer_key or library.blocked(s, "peer", p.peer_key) or library.blocked(
+                        s, "account", p.account):
+                    continue
+                addrs = peers.addresses_for(p, asker_direct, relays)
+                if addrs:
+                    found.append({"peer_id": p.id, "addrs": addrs})
+        return {"peers": found}
 
     @app.post("/v1/library/models", status_code=201)
     def library_publish(user: UserDep, body: dict = Body(...)) -> dict:

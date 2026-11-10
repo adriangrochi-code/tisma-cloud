@@ -433,3 +433,84 @@ def test_the_relay_cap_is_set_in_the_panel(client, f):
     for bad in ({"relay_mb_per_hour_per_account": -1}, {"relay_mb_per_hour_per_account": "x"}, {"other": 1}):
         assert client.put("/v1/admin/library/settings", headers=admin, json=bad).status_code == 422
     assert client.get("/v1/admin/library/settings", headers=f.user()).status_code == 403
+
+
+def announce(client, app: App, models: list[str], direct: bool, addrs: list[str], when: int | None = None) -> int:
+    import time
+
+    from tisma_cloud import peers
+
+    body = {"peer_key": app.public, "models": models, "addrs": addrs, "direct": direct,
+            "time": int(time.time()) if when is None else when}
+    body["signature"] = library.b64(app.key.sign(peers.announcement_bytes(body)))
+    return client.post("/v1/library/peers/announce", headers=app.headers, json=body).status_code
+
+
+def test_relay_tickets_and_who_shares_a_model(settings):
+    import dataclasses
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from conftest import Factory, new_app
+    from tisma_cloud import peers
+
+    relay = "/dns4/relay.tismaservidores.net/udp/4001/quic-v1/p2p/12D3KooWRelay"
+    with TestClient(new_app(dataclasses.replace(settings, library_relays=relay)), client=("192.168.1.20", 50000)) as c:
+        certify(c)
+        f = Factory(c)
+        lucia, ana, diego = (App(c, f.user(e)) for e in ("lucia@x.com", "ana@x.com", "diego@x.com"))
+        for a in (lucia, ana, diego):
+            a.bind()
+        model = lucia.publish()["id"]
+        # The relay's ticket: signed by the library key, with the account, the PeerId, its end and the cap.
+        r = c.post("/v1/library/relay-ticket", headers=lucia.headers, json={"peer_key": lucia.public}).json()
+        payload_b64, sig_b64 = r["ticket"].split(".")
+        pad = lambda t: base64.urlsafe_b64decode(t + "=" * (-len(t) % 4))  # noqa: E731
+        key = library.unb64(c.get("/v1/library/key").json()["public_key"], 32)
+        assert library.verify(key, pad(sig_b64), pad(payload_b64))
+        payload = json.loads(pad(payload_b64))
+        assert payload["peer_id"] == peers.peer_id(library.unb64(lucia.public, 32)) and payload["peer_id"].startswith("12D3KooW")
+        assert payload["cap_mb_per_hour"] == 500 and payload["expires"] > time.time() and r["relays"] == [relay]
+        # Someone else's key: no ticket.
+        assert c.post("/v1/library/relay-ticket", headers=ana.headers, json={"peer_key": lucia.public}).status_code == 409
+        # Lucía shares directly, Diego through the relay; the master knows their addresses, nobody else unless both
+        # chose «Directo».
+        assert announce(c, lucia, [model], True, ["/ip4/203.0.113.7/udp/4001/quic-v1"]) == 200
+        assert announce(c, diego, [model], False, ["/ip4/198.51.100.2/tcp/4001"]) == 200
+        assert announce(c, ana, [], True, ["/ip4/192.0.2.9/tcp/4001"]) == 200
+        seen_by_direct = c.get("/v1/library/peers", headers=ana.headers, params={"model": model, "peer_key": ana.public})
+        found = {p["peer_id"]: p["addrs"] for p in seen_by_direct.json()["peers"]}
+        lucia_id, diego_id = (peers.peer_id(library.unb64(a.public, 32)) for a in (lucia, diego))
+        assert found[lucia_id] == ["/ip4/203.0.113.7/udp/4001/quic-v1"]
+        assert found[diego_id] == [f"{relay}/p2p-circuit/p2p/{diego_id}"]
+        # An app through the relay sees nobody's address.
+        seen = c.get("/v1/library/peers", headers=diego.headers, params={"model": model, "peer_key": diego.public}).json()
+        assert seen["peers"] == [{"peer_id": lucia_id, "addrs": [f"{relay}/p2p-circuit/p2p/{lucia_id}"]}]
+        assert "203.0.113.7" not in json.dumps(seen) and "198.51.100.2" not in str(c.get("/v1/library/peers",
+               headers=ana.headers, params={"model": model}).json())
+        # A bad signature, an old time, a blocked peer.
+        assert announce(c, lucia, [model], True, [], when=int(time.time()) - 3600) == 422
+        body = {"peer_key": lucia.public, "models": [model], "addrs": [], "direct": True, "time": int(time.time()),
+                "signature": library.b64(ana.key.sign(b"x"))}
+        assert c.post("/v1/library/peers/announce", headers=lucia.headers, json=body).status_code == 422
+        admin = f.user("root@x.com", admin=True)
+        c.post("/v1/admin/library/blocks", headers=admin, json={"kind": "peer", "value": diego.public})
+        assert announce(c, diego, [model], False, []) == 403
+        ids = [p["peer_id"] for p in c.get("/v1/library/peers", headers=ana.headers, params={"model": model}).json()["peers"]]
+        assert diego_id not in ids
+        # The address an app announces from, blocked for a day: no announcing, no tickets.
+        c.post("/v1/admin/library/blocks", headers=admin, json={"kind": "address", "value": "192.168.1.20"})
+        assert announce(c, ana, [], True, []) == 403
+        assert c.post("/v1/library/relay-ticket", headers=ana.headers, json={"peer_key": ana.public}).status_code == 403
+
+
+def test_the_swarm_of_a_model_is_checked(client, f):
+    app = App(client, f.user())
+    app.bind()
+    sha = hashlib.sha256(b"pieza").hexdigest()
+    good = {"protocol": "libp2p/tisma-library/1", "piece_size": 1048576, "piece_roots": {sha: "e" * 64}}
+    assert app.publish(swarm=good)["swarm"] == good
+    for bad in ({**good, "piece_size": 4096}, {**good, "protocol": "bittorrent"}, {**good, "piece_roots": {}},
+                {**good, "pieces": {sha: ["e" * 64]}}):
+        app.publish(expect=422, swarm=bad)

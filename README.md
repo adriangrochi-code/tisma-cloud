@@ -590,6 +590,13 @@ la denuncia, y bloquea cuentas, claves o direcciones (`/v1/admin/library/...`, s
 **aparte**, como `data.key`: si se pierde o la roban, se certifica una clave nueva y la vieja va a
 `TISMA_LIBRARY_REVOKED_KEYS`.
 
+**Pares e intermediarios** (libp2p, acordado con el motor el 10-11-2026): cada app anuncia al central qué modelos
+comparte y sus direcciones, firmado con su clave (`POST /v1/library/peers/announce`, cada 10 min). Eso queda **solo
+en memoria** 30 min. `GET /v1/library/peers?model=` da con quién conectarse: la dirección propia solo entre dos apps
+en «Directo»; si no, la dirección a través de un intermediario de Tisma (`TISMA_LIBRARY_RELAYS`, sus multiaddr). Un
+intermediario acepta solo con un permiso del central (`POST /v1/library/relay-ticket`, firmado con la clave de la
+biblioteca, 1 h) que trae la cuenta y el tope por hora del panel. Una IP bloqueada no anuncia ni recibe permisos.
+
 **Piezas escaneadas en la cuenta** (regla 7 bis): «Imprimir» en la app del escáner guarda la pieza de un escaneo
 terminado en la cuenta, privada (`POST /v1/files` con el trabajo; se toma del resultado, que dura `TISMA_RETENTION_H`).
 Tisma la lista en «Mi biblioteca» (`GET /v1/files`) y la baja para laminar; «Publicar» la manda a la biblioteca con

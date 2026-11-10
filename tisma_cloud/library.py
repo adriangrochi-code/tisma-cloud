@@ -234,9 +234,10 @@ def parse_publication(body: dict) -> Publication:
         raise LibraryError("A model has its project (a file with role 'project')")
     analysis = body.get("analysis")
     swarm = body.get("swarm")
-    for key, value in (("analysis", analysis), ("swarm", swarm)):
-        if value is not None and (not isinstance(value, dict) or len(canonical(value)) > 4096):
-            raise LibraryError(f"'{key}' is an object of at most 4 KB")
+    if analysis is not None and (not isinstance(analysis, dict) or len(canonical(analysis)) > 4096):
+        raise LibraryError("'analysis' is an object of at most 4 KB")
+    if swarm is not None:
+        check_swarm(swarm, [f["sha256"] for f in clean])
     peer_key = _text(body, "peer_key", 64)
     signature = _text(body, "manifest_signature", 100)
     if not verify(unb64(peer_key, 32), unb64(signature, 64), manifest(clean)):
@@ -245,6 +246,24 @@ def parse_publication(body: dict) -> Publication:
                        tags=[t.strip() for t in tags], license=license_, author_name=_text(body, "author_name", 60),
                        files=sorted(clean, key=lambda f: f["path"]), analysis=analysis, swarm=swarm, peer_key=peer_key,
                        manifest_signature=signature)
+
+
+SWARM_PROTOCOL = "libp2p/tisma-library/1"
+PIECE_SIZE = 1 << 20
+
+
+def check_swarm(swarm: object, hashes: list[str]) -> None:
+    """How the files are fetched from peers (agreed with the engine, 2026-11-10): the protocol, pieces of 1 MiB, and per
+    file the SHA-256 of its piece list (the list itself comes from any peer and is checked against it)."""
+    if not isinstance(swarm, dict) or swarm.get("protocol") != SWARM_PROTOCOL or swarm.get("piece_size") != PIECE_SIZE:
+        raise LibraryError(f"'swarm' is {{\"protocol\": \"{SWARM_PROTOCOL}\", \"piece_size\": {PIECE_SIZE}, "
+                           "\"piece_roots\": {...}}")
+    roots = swarm.get("piece_roots")
+    if not isinstance(roots, dict) or set(roots) != set(hashes) or not all(
+            isinstance(v, str) and _SHA256.match(v) for v in roots.values()):
+        raise LibraryError("'swarm.piece_roots' has the SHA-256 of the piece list of each file, by its sha256")
+    if set(swarm) - {"protocol", "piece_size", "piece_roots"}:
+        raise LibraryError("'swarm' has only protocol, piece_size and piece_roots")
 
 
 def thumbnail_ok(data: bytes) -> bool:
