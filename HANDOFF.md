@@ -43,6 +43,29 @@ CI: red since 11-09 because the slicer has no green build of main/dev since 10-2
 the last ones, dev run 40347874688, on 11-09 ~16 UTC). 99dc53e keeps a copy in the release `tisma-slicer-cache` of
 this repository and uses it when no artifact is left. The window's Nodos actions: errors in Spanish, toggle guarded (next commit).
 
+## Coverage of the review (owner, 2026-11-10 21:00: everything reviewed by 2026-11-12 03:10 UTC; summary every 3 h)
+
+| Area | Routes / parts | State |
+|---|---|---|
+| Library: index, blocklist, signing, key and certificate | /v1/library/* (15), library.py | revisado 11-10: signed lists vs spec, cache invalidation (disabled authors), gzip, certificate restore cases, revoked keys, control/bidi chars, races of revisions, fuzz; engine test vectors |
+| Library: peers, relay tickets, announcements | /v1/library/peers*, relay-ticket, peers.py | revisado 11-10: own-address only (reflection), blocked IPs, rate limit, memory only. Relay node and seeder: not built (wait for the engine's libp2p spike) |
+| Library review in the panel | /v1/admin/library/* (8), admin.html | revisado 11-10: browser test (reports, remove, blocks incl. model and IP, relay cap) |
+| Account files and scans to «Mi biblioteca» | /v1/files (5), /v1/me/scans | revisado 11-10: race of «Imprimir» (unique), quota, 410/409/404, deletion with account, per-device taken |
+| 3D scans upload | /v1/scans (5), scans.py | revisado 11-06/11-10: pieces, 507 when full, zip limits, e2e in CI; pendiente: deep pass on piece offsets/retries after restart |
+| Jobs and nodes | /v1/jobs (5), /v1/node (8), scheduler, agent | revisado 11-09/11-10: result sent twice (lock), node_error requeue, cancel vs node failure, full disk (507, node pause), DB restart, parallel claims; pendiente: progress/heartbeat edge cases |
+| Auth and accounts | /v1/auth (8), /v1/me (13) | revisado 11-06/11-09: login limits, codes per day, re-login; pendiente: deep pass (Google sign-in, delete account, sessions) |
+| Billing and plans | /v1/billing (6), /v1/plans, /v1/site (3), /v1/admin/plans, payments | pendiente (deep pass: webhooks, Google Play, double application, amounts) |
+| Remote printers | /v1/bridges (5), /v1/remote (6) | revisado 11-10 (token cache on disable); pendiente: deep pass |
+| Problem reports | /v1/reports, /v1/admin/reports (6), report-groups (2) | pendiente |
+| Admin panel: users, payments, capacity, queue, jobs, alerts, nodes | /v1/admin/* | revisado 11-09 (names, payments form, browser console clean); pendiente: deep pass on users/payments |
+| Updates mirror | /v1/updates, .sig | revisado 11-06 (503 until the engine's release exists) |
+| Guard, limits, headers | guard.py, ratelimit.py | revisado 11-09/11-10: nosniff, 411, docs local-only, daily limiter memory |
+| Mail and alerts | mail.py, alerts.py | revisado 11-10: Spanish texts, panel link in alerts |
+| Backup / restore | backup.py, restore_drill.py | revisado 11-06/11-10: drill in CI, Spanish errors, library.key/cert restore cases |
+| Upgrade | db.py, upgrade_drill.py | revisado 11-10 (SQLite and PostgreSQL locally, CI) |
+| Windows service and window | manager.py, gui.py, system.py | revisado 11-09/11-10: Nodos tab, Spanish errors, diagnosis checks; CI on Windows Server 2022 |
+| Pages | /cuenta, /admin, /docs, /openapi.json | revisado 11-09 (browser, docs local-only) |
+
 ## Done for QA
 
 - `admin plan-set --classes a,b|all --public/--no-public` (QA item 2: the engine's plan lock reads `classes` from
