@@ -2622,9 +2622,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 queued = s.execute(select(RemoteCommand).where(RemoteCommand.bridge_id == bridge_id,
                                                                RemoteCommand.status == "queued")
                                    .order_by(RemoteCommand.created_at)).scalars().all()
+                taken = []
                 for c in queued:
-                    c.status, c.updated_at = "sent", utcnow()
-                return [remote.command_view(c) for c in queued]
+                    # Two waits of the bridge at once (a program restarted while its last wait was open) read the
+                    # same queued commands: each goes to the wait that turns it «sent», so a print reaches the printer
+                    # once.
+                    won = s.execute(update(RemoteCommand).where(RemoteCommand.id == c.id,
+                                                                RemoteCommand.status == "queued")
+                                    .values(status="sent", updated_at=utcnow())
+                                    .execution_options(synchronize_session=False)).rowcount
+                    if won == 1:
+                        s.refresh(c)
+                        taken.append(remote.command_view(c))
+                return taken
 
         async def check() -> dict | None:
             commands: list[dict] = []

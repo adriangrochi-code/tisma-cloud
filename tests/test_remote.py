@@ -257,3 +257,33 @@ def test_a_bridge_of_an_account_disabled_in_the_panel_is_refused_at_once(client,
     register(client, ana)
     assert client.put("/v1/admin/users/ana@x.com/enabled", headers=admin, json={"enabled": False}).status_code == 200
     assert client.put(f"/v1/bridges/{BRIDGE}", headers=ana, json={"printers": []}).status_code == 401
+
+
+def test_a_command_is_handed_to_one_wait_of_the_bridge_only(client, f):
+    """A bridge program restarted while its previous wait was still open, or two waits at once: a print command must
+    reach the printer once, never twice."""
+    import threading
+
+    ana = f.user("ana@x.com")
+    register(client, ana)
+    presence = client.app.state.services.presence
+    for _ in range(10):
+        r = client.post(f"/v1/remote/bridges/{BRIDGE}/printers/a1/print", headers=ana,
+                        files={"file": ("p.gcode", b"G28\n")})
+        cid = r.json()["id"]
+        got = []
+        barrier = threading.Barrier(3)
+
+        def wait_for_commands():
+            barrier.wait()
+            # Each wait finds a command waiting (a second one arrived while the first wait read).
+            presence.mark_queued(BRIDGE)
+            got.extend(c["id"] for c in client.get(f"/v1/bridges/{BRIDGE}/commands?wait=0", headers=ana)
+                       .json()["commands"])
+
+        threads = [threading.Thread(target=wait_for_commands) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert got.count(cid) == 1, got

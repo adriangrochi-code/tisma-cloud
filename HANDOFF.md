@@ -55,7 +55,7 @@ this repository and uses it when no artifact is left. The window's Nodos actions
 | Jobs and nodes | /v1/jobs (5), /v1/node (8), scheduler, agent | revisado 11-09/11-10: result sent twice (lock), node_error requeue, cancel vs node failure, full disk (507, node pause), DB restart, parallel claims; pendiente: progress/heartbeat edge cases |
 | Auth and accounts | /v1/auth (8), /v1/me (13) | revisado 11-06/11-09/11-10: login limits, codes per day, password by code closes all sessions; FOUND pre-account hijacking through Google sign-in, fixed cadd7ca; pendiente: delete-account edge cases |
 | Billing and plans | /v1/billing (6), /v1/plans, /v1/site (3), /v1/admin/plans, payments | revisado 11-10: provider notices (amount/currency check, idempotent), FOUND one payment notified at once paying 3-4 months, fixed 7b7cbe2; two payments at once both count; Google Play revisado 11-10: the app and Google's notification of one purchase at once gave 500 (unique token), fixed; access is Google's expiry (not added up), refunds, upgrades covered by tests |
-| Remote printers | /v1/bridges (5), /v1/remote (6) | revisado 11-10 (token cache on disable); pendiente: deep pass |
+| Remote printers | /v1/bridges (5), /v1/remote (6) | revisado 11-10: token cache on disable; FOUND a print command handed to two waits of one bridge (printed twice), fixed; result sent twice answers 404 |
 | Problem reports | /v1/reports, /v1/admin/reports (6), report-groups (2) | pendiente |
 | Admin panel: users, payments, capacity, queue, jobs, alerts, nodes | /v1/admin/* | revisado 11-09 (names, payments form, browser console clean); pendiente: deep pass on users/payments |
 | Updates mirror | /v1/updates, .sig | revisado 11-06 (503 until the engine's release exists) |
