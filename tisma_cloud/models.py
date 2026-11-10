@@ -532,3 +532,13 @@ class AccountFile(Base):
     files: Mapped[str] = mapped_column(Text, default="[]")
     published_model: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class AccountFileTaken(Base):
+    """A device of the account already took the file into its «Mi biblioteca» (each device takes it once)."""
+    __tablename__ = "account_files_taken"
+    __table_args__ = (UniqueConstraint("file_id", "device"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    file_id: Mapped[str] = mapped_column(ForeignKey("account_files.id", ondelete="CASCADE"), index=True)
+    device: Mapped[str] = mapped_column(String(100))
+    taken_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

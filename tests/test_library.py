@@ -405,3 +405,21 @@ def test_the_files_quota_and_deleting_the_account(client, f):
         uid = s.execute(select(AccountFile.user_id)).scalar_one()
     services.delete_account(uid)
     assert not folder.exists() and signed(client, "index")["models"] == []
+
+
+def test_the_tisma_apps_take_the_scans_into_mi_biblioteca_once_per_device(client, f):
+    user = f.user("sofia@x.com")
+    item = client.post("/v1/files", headers=user, json={"scan_job": scan_done(f, user)}).json()
+    phone = client.get("/v1/me/scans", headers=user, params={"device": "Pixel 8"}).json()["scans"]
+    assert [(x["id"], x["name"], x["file"]) for x in phone] == [(item["id"], "engranaje", "engranaje.stl")]
+    mesh = client.get(f"/v1/me/scans/{item['id']}/mesh", headers=user)
+    assert mesh.status_code == 200 and hashlib.sha256(mesh.content).hexdigest() == phone[0]["sha256"]
+    assert client.post(f"/v1/me/scans/{item['id']}/taken", headers=user, json={"device": "Pixel 8"}).json() == {"ok": True}
+    assert client.post(f"/v1/me/scans/{item['id']}/taken", headers=user, json={"device": "Pixel 8"}).status_code == 200
+    # Taken by the phone, still there for the computer.
+    assert client.get("/v1/me/scans", headers=user, params={"device": "Pixel 8"}).json()["scans"] == []
+    assert len(client.get("/v1/me/scans", headers=user, params={"device": "PC del taller"}).json()["scans"]) == 1
+    other = f.user("otro@x.com")
+    assert client.get("/v1/me/scans", headers=other).json()["scans"] == []
+    assert client.post(f"/v1/me/scans/{item['id']}/taken", headers=other, json={"device": "x"}).status_code == 404
+    assert client.delete(f"/v1/files/{item['id']}", headers=user).status_code == 200

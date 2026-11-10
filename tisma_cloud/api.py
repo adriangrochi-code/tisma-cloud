@@ -38,8 +38,8 @@ from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
 from .jobs import (ESTIMATE_MAX_TRIANGLES, JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles,
                    estimate_seconds, plan_job)
-from .models import (AccountFile, Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job, LibraryBlock,
-                     LibraryModel, LibraryPeerKey, LibraryReport, Node, Payment, Plan, PlaySubscription, RemoteCommand,
+from .models import (AccountFile, AccountFileTaken, Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job,
+                     LibraryBlock, LibraryModel, LibraryPeerKey, LibraryReport, Node, Payment, Plan, PlaySubscription, RemoteCommand,
                      ScanUpload, Usage, User, month_of, utcnow)
 from .guard import Guard
 from .presence import Presence
@@ -295,6 +295,8 @@ class Services:
             commands = s.execute(select(RemoteCommand.id).where(RemoteCommand.bridge_id.in_(bridges))).scalars().all() \
                 if bridges else []
             files = s.execute(select(AccountFile.id).where(AccountFile.user_id == user_id)).scalars().all()
+            if files:
+                s.execute(delete(AccountFileTaken).where(AccountFileTaken.file_id.in_(files)))
             for model in (ApiToken, EmailCode, Usage, PlaySubscription, Job, Bridge, BugReport, AccountFile,
                           LibraryModel, LibraryPeerKey):
                 s.execute(delete(model).where(model.user_id == user_id))
@@ -1247,9 +1249,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f.name = name
             return file_view(f)
 
+    # The same parts as the Tisma apps read them for «Mi biblioteca» (Android's contract, 2026-11-10): the scans kept
+    # with «Imprimir» that this device has not taken yet. Each device takes them once (the phone and the computer both).
+    def scan_entry(f: AccountFile) -> dict | None:
+        mesh = next((x for x in json.loads(f.files) if x["path"] == "pieza.stl"), None)
+        if mesh is None:
+            return None
+        return {"id": f.id, "name": f.name, "file": safe_filename(f"{f.name}.stl", "pieza.stl"), "size": mesh["size"],
+                "sha256": mesh["sha256"], "created": f.created_at.isoformat(timespec="seconds") + "Z"}
+
+    @app.get("/v1/me/scans")
+    def my_scans(user: UserDep, device: str = "") -> dict:
+        device = device.strip()[:100]
+        with db.session() as s:
+            query = select(AccountFile).where(AccountFile.user_id == user.id, AccountFile.kind == "scan")
+            if device:
+                taken = select(AccountFileTaken.file_id).where(AccountFileTaken.device == device)
+                query = query.where(AccountFile.id.not_in(taken))
+            rows = s.execute(query.order_by(AccountFile.created_at.desc())).scalars().all()
+            return {"scans": [e for e in (scan_entry(f) for f in rows) if e]}
+
+    @app.get("/v1/me/scans/{file_id}/mesh")
+    def my_scan_mesh(user: UserDep, file_id: str) -> Response:
+        return get_file(user, file_id, "pieza.stl")
+
+    @app.post("/v1/me/scans/{file_id}/taken")
+    def my_scan_taken(user: UserDep, file_id: str, body: dict = Body(...)) -> dict:
+        device = str(body.get("device", "")).strip()[:100]
+        if not device:
+            raise HTTPException(422, "'device' is needed")
+        with db.session() as s:
+            own_file(s, user, file_id)
+            exists = s.execute(select(AccountFileTaken).where(AccountFileTaken.file_id == file_id,
+                                                              AccountFileTaken.device == device)).scalars().first()
+            if exists is None:
+                s.add(AccountFileTaken(file_id=file_id, device=device))
+        return {"ok": True}
+
     @app.delete("/v1/files/{file_id}")
     def delete_file(user: UserDep, file_id: str) -> dict:
         with db.session() as s:
+            s.execute(delete(AccountFileTaken).where(AccountFileTaken.file_id == own_file(s, user, file_id).id))
             s.delete(own_file(s, user, file_id))
         shutil.rmtree(files_dir(file_id), ignore_errors=True)
         return {"ok": True}
