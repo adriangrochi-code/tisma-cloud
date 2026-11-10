@@ -1152,6 +1152,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(409, "'peer_key' is not a key of this account (POST /v1/library/peer-key)")
             if library.blocked(s, "account", library.account_id(u.id)) or library.blocked(s, "peer", pub.peer_key):
                 raise HTTPException(403, "This account cannot publish in the library")
+            if model_id is not None and library.blocked(s, "model", model_id):
+                raise HTTPException(403, "The model was removed from the library")
             refused = [f["path"] for f in pub.files if library.blocked(s, "file", f["sha256"])]
             if refused:
                 raise HTTPException(422, f"Removed from the library: {', '.join(refused)}")

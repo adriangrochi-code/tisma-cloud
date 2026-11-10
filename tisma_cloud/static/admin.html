@@ -177,7 +177,7 @@
     <h2>Biblioteca: bloqueos</h2>
     <div class="filters">
       <select id="lb-kind"><option value="account">Cuenta (ua_…)</option><option value="peer">Clave de una app</option>
-        <option value="file">Archivo (SHA-256)</option><option value="address">Dirección IP (24 h)</option></select>
+        <option value="model">Publicación (código lm_…)</option><option value="file">Archivo (SHA-256)</option><option value="address">Dirección IP (24 h)</option></select>
       <input id="lb-value" placeholder="Qué bloquear (una IP sola, sin /24)">
       <input id="lb-reason" placeholder="Motivo">
       <button type="button" id="lb-add">Bloquear</button>
@@ -713,7 +713,7 @@ async function refresh() {
 }
 
 // ---- the library shared between users: reports and blocks (library.py)
-const BLOCK_KINDS = { account: "Cuenta", peer: "Clave de app", file: "Archivo", address: "Dirección IP" };
+const BLOCK_KINDS = { account: "Cuenta", peer: "Clave de app", model: "Publicación", file: "Archivo", address: "Dirección IP" };
 async function libraryAction(path, body, question) {
   if (question && !confirm(question)) return;
   try { await api(path, { method: "POST", body: JSON.stringify(body || {}) }); refreshLibrary(); }

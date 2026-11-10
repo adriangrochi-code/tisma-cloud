@@ -709,3 +709,22 @@ def test_an_app_announces_only_its_own_address(settings):
         assert announce(c, app, [model], True, ["/dns4/victima.example/tcp/443"]) == 422
         # Through the relay no address is kept, so anything goes.
         assert announce(c, app, [model], False, ["/ip4/198.51.100.99/tcp/4001"]) == 200
+
+
+def test_one_publication_is_blocked_by_its_code(client, f):
+    """Spec 967f7a3: «models» in the blocklist blocks one publication without touching the account's others."""
+    admin = f.user("root@x.com", admin=True)
+    app = App(client, f.user("lucia@x.com"))
+    app.bind()
+    bad = app.publish()["id"]
+    good = app.publish(files=[{"path": "maceta.3mf", "role": "project", "size": 9, "sha256": "9" * 64}])["id"]
+    r = client.post("/v1/admin/library/blocks", headers=admin, json={"kind": "model", "value": bad, "reason": "copia"})
+    assert r.status_code == 201
+    assert [m["id"] for m in signed(client, "index")["models"]] == [good]
+    assert signed(client, "blocklist")["models"] == [{"id": bad, "reason": "copia"}]
+    # Its author cannot bring it back with a new revision; the other publication stays.
+    files = [{"path": "otra.3mf", "role": "project", "size": 9, "sha256": "8" * 64}]
+    assert client.post(f"/v1/library/models/{bad}/revisions", headers=app.headers, json=app.body(files)).status_code == 403
+    assert client.post("/v1/admin/library/blocks", headers=admin, json={"kind": "model", "value": "lm_x"}).status_code == 422
+    client.delete(f"/v1/admin/library/blocks/{r.json()['id']}", headers=admin)
+    assert sorted(m["id"] for m in signed(client, "index")["models"]) == sorted([bad, good])

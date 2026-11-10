@@ -50,7 +50,8 @@ ROLES = ("project", "profile", "analysis", "photo")
 GCODE_EXTENSIONS = (".gcode", ".bgcode", ".gco", ".g")
 # The types a file may be (3 octies): the apps and the seeder check the contents; the master, the names.
 EXTENSIONS = (".3mf", ".stl", ".obj", ".step", ".stp", ".json", ".tea", ".taero", ".webp", ".png", ".jpg", ".jpeg")
-BLOCK_KINDS = ("file", "account", "peer", "address")
+# model: one publication by its code (the index "id"), without touching the account's others (spec 967f7a3).
+BLOCK_KINDS = ("file", "account", "peer", "address", "model")
 MAX_FILES = 50
 MAX_FILE_BYTES = 2 << 30
 MAX_THUMBNAIL_BYTES = 64 << 10
@@ -319,6 +320,8 @@ def add_block(session: Session, kind: str, value: str, reason: str = "", hours: 
     if kind not in BLOCK_KINDS:
         raise LibraryError(f"kind is one of {', '.join(BLOCK_KINDS)}")
     value = value.strip()
+    if kind == "model" and not re.fullmatch(r"lm_[0-9a-f]{32}", value):
+        raise LibraryError("A publication is blocked by its code (lm_ and 32 hexadecimal digits)")
     if kind == "file" and not _SHA256.match(value):
         raise LibraryError("A file is blocked by its SHA-256")
     if kind == "address":
@@ -379,8 +382,9 @@ def listed_models(session: Session) -> list[LibraryModel]:
     suspended = set(session.execute(select(LibraryBlock.value).where(LibraryBlock.kind == "account")).scalars())
     files = set(session.execute(select(LibraryBlock.value).where(LibraryBlock.kind == "file")).scalars())
     peers = set(session.execute(select(LibraryBlock.value).where(LibraryBlock.kind == "peer")).scalars())
+    models = set(session.execute(select(LibraryBlock.value).where(LibraryBlock.kind == "model")).scalars())
     return [m for m in rows if account_id(m.user_id) not in suspended and m.peer_key not in peers
-            and not any(f["sha256"] in files for f in json.loads(m.files))]
+            and m.model_id not in models and not any(f["sha256"] in files for f in json.loads(m.files))]
 
 
 def model_entry(m: LibraryModel) -> dict:
@@ -411,6 +415,7 @@ def build_blocklist(session: Session, key: LibraryKey, revoked: tuple[str, ...] 
            "files": [{"sha256": b.value, "reason": b.reason} for b in rows if b.kind == "file"],
            "accounts": [b.value for b in rows if b.kind == "account"],
            "peers": [b.value for b in rows if b.kind == "peer"],
+           "models": [{"id": b.value, "reason": b.reason} for b in rows if b.kind == "model"],
            # The addresses only as hashes with the salt of the day, given with them (8 quinquies).
            "address_salt": salt.hex(),
            "addresses": [{"sha256": address_hash(salt, b.value), "until": _stamp(b.until)} for b in rows
