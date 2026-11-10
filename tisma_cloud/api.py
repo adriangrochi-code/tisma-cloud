@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from . import (__version__, alerts, backup, billing, capacity, codes, crypto, google_play, library, pairing, peers,
+from . import (__version__, alerts, apple, backup, billing, capacity, codes, crypto, google_play, library, pairing, peers,
                remote, reports, scans, scheduler, triage)
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
@@ -178,6 +178,8 @@ class Services:
         self.translator = Translator(settings.translate_url, settings.translate_to) if settings.translate_url else None
         self.google = GoogleVerifier([c.strip() for c in settings.google_client_ids.split(",") if c.strip()])
         self.play = google_play.store_for(settings.play_package, settings.play_credentials, settings.play_products)
+        self.apple = apple.store_for(settings.apple_bundle_id, settings.apple_app_id, settings.apple_environment,
+                                     settings.apple_products, settings.apple_root_certs, settings.apple_online_checks)
         self.play_push = (google_play.PushVerifier(settings.play_push_audience, settings.play_push_account)
                           if settings.play_push_audience and settings.play_push_account else None)
         # When the alerts were last checked (time.monotonic(), None: never). Not 0: the monotonic clock counts from the
@@ -1721,7 +1723,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "classes": JOB_CLASS_DESCRIPTIONS}
 
     # ---- accounts and payments on the master
-    provider = billing.provider_for(cfg.billing_provider, cfg.public_url)
+    # Paying on the web site only when turned on (TISMA_WEB_PAYMENTS): the plans are sold through the app stores.
+    provider = billing.provider_for(cfg.billing_provider, cfg.public_url) if cfg.web_payments else None
 
     @app.post("/v1/auth/register", status_code=201)
     def register(request: Request, body: RegisterBody) -> dict:
@@ -1952,6 +1955,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return apply()
         except IntegrityError:
             return apply()
+
+    # ---- App Store subscriptions (iPhone and Mac; apple.py)
+    class ApplePurchaseBody(BaseModel):
+        signed_transaction: str = Field(min_length=10, max_length=20000)
+
+    def apple_store() -> apple.Store:
+        if services.apple is None:
+            raise HTTPException(404, "App Store payments are not set up")
+        return services.apple
+
+    @app.get("/v1/billing/apple/account")
+    def apple_account(user: UserDep) -> dict:
+        """The appAccountToken the app passes to StoreKit with each purchase (a random UUID of the account)."""
+        apple_store()
+        with db.session() as s:
+            return {"app_account_token": apple.apple_account(s, s.get(User, user.id))}
+
+    @app.post("/v1/billing/apple/purchase")
+    def apple_purchase(user: UserDep, body: ApplePurchaseBody) -> dict:
+        """A purchase made in the app: Apple's signed transaction (Transaction.jwsRepresentation), applied."""
+        store = apple_store()
+
+        def link() -> dict:
+            with db.session() as s:
+                u = s.get(User, user.id)
+                sub = store.link(s, u, body.signed_transaction)
+                return {"plan": sub.plan_name, "revoked": sub.revoked,
+                        **scheduler.account(s, u, cfg.grace_days).as_dict()}
+
+        try:
+            return play_once_more(link)
+        except apple.AppleError as ex:
+            raise HTTPException(422, str(ex)) from None
+
+    @app.post("/v1/billing/apple/notify")
+    async def apple_notify(request: Request) -> dict:
+        """App Store Server Notifications v2: {"signedPayload": JWS signed by Apple}. Answered 200 once applied; an error
+        makes Apple send it again."""
+        store = apple_store()
+        body = await request.body()
+        if len(body) > 256 * 1024:
+            raise HTTPException(413, "Too large")
+        try:
+            payload = json.loads(body).get("signedPayload")
+        except (ValueError, AttributeError):
+            payload = None
+        if not isinstance(payload, str):
+            raise HTTPException(400, "'signedPayload' is needed")
+
+        def apply() -> None:
+            with db.session() as s:
+                if store.notify(s, payload) is None:
+                    log.info("App Store notification without a transaction of an account")
+
+        try:
+            await run_in_threadpool(play_once_more, apply)
+        except apple.AppleError as ex:
+            # Not signed by Apple for this app, or not ours: nothing for Apple to send again.
+            log.warning("App Store notification refused: %s", ex)
+            raise HTTPException(400, str(ex)) from None
+        return {"ok": True}
 
     @app.post("/v1/billing/play/purchase")
     def play_purchase(user: UserDep, body: PlayPurchaseBody) -> dict:

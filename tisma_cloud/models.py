@@ -91,6 +91,8 @@ class User(Base):
     extra_printers: Mapped[int] = mapped_column(Integer, default=0)
     # The name the account shows as author in the library (one for all its publications; never its e-mail).
     library_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # Random id of the account given to the App Store with each purchase (appAccountToken, a UUID), to know whose it is.
+    apple_account: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     plan: Mapped[Plan] = relationship(lazy="joined")
@@ -553,3 +555,22 @@ class LibrarySetting(Base):
     __tablename__ = "library_settings"
     name: Mapped[str] = mapped_column(String(40), primary_key=True)
     value: Mapped[str] = mapped_column(String(200))
+
+
+class AppleSubscription(Base):
+    """An App Store auto-renewable subscription (its original transaction) and the access it gives, as Apple signed it
+    in its last transaction (apple.py)."""
+    __tablename__ = "apple_subscriptions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    original_transaction_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    transaction_id: Mapped[str] = mapped_column(String(64), default="")
+    product_id: Mapped[str] = mapped_column(String(100))
+    plan_name: Mapped[str] = mapped_column(ForeignKey("plans.name"))
+    environment: Mapped[str] = mapped_column(String(20), default="")
+    # Apple's expiresDate while not revoked (refunded), none otherwise.
+    entitled_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The time of the transaction applied last: an older one arriving late does not undo a newer one.
+    signed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

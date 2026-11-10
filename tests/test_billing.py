@@ -18,6 +18,7 @@ INTERNET = ("200.40.10.7", 40000)
 def shop(settings):
     """A master with the test payment provider, seen from internet, with two public plans and a private one."""
     settings.billing_provider = "test"
+    settings.web_payments = True
     settings.public_url = "https://tismaservidores.net"
     app = create_app(settings)
     with TestClient(app, client=INTERNET) as c:

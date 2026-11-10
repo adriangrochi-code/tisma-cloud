@@ -117,6 +117,28 @@ registrado directamente en el central, sin pasar por el servidor externo de la p
 - **Planes con precio:** `PUT /v1/admin/plans/<nombre>` (desde la red interna) o `/v1/site/plans/<nombre>` con
   `price_cents`, `currency` y `public: true` para que aparezca en Mi cuenta.
 
+## Suscripciones del App Store (iPhone y Mac)
+
+Los planes se venden por las tiendas oficiales (ficha `cloud.md` 5b): Google Play, el App Store y, más adelante, la
+Microsoft Store. El plan queda en la cuenta de Tisma Cloud y vale en todos los equipos; el central solo acepta compras
+que firmó la tienda. El pago en la página (`TISMA_BILLING_PROVIDER`) queda **apagado** salvo `TISMA_WEB_PAYMENTS=on`.
+
+Del App Store, el central acepta solo lo que firmó Apple, comprobado con la biblioteca oficial de Apple
+(`app-store-server-library`, MIT) contra **Apple Root CA - G3** (viene en `tisma_cloud/data/`; otro con
+`TISMA_APPLE_ROOT_CERTS`):
+
+- la app pide `GET /v1/billing/apple/account` (un UUID al azar de la cuenta, el `appAccountToken` de StoreKit: Apple
+  nunca sabe quién es), compra y manda la transacción firmada a `POST /v1/billing/apple/purchase`
+  (`{"signed_transaction": Transaction.jwsRepresentation}`);
+- las **notificaciones v2** del App Store (renovaciones, vencimientos, reembolsos) llegan a
+  `POST /v1/billing/apple/notify`, la dirección que se pone en App Store Connect;
+- el acceso es el `expiresDate` de la transacción; un reembolso lo quita; una transacción vieja que llega tarde no
+  deshace una más nueva. La cuenta tiene el acceso más largo de todas sus tiendas.
+
+Ajustes: `TISMA_APPLE_BUNDLE_ID`, `TISMA_APPLE_APP_ID` (el Apple ID de la app, un número; obligatorio en
+Production), `TISMA_APPLE_ENVIRONMENT` (`Production` o `Sandbox`) y `TISMA_APPLE_PRODUCTS`
+(`producto:plan, ...`). Sin bundle o sin productos, el App Store está apagado (404).
+
 ## Suscripciones con Google Play
 
 Google cobra (tarjetas, saldo de Google Play, facturación del operador y los medios de cada país donde vende Play) y el

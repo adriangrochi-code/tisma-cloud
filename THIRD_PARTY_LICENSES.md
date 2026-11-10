@@ -18,6 +18,11 @@ installed with pip.
 | cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | master (RS256 signatures through PyJWT; AES-256-GCM of the personal data in the database) |
 | cffi / pycparser | 2.1.1 / 3.11 | MIT-0 / BSD-3-Clause | dependencies of cryptography |
 | aiosmtpd | 1.4.6 | Apache-2.0 | tests only (an SMTP server to test the e-mails) |
+| app-store-server-library (Apple) | 3.1.2 | MIT | master (App Store purchases and notifications v2: checks what Apple signed; added 2026-11-10) |
+| pyOpenSSL | 26.4.0 | Apache-2.0 | dependency of app-store-server-library (certificate chain) |
+| asn1 / cattrs / attrs | 3.2.0 / 26.2.1 / 26.1.0 | MIT | dependencies of app-store-server-library |
+| requests | 2.34.2 | Apache-2.0 | dependency of app-store-server-library (Apple's OCSP) |
+| Apple Root CA - G3 (`tisma_cloud/data/AppleRootCA-G3.cer`) | — | a public certificate of Apple (apple.com/certificateauthority) | the root that App Store data is checked against |
 | anyio, h11, annotated-types, typing-inspection | — | MIT | dependencies of the above |
 | idna, click | — | BSD-3-Clause | dependencies of the above |
 | typing-extensions | 4.16.0 | PSF-2.0 | dependency of the above |

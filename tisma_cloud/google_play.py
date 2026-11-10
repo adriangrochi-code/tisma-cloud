@@ -257,14 +257,10 @@ class Store:
 
     @staticmethod
     def _update_user(session: Session, user: User) -> None:
-        """The access of the store is that of the subscription that lasts longest; its plan becomes the plan of the user."""
-        now = utcnow()
-        best = session.execute(select(PlaySubscription).where(
-            PlaySubscription.user_id == user.id, PlaySubscription.entitled_until.is_not(None),
-            PlaySubscription.entitled_until > now).order_by(PlaySubscription.entitled_until.desc())).scalars().first()
-        user.store_until = best.entitled_until if best else None
-        if best is not None:
-            user.plan = session.get(Plan, best.plan_name)
+        """The access of the stores (this one and the App Store) is that of the subscription that lasts longest."""
+        from .stores import update_access
+
+        update_access(session, user)
 
 
 def notification_token(body: bytes) -> tuple[str, str | None]:

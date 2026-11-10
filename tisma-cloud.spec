@@ -2,12 +2,12 @@
 # Built by .github/workflows/ci.yml (job executable) for Windows and Linux: pip install ".[master,exe]" && pyinstaller tisma-cloud.spec
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-datas = [("tisma_cloud/static/*.html", "tisma_cloud/static")]
+datas = [("tisma_cloud/static/*.html", "tisma_cloud/static"), ("tisma_cloud/data/*", "tisma_cloud/data")]
 binaries = []
 # Modules imported by name at run time: the protocols and loops of uvicorn, the binary driver of PostgreSQL, the window
 # (tkinter, imported only without arguments).
 hiddenimports = collect_submodules("uvicorn") + collect_submodules("tisma_cloud") + ["tkinter", "tkinter.ttk"]
-for package in ("psycopg", "psycopg_binary"):
+for package in ("psycopg", "psycopg_binary", "appstoreserverlibrary"):
     d, b, h = collect_all(package)
     datas, binaries, hiddenimports = datas + d, binaries + b, hiddenimports + h
 # The window of the control panel (pywebview, installed only on Windows); without it the panel opens in the browser.

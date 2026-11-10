@@ -21,6 +21,8 @@ master = [
     "pyjwt[crypto]>=2.8",
     # The personal data encrypted in the database (AES-256-GCM, crypto.py).
     "cryptography>=42",
+    # App Store purchases and notifications (apple.py): Apple's library that checks what Apple signed (MIT).
+    "app-store-server-library==3.1.2",
 ]
 # A computing node needs only httpx (and the Tisma programs).
 node = []
@@ -38,7 +40,7 @@ tisma-cloud-node = "tisma_cloud.node.__main__:main"
 include = ["tisma_cloud*"]
 
 [tool.setuptools.package-data]
-tisma_cloud = ["static/*.html"]
+tisma_cloud = ["static/*.html", "data/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

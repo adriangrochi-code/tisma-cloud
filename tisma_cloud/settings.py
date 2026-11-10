@@ -33,6 +33,20 @@ class Settings:
     # The relays of the library (libp2p circuit relay v2 on Tisma's nodes): their multiaddrs with /p2p/<id>, separated
     # by commas.
     library_relays: str = field(default_factory=lambda: os.environ.get("TISMA_LIBRARY_RELAYS", ""))
+    # App Store subscriptions (apple.py): the bundle id of the app, its Apple ID (a number; needed in Production),
+    # Production or Sandbox, the products («product id:plan, ...») and other root certificates than Apple's (paths).
+    apple_bundle_id: str = field(default_factory=lambda: os.environ.get("TISMA_APPLE_BUNDLE_ID", ""))
+    apple_app_id: str = field(default_factory=lambda: os.environ.get("TISMA_APPLE_APP_ID", ""))
+    apple_environment: str = field(default_factory=lambda: os.environ.get("TISMA_APPLE_ENVIRONMENT", "Production"))
+    apple_products: str = field(default_factory=lambda: os.environ.get("TISMA_APPLE_PRODUCTS", ""))
+    apple_root_certs: str = field(default_factory=lambda: os.environ.get("TISMA_APPLE_ROOT_CERTS", ""))
+    # Ask Apple's OCSP whether its certificates were revoked (on; off only for tests with a chain of their own).
+    apple_online_checks: bool = field(default_factory=lambda: os.environ.get("TISMA_APPLE_ONLINE_CHECKS", "on")
+                                      .lower() not in ("0", "off", "no", "false"))
+    # Paying the plan on the web site (TISMA_BILLING_PROVIDER): off unless turned on; the plans are sold through the app
+    # stores (cloud.md 5b).
+    web_payments: bool = field(default_factory=lambda: os.environ.get("TISMA_WEB_PAYMENTS", "")
+                               .lower() in ("1", "on", "yes", "true"))
     # The files kept in each account (the parts of its scans, p2p_library.md 7 bis) [GB].
     account_files_gb: int = field(default_factory=lambda: _int("TISMA_ACCOUNT_FILES_GB", 5))
     # Library keys of the past that the apps must refuse (a stolen master), base64, separated by commas; and serving
