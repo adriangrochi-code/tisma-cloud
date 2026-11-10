@@ -248,3 +248,12 @@ def test_a_bridge_removed_while_its_state_is_written(client, f):
     services.flush_presence()
     with services.db.session() as s:
         assert s.get(Bridge, BRIDGE).last_seen > utcnow() + timedelta(seconds=20)
+
+
+def test_a_bridge_of_an_account_disabled_in_the_panel_is_refused_at_once(client, f):
+    """The accounts of the bridges' tokens are kept a minute in memory: disabling one in the panel drops them."""
+    admin = f.user("root@x.com", admin=True)
+    ana = f.user("ana@x.com")
+    register(client, ana)
+    assert client.put("/v1/admin/users/ana@x.com/enabled", headers=admin, json={"enabled": False}).status_code == 200
+    assert client.put(f"/v1/bridges/{BRIDGE}", headers=ana, json={"printers": []}).status_code == 401

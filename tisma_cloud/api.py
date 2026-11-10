@@ -2855,6 +2855,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if user.is_admin and not body.enabled:
                 raise HTTPException(422, "An administrator cannot be disabled here")
             user.enabled = body.enabled
+            if not body.enabled:
+                # Its bridges' tokens are kept a minute in memory (TokenCache): refused from now on.
+                services.tokens.drop_user(user.id)
             s.flush()
             return {"user": user_view(user), "account": scheduler.account(s, user, cfg.grace_days).as_dict()}
 
