@@ -92,3 +92,16 @@ def test_admin_alerts_api_and_sweep(client, f):
     assert client.get("/v1/admin/alerts", headers=f.user("ana@x.com")).status_code == 403
     with client.app.state.services.db.session() as s:
         assert s.execute(select(User).where(User.is_admin.is_(True))).scalar_one().email == "jefe@x.com"
+
+
+def test_the_alert_email_links_to_the_panel_on_the_local_network(client, f, monkeypatch):
+    f.user("jefe@x.com", admin=True)
+    f.node("i5")
+    monkeypatch.setattr(alerts, "local_address", lambda: "192.168.1.10")
+    set_node_seen(client, "i5", utcnow() - timedelta(minutes=10))
+    run(client)
+    port = client.app.state.services.settings.port
+    assert f"Panel: http://192.168.1.10:{port}/admin" in sent(client)[0][2]
+    # Without a network the e-mail still says how to open it.
+    monkeypatch.setattr(alerts, "local_address", lambda: None)
+    assert alerts.panel_link(client.app.state.services.settings) == f"http://<IP del maestro>:{port}/admin"

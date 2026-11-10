@@ -72,6 +72,26 @@ def find_problems(session: Session, settings, storage_dir: Path, now: datetime |
     return problems
 
 
+def local_address() -> str | None:
+    """The address of this machine in its local network: the one its system would use to go out (a UDP socket only
+    chooses the route; nothing is sent)."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 9))
+            address = sock.getsockname()[0]
+    except OSError:
+        return None
+    return None if address.startswith(("127.", "0.")) else address
+
+
+def panel_link(settings) -> str:  # noqa: ANN001
+    """The address of the panel that a person reads in an alert e-mail and opens from the local network."""
+    address = local_address()
+    return f"http://{address}:{settings.port}/admin" if address else f"http://<IP del maestro>:{settings.port}/admin"
+
+
 def recipients(session: Session, settings) -> list[str]:  # noqa: ANN001
     """TISMA_ALERT_EMAILS, or the administrators of the master."""
     listed = [e.strip() for e in settings.alert_emails.split(",") if e.strip()]
@@ -114,7 +134,7 @@ def update(session: Session, settings, storage_dir: Path, mailer: Mailer, now: d
             log.warning("%s", subject)
             for email in emails:
                 try:
-                    mailer.send(email, subject, text + "\n\nPanel: /admin (red local).\n")
+                    mailer.send(email, subject, text + f"\n\nPanel: {panel_link(settings)} (desde la red local).\n")
                 except Exception:  # noqa: BLE001 (an unreachable mail server must not stop the sweep)
                     log.exception("Alert e-mail to %s not sent", email)
     return [a for a in session.execute(select(Alert).where(Alert.resolved_at.is_(None))
