@@ -703,3 +703,17 @@ def test_a_result_summary_with_nan_does_not_break_the_job_view(client, f):
     assert view.status_code == 200
     assert view.json()["summary"]["noise_mm"] is None and view.json()["summary"]["volume_mm3"] == 12.5
     assert view.json()["summary"]["nested"] == {"x": None}
+
+
+def test_a_job_cancelled_by_its_user_ends_cancelled_even_if_the_node_fails_meanwhile(client, f):
+    """The person cancelled; the node failed before it learnt it (its own error, or the job's): the job is cancelled,
+    not failed with an error the person did not cause, and it is not sent to another node."""
+    user = f.user()
+    node = f.node("n", "slice")
+    for body in ({"error": "Error of the computing server: disk", "node_error": True}, {"error": "bad mesh"}):
+        job = f.submit(user)
+        f.claim(node)
+        client.post(f"/v1/jobs/{job['id']}/cancel", headers=user)
+        assert client.post(f"/v1/node/jobs/{job['id']}/fail", headers=node, json=body).status_code == 200
+        view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+        assert view["status"] == "cancelled", (body, view)

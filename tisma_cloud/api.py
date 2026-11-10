@@ -2408,7 +2408,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def node_fail(node: NodeDep, job_id: str, body: FailBody) -> dict:
         with db.session() as s:
             job = node_job(s, node, job_id)
-            if body.cancelled and job.cancel_requested:
+            if job.cancel_requested:
+                # The person cancelled it: whatever the node says (it stopped it, or failed before it learnt it), the
+                # job is cancelled, not failed with an error the person did not cause, nor sent to another node.
                 scheduler.stopped_by_node(s, job)
             elif body.node_error and not job.cancel_requested and job.attempts < cfg.max_attempts:
                 # Another node takes it: its project stays.
