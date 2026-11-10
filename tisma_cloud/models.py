@@ -438,3 +438,78 @@ class ScanUpload(Base):
     job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# ---- the library shared between users (library.py; p2p_library.md of tisma_engine): only what is published about each
+# model and how to recognise its files; the files themselves go from app to app, never through the master.
+class LibraryPeerKey(Base):
+    """The Ed25519 key of an app of an account (its peer identity, rule 5), bound when it first publishes."""
+    __tablename__ = "library_peer_keys"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # 32 bytes in base64.
+    public_key: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class LibraryModel(Base):
+    """One revision of a published model: what the index says of it. The newest revision of a model not removed is the
+    one listed."""
+    __tablename__ = "library_models"
+    __table_args__ = (UniqueConstraint("model_id", "revision"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model_id: Mapped[str] = mapped_column(String(40), index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[str] = mapped_column(Text, default="[]")
+    license: Mapped[str] = mapped_column(String(40))
+    author_name: Mapped[str] = mapped_column(String(60))
+    thumbnail_sha256: Mapped[str] = mapped_column(String(64))
+    thumbnail_size: Mapped[int] = mapped_column(Integer)
+    size: Mapped[int] = mapped_column(BigInteger)
+    # JSON: the files ([{path, role, size, sha256, ...}]), the summary of the analyses, the swarm of the peer network.
+    files: Mapped[str] = mapped_column(Text)
+    analysis: Mapped[str] = mapped_column(Text, default="null")
+    swarm: Mapped[str] = mapped_column(Text, default="null")
+    peer_key: Mapped[str] = mapped_column(String(64))
+    manifest_signature: Mapped[str] = mapped_column(String(100))
+    published_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    # Removed by its author or by the review (with the reason): out of the index.
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    removed_reason: Mapped[str] = mapped_column(String(300), default="")
+
+
+class LibraryBlock(Base):
+    """What the apps refuse (rule 4): a file by its SHA-256, an account, a peer key, or an address for a short time."""
+    __tablename__ = "library_blocks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # file, account, peer or address.
+    kind: Mapped[str] = mapped_column(String(10), index=True)
+    value: Mapped[str] = mapped_column(String(100))
+    reason: Mapped[str] = mapped_column(String(300), default="")
+    # An address is blocked only until then (rule 5) and its row is deleted when it ends.
+    until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class LibraryReport(Base):
+    """«Denunciar»: a file or a model someone reported, until a person reviews it in the panel (rule 7)."""
+    __tablename__ = "library_reports"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    model_id: Mapped[str] = mapped_column(String(40), index=True)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    # Reviewed: the model was removed, or the report dismissed.
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    outcome: Mapped[str] = mapped_column(String(20), default="")
+
+
+class LibraryCounter(Base):
+    """The sequence numbers of the signed index and blocklist: they only grow (an app refuses an older one)."""
+    __tablename__ = "library_counters"
+    name: Mapped[str] = mapped_column(String(20), primary_key=True)
+    value: Mapped[int] = mapped_column(Integer, default=0)

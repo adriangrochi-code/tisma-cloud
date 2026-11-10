@@ -557,6 +557,32 @@ en `storage/updates/` y las devuelve byte por byte: la firma es sobre los bytes 
 nunca lo vuelve a escribir. No comprueba la firma (eso lo hacen los programas, con la clave del proyecto); solo cambia
 la lista guardada por una descarga entera (un JSON y una firma de 64 bytes). Hasta la primera descarga responde 503.
 
+## Biblioteca entre usuarios (red de pares)
+
+Los modelos que la gente publica viajan de una app a otra; el central **no guarda ni sirve los archivos** (ficha
+`p2p_library.md` del motor). Guarda solo:
+
+- **el índice**: por modelo, nombre, autor (un id de cuenta que no es el correo), licencia, miniatura, tamaño, el
+  resumen del análisis y la huella SHA-256 de cada archivo, firmados por la clave de la app que lo publicó;
+- **la lista de bloqueo**: huellas retiradas, cuentas suspendidas, claves de apps y, por 24 h como mucho, direcciones IP
+  (al vencer se borran de la base).
+
+Las dos se bajan sin sesión con su firma Ed25519 aparte (64 bytes): `GET /v1/library/index.json` y `.sig`,
+`GET /v1/library/blocklist.json` y `.sig`. Las firma la **clave de la biblioteca**, `storage\library.key`, que el central
+hace la primera vez. La clave del proyecto vive solo en el USB del dueño, así que el dueño firma una vez la clave de la
+biblioteca con ella y la instala:
+
+```
+tisma-cloud admin library-key                 # la clave pública y qué firmar
+tisma-cloud admin library-cert <firma en base64>   # con TISMA_LIBRARY_PROJECT_KEY puesto, la comprueba y la guarda
+```
+
+`GET /v1/library/key` da la clave y su certificado (`null` hasta instalarlo). Publicar (`POST /v1/library/models`) manda
+solo los datos y las huellas, con la miniatura WebP (64 KB como mucho). «Denunciar» (`POST /v1/library/reports`) llega
+al panel; ahí una persona retira el modelo (sus huellas pasan a la lista) o descarta la denuncia, y bloquea cuentas,
+claves o direcciones (`/v1/admin/library/...`, solo red local). `library.key` va **aparte**, como `data.key`: sin ella
+hay que firmar una clave nueva.
+
 ## Avisos de problemas
 
 El central revisa cada minuto y avisa por correo a los administradores (las cuentas con `--admin`, o las direcciones

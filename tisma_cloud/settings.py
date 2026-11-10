@@ -26,6 +26,10 @@ class Settings:
     max_scan_gb: int = field(default_factory=lambda: _int("TISMA_MAX_SCAN_GB", 8))
     max_scan_unzipped_gb: int = field(default_factory=lambda: _int("TISMA_MAX_SCAN_UNZIPPED_GB", 12))
     scan_chunk_mb: int = field(default_factory=lambda: _int("TISMA_SCAN_CHUNK_MB", 16))
+    # The library shared between users (library.py): the public Ed25519 key of the project (32 bytes in base64), which
+    # checks the certificate of the library's own key; the hours an address stays blocked.
+    library_project_key: str = field(default_factory=lambda: os.environ.get("TISMA_LIBRARY_PROJECT_KEY", ""))
+    library_address_block_h: int = field(default_factory=lambda: _int("TISMA_LIBRARY_ADDRESS_BLOCK_H", 24))
     # Largest body of any other request (JSON of the API, notifications of the payment providers) [KB]: FastAPI reads a
     # body whole before it checks it, so without a limit anyone could fill the memory of the master (guard.py).
     max_body_kb: int = field(default_factory=lambda: _int("TISMA_MAX_BODY_KB", 1024))

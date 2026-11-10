@@ -94,6 +94,8 @@ Sin esto, un disco roto deja los datos sin poder leerse:
 
 - [ ] `C:\TismaCloud\storage\data.key` (la llave de los datos personales de la base; README, «Seguridad de las
       cuentas»). Va **aparte** de las copias de la base de datos.
+- [ ] `C:\TismaCloud\storage\library.key` (la clave que firma la biblioteca entre usuarios; README, «Biblioteca entre
+      usuarios»).
 - [ ] `C:\TismaCloud\.env` (la configuración, con la contraseña del correo).
 - [ ] Los archivos del túnel (`cloudflare-tunnel-windows.md`, «Respaldo de lo secreto»).
 - [ ] Una copia de la última copia de la base (`TISMA_BACKUP_DIR`) en otro lugar, cada tanto.

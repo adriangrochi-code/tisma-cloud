@@ -140,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("node-reject", help="refuse a machine that asks to be a node")
     p.add_argument("id")
     sub.add_parser("queue", help="jobs waiting and running by class")
+    sub.add_parser("library-key", help="the public key of the library and whether its certificate is installed")
+    p = sub.add_parser("library-cert", help="install the owner's signature of the library key (project key, base64)")
+    p.add_argument("certificate")
     p = sub.add_parser("reports", help="the catalog of the problems reported, for the programmers (and their AI)")
     p.add_argument("--status", default="new,confirmed", help="comma separated: " + ", ".join(reports.STATUSES))
     p.add_argument("--app", choices=reports.APPS)
@@ -148,6 +151,25 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     settings = Settings()
+    if args.command in ("library-key", "library-cert"):
+        # The library's signing key (library.py): its public key, for the owner to sign once with the project key on
+        # the USB, and that certificate installed.
+        from pathlib import Path
+
+        from . import library
+
+        key = library.LibraryKey(Path(settings.storage_dir))
+        if args.command == "library-cert":
+            try:
+                key.install_certificate(args.certificate, settings.library_project_key)
+            except library.LibraryError as ex:
+                print(ex, file=sys.stderr)
+                return 1
+        cert = key.certificate()
+        print(f"Clave de la biblioteca: {library.b64(key.public)}")
+        print("Para firmar con la clave del proyecto: los bytes de «tisma-library-key/1» + salto de línea + esos 32 bytes")
+        print(f"Certificado: {'instalado' if cert else 'falta (tisma-cloud admin library-cert <firma en base64>)'}")
+        return 0
     crypto.configure(settings)
     db = Database(settings.database_url)
     db.create_all()

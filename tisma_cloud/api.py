@@ -13,6 +13,7 @@ import logging
 import re
 import shutil
 import threading
+import uuid
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
@@ -22,22 +23,22 @@ from importlib import resources
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from . import (__version__, alerts, backup, billing, capacity, codes, crypto, google_play, pairing, remote, reports, scans,
-               scheduler, triage)
+from . import (__version__, alerts, backup, billing, capacity, codes, crypto, google_play, library, pairing, remote, reports,
+               scans, scheduler, triage)
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
 from .jobs import (ESTIMATE_MAX_TRIANGLES, JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles,
                    estimate_seconds, plan_job)
-from .models import (Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job, Node, Payment, Plan,
-                     PlaySubscription, RemoteCommand, ScanUpload, Usage, User, month_of, utcnow)
+from .models import (Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job, LibraryBlock, LibraryModel,
+                     LibraryReport, Node, Payment, Plan, PlaySubscription, RemoteCommand, ScanUpload, Usage, User, month_of, utcnow)
 from .guard import Guard
 from .presence import Presence
 from .publicip import CHECK_S as PUBLIC_ADDRESS_CHECK_S, PublicAddress
@@ -65,6 +66,9 @@ LOGIN_FAILURES_PER_HOUR = 20
 CODES_PER_DAY = 10
 # Free space a scan leaves on the master's disk once it is there (results, the database, the copies) [bytes].
 SCAN_ROOM_LEFT = 2 << 30
+# The library (library.py): models published and reports sent by one account in a day.
+LIBRARY_PUBLISH_PER_DAY = 20
+LIBRARY_REPORTS_PER_DAY = 20
 
 
 def bridge_key(bridge_id: str) -> str:
@@ -134,6 +138,8 @@ class Services:
         self.refused = ThreatLog()
         self.twins = Twins()
         self.updates = UpdateMirror(settings.updates_url, Path(settings.storage_dir) / "updates")
+        # The library shared between users (library.py): its own signing key and the signed index and blocklist.
+        self.library = library.Signed(library.LibraryKey(Path(settings.storage_dir)))
         # The last daily backup that failed (backup.py), for the alerts; None when the last one was good.
         self.backup_failed: str | None = None
         self._backup_lock = threading.Lock()
@@ -1007,6 +1013,155 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if pair is None:
             raise HTTPException(503, "The list of versions is not available yet", headers={"Retry-After": "60"})
         return Response(pair[index], media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+    # ---- the library shared between users (library.py; p2p_library.md): an index and a blocklist, signed; the files
+    # themselves never come here.
+    def library_file(name: str, signature: bool, request: Request) -> Response:
+        with db.session() as s:
+            data, sig, etag = services.library.get(s, name)
+        if signature:
+            return Response(sig, media_type="application/octet-stream", headers={"Cache-Control": "no-cache"})
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return Response(data, media_type="application/json", headers={"Cache-Control": "no-cache", "ETag": etag})
+
+    @app.get("/v1/library/index.json")
+    def library_index(request: Request) -> Response:
+        return library_file("index", False, request)
+
+    @app.get("/v1/library/index.json.sig")
+    def library_index_signature(request: Request) -> Response:
+        return library_file("index", True, request)
+
+    @app.get("/v1/library/blocklist.json")
+    def library_blocklist(request: Request) -> Response:
+        return library_file("blocklist", False, request)
+
+    @app.get("/v1/library/blocklist.json.sig")
+    def library_blocklist_signature(request: Request) -> Response:
+        return library_file("blocklist", True, request)
+
+    @app.get("/v1/library/key")
+    def library_key() -> dict:
+        cert = services.library.key.certificate()
+        return {"public_key": library.b64(services.library.key.public),
+                "certificate": library.b64(cert) if cert else None}
+
+    def thumbnail_path(sha256: str) -> Path:
+        return Path(cfg.storage_dir) / "library" / "thumbs" / f"{sha256}.webp"
+
+    @app.get("/v1/library/thumbs/{name}")
+    def library_thumbnail(name: str) -> Response:
+        sha256 = name.removesuffix(".webp")
+        if not re.fullmatch(r"[0-9a-f]{64}", sha256) or not thumbnail_path(sha256).is_file():
+            raise HTTPException(404, "No such image")
+        return Response(thumbnail_path(sha256).read_bytes(), media_type="image/webp",
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    @app.post("/v1/library/peer-key")
+    def library_peer_key(user: UserDep, body: dict = Body(...)) -> dict:
+        with db.session() as s:
+            try:
+                library.bind_peer_key(s, s.get(User, user.id), str(body.get("public_key", "")))
+            except library.LibraryError as ex:
+                raise HTTPException(422 if "base64" in str(ex) or "bytes" in str(ex) else 409, str(ex)) from None
+        return {"ok": True, "account": library.account_id(user.id)}
+
+    def publish(user: User, body: dict, model_id: str | None) -> dict:
+        if not services.daily.allow(f"library-publish:{user.id}", LIBRARY_PUBLISH_PER_DAY):
+            raise HTTPException(429, "Too many publications today", headers={"Retry-After": "3600"})
+        try:
+            pub = library.parse_publication(body)
+            thumb = library.unb64(str(body.get("thumbnail_webp", "")))
+        except library.LibraryError as ex:
+            raise HTTPException(422, str(ex)) from None
+        if not library.thumbnail_ok(thumb):
+            raise HTTPException(422, f"'thumbnail_webp' is a WebP image of at most {library.MAX_THUMBNAIL_BYTES >> 10} KB")
+        with db.session() as s:
+            u = s.get(User, user.id)
+            if not library.owns_key(s, u, pub.peer_key):
+                raise HTTPException(409, "'peer_key' is not a key of this account (POST /v1/library/peer-key)")
+            if library.blocked(s, "account", library.account_id(u.id)) or library.blocked(s, "peer", pub.peer_key):
+                raise HTTPException(403, "This account cannot publish in the library")
+            refused = [f["path"] for f in pub.files if library.blocked(s, "file", f["sha256"])]
+            if refused:
+                raise HTTPException(422, f"Removed from the library: {', '.join(refused)}")
+            revision = 1
+            if model_id is not None:
+                last = s.execute(select(LibraryModel).where(LibraryModel.model_id == model_id)
+                                 .order_by(LibraryModel.revision.desc())).scalars().first()
+                if last is None or last.user_id != u.id:
+                    raise HTTPException(404, "No such model")
+                if last.removed_at is not None and last.removed_reason != "":
+                    raise HTTPException(403, "The model was removed from the library")
+                revision = last.revision + 1
+            else:
+                model_id = "lm_" + uuid.uuid4().hex
+            digest = hashlib.sha256(thumb).hexdigest()
+            path = thumbnail_path(digest)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_bytes(thumb)
+            row = LibraryModel(model_id=model_id, revision=revision, user_id=u.id, name=pub.name,
+                               description=pub.description, tags=json.dumps(pub.tags, ensure_ascii=False),
+                               license=pub.license, author_name=pub.author_name, thumbnail_sha256=digest,
+                               thumbnail_size=len(thumb), size=sum(f["size"] for f in pub.files),
+                               files=json.dumps(pub.files), analysis=json.dumps(pub.analysis),
+                               swarm=json.dumps(pub.swarm), peer_key=pub.peer_key,
+                               manifest_signature=pub.manifest_signature)
+            s.add(row)
+            s.flush()
+            library.bump(s, "index")
+            return library.model_entry(row)
+
+    @app.post("/v1/library/models", status_code=201)
+    def library_publish(user: UserDep, body: dict = Body(...)) -> dict:
+        return publish(user, body, None)
+
+    @app.post("/v1/library/models/{model_id}/revisions", status_code=201)
+    def library_revision(user: UserDep, model_id: str, body: dict = Body(...)) -> dict:
+        return publish(user, body, model_id)
+
+    @app.get("/v1/library/mine")
+    def library_mine(user: UserDep) -> dict:
+        with db.session() as s:
+            rows = s.execute(select(LibraryModel).where(LibraryModel.user_id == user.id)
+                             .order_by(LibraryModel.published_at.desc())).scalars().all()
+            return {"models": [{**library.model_entry(m), "removed": m.removed_at is not None,
+                                "removed_reason": m.removed_reason} for m in rows]}
+
+    @app.delete("/v1/library/models/{model_id}")
+    def library_unpublish(user: UserDep, model_id: str) -> dict:
+        with db.session() as s:
+            rows = s.execute(select(LibraryModel).where(LibraryModel.model_id == model_id,
+                                                        LibraryModel.user_id == user.id)).scalars().all()
+            if not rows:
+                raise HTTPException(404, "No such model")
+            for m in rows:
+                if m.removed_at is None:
+                    m.removed_at = utcnow()
+            library.bump(s, "index")
+        return {"ok": True}
+
+    @app.post("/v1/library/reports", status_code=201)
+    def library_report(user: UserDep, body: dict = Body(...)) -> dict:
+        model_id, sha256 = str(body.get("model", "")).strip(), str(body.get("sha256", "")).strip().lower()
+        reason = str(body.get("reason", "")).strip()
+        if not reason or len(reason) > 2000:
+            raise HTTPException(422, "'reason' is needed (at most 2000 characters)")
+        if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise HTTPException(422, "'sha256' is 64 hexadecimal digits")
+        if not services.daily.allow(f"library-report:{user.id}", LIBRARY_REPORTS_PER_DAY):
+            raise HTTPException(429, "Too many reports today", headers={"Retry-After": "3600"})
+        with db.session() as s:
+            query = select(LibraryModel)
+            query = query.where(LibraryModel.model_id == model_id) if model_id else query.where(
+                LibraryModel.files.contains(sha256 or "-"))
+            found = s.execute(query.order_by(LibraryModel.revision.desc())).scalars().first()
+            if found is None or (sha256 and sha256 not in found.files):
+                raise HTTPException(404, "No such model or file in the library")
+            s.add(LibraryReport(user_id=user.id, model_id=found.model_id, sha256=sha256, reason=reason))
+        return {"ok": True}
 
     @app.get("/v1/updates")
     def updates_list() -> Response:
@@ -2188,6 +2343,91 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     # ---- administrator
+    # ---- the review of the library (rule 7): the reports, removing a model, and the blocks
+    @app.get("/v1/admin/library/reports")
+    def admin_library_reports(_admin: AdminDep, done: bool = False) -> dict:
+        with db.session() as s:
+            query = select(LibraryReport).order_by(LibraryReport.created_at.desc()).limit(500)
+            query = query.where(LibraryReport.handled_at.is_not(None) if done else LibraryReport.handled_at.is_(None))
+            groups: dict[str, dict] = {}
+            for r in s.execute(query).scalars():
+                g = groups.get(r.model_id)
+                if g is None:
+                    m = s.execute(select(LibraryModel).where(LibraryModel.model_id == r.model_id)
+                                  .order_by(LibraryModel.revision.desc())).scalars().first()
+                    g = groups[r.model_id] = {
+                        "model": library.model_entry(m) if m else {"id": r.model_id},
+                        "removed": bool(m and m.removed_at), "reports": []}
+                g["reports"].append({"id": r.id, "sha256": r.sha256, "reason": r.reason,
+                                     "created_at": r.created_at.isoformat(timespec="seconds"), "outcome": r.outcome})
+            return {"models": sorted(groups.values(), key=lambda g: -len(g["reports"]))}
+
+    @app.post("/v1/admin/library/models/{model_id}/remove")
+    def admin_library_remove(_admin: AdminDep, model_id: str, body: dict = Body(default={})) -> dict:
+        """Takes the model out of the index and blocks its files: the apps stop sharing them and delete their copy."""
+        reason = str(body.get("reason", "")).strip()[:300] or "retirado por la revisión"
+        with db.session() as s:
+            rows = s.execute(select(LibraryModel).where(LibraryModel.model_id == model_id)).scalars().all()
+            if not rows:
+                raise HTTPException(404, "No such model")
+            hashes = {f["sha256"] for m in rows for f in json.loads(m.files)}
+            for m in rows:
+                m.removed_at = m.removed_at or utcnow()
+                m.removed_reason = reason
+            for h in sorted(hashes):
+                if not library.blocked(s, "file", h):
+                    library.add_block(s, "file", h, reason)
+            library.bump(s, "index")
+            for r in s.execute(select(LibraryReport).where(LibraryReport.model_id == model_id,
+                                                           LibraryReport.handled_at.is_(None))).scalars():
+                r.handled_at, r.outcome = utcnow(), "removed"
+            return {"ok": True, "blocked_files": len(hashes)}
+
+    @app.post("/v1/admin/library/reports/{report_id}/dismiss")
+    def admin_library_dismiss(_admin: AdminDep, report_id: int) -> dict:
+        with db.session() as s:
+            r = s.get(LibraryReport, report_id)
+            if r is None:
+                raise HTTPException(404, "No such report")
+            r.handled_at, r.outcome = utcnow(), "dismissed"
+        return {"ok": True}
+
+    @app.get("/v1/admin/library/blocks")
+    def admin_library_blocks(_admin: AdminDep) -> dict:
+        with db.session() as s:
+            library.purge_addresses(s)
+            return {"blocks": [{"id": b.id, "kind": b.kind, "value": b.value, "reason": b.reason,
+                                "until": b.until.isoformat(timespec="seconds") if b.until else None,
+                                "created_at": b.created_at.isoformat(timespec="seconds")}
+                               for b in s.execute(select(LibraryBlock).order_by(LibraryBlock.id.desc())).scalars()]}
+
+    @app.post("/v1/admin/library/blocks", status_code=201)
+    def admin_library_block(_admin: AdminDep, body: dict = Body(...)) -> dict:
+        hours = body.get("hours")
+        if hours is not None and (not isinstance(hours, (int, float)) or not 0 < hours <= 24 * 30):
+            raise HTTPException(422, "'hours' from more than 0 to 720")
+        kind = str(body.get("kind", ""))
+        if kind == "address" and hours is None:
+            hours = cfg.library_address_block_h
+        with db.session() as s:
+            try:
+                b = library.add_block(s, kind, str(body.get("value", "")), str(body.get("reason", "")),
+                                      float(hours) if hours else None)
+            except library.LibraryError as ex:
+                raise HTTPException(422, str(ex)) from None
+            s.flush()
+            return {"id": b.id, "kind": b.kind, "value": b.value,
+                    "until": b.until.isoformat(timespec="seconds") if b.until else None}
+
+    @app.delete("/v1/admin/library/blocks/{block_id}")
+    def admin_library_unblock(_admin: AdminDep, block_id: int) -> dict:
+        with db.session() as s:
+            try:
+                library.remove_block(s, block_id)
+            except library.LibraryError as ex:
+                raise HTTPException(404, str(ex)) from None
+        return {"ok": True}
+
     @app.get("/v1/admin/nodes")
     def admin_nodes(_admin: AdminDep) -> dict:
         with db.session() as s:
