@@ -590,6 +590,11 @@ la denuncia, y bloquea cuentas, claves o direcciones (`/v1/admin/library/...`, s
 **aparte**, como `data.key`: si se pierde o la roban, se certifica una clave nueva y la vieja va a
 `TISMA_LIBRARY_REVOKED_KEYS`.
 
+**Piezas escaneadas en la cuenta** (regla 7 bis): «Imprimir» en la app del escáner guarda la pieza de un escaneo
+terminado en la cuenta, privada (`POST /v1/files` con el trabajo; se toma del resultado, que dura `TISMA_RETENTION_H`).
+Tisma la lista en «Mi biblioteca» (`GET /v1/files`) y la baja para laminar; «Publicar» la manda a la biblioteca con
+`from_file`. Cada cuenta guarda hasta `TISMA_ACCOUNT_FILES_GB` (5 GB), en `storage\files`; se borran con la cuenta.
+
 ## Avisos de problemas
 
 El central revisa cada minuto y avisa por correo a los administradores (las cuentas con `--admin`, o las direcciones

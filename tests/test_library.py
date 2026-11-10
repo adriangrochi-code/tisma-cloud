@@ -298,3 +298,110 @@ def test_the_owner_certifies_the_key_with_the_usb_key_and_openssl(tmp_path, clie
     cert = tool.certify(str(pem), library.b64(key.public), public_hex=project.hex())
     key.install_certificate(cert, project.hex())
     assert key.certificate() is not None
+
+
+def scan_done(f, user_headers, name: str = "engranaje.zip") -> str:
+    """A finished scan job of the account, with its result zip as a node leaves it."""
+    import io
+    import zipfile
+
+    from tisma_cloud.models import Job
+
+    me = f.me(user_headers)
+    with f.db.session() as s:
+        from tisma_cloud.models import User
+        from sqlalchemy import select
+
+        uid = s.execute(select(User.id).where(User.email_index == __import__("tisma_cloud.crypto", fromlist=["index"])
+                                              .index(me["email"]))).scalar_one()
+        job = Job(user_id=uid, kind="scan", job_class="scan", params="{}", input_name=name, status="done",
+                  created_at=utcnow(), order_at=utcnow(), finished_at=utcnow())
+        s.add(job)
+        s.flush()
+        job_id = job.id
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("pieza.stl", b"solid pieza\nendsolid pieza\n")
+        z.writestr("pieza_informe.json", json.dumps({"dimensions_mm_xyz": [40.9, 31.4, 20.1]}))
+        z.writestr("pieza.ply", b"ply\n")
+        z.writestr("log.txt", "ok")
+    path = f.client.app.state.services.storage.result_path(job_id, ".zip")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(buf.getvalue())
+    return job_id
+
+
+def test_a_scanned_part_is_kept_in_the_account_and_published_from_it(client, f):
+    user = f.user("sofia@x.com")
+    job_id = scan_done(f, user)
+    # «Imprimir»: kept, private, with the part and its measures only (no cloud, no log).
+    r = client.post("/v1/files", headers=user, json={"scan_job": job_id})
+    assert r.status_code == 201, r.text
+    item = r.json()
+    assert item["name"] == "engranaje" and item["kind"] == "scan" and item["published_model"] is None
+    assert [x["path"] for x in item["files"]] == ["pieza.stl", "pieza_informe.json"]
+    stl = next(x for x in item["files"] if x["path"] == "pieza.stl")
+    assert stl["sha256"] == hashlib.sha256(b"solid pieza\nendsolid pieza\n").hexdigest()
+    # Again: the same item (the app may retry).
+    again = client.post("/v1/files", headers=user, json={"scan_job": job_id})
+    assert again.status_code == 200 and again.json()["id"] == item["id"]
+    assert [x["id"] for x in client.get("/v1/files", headers=user).json()["files"]] == [item["id"]]
+    got = client.get(f"/v1/files/{item['id']}/pieza.stl", headers=user)
+    assert got.status_code == 200 and got.content.startswith(b"solid pieza") and "engranaje.stl" in got.headers["content-disposition"]
+    # Private: another account sees nothing.
+    other = f.user("otro@x.com")
+    assert client.get(f"/v1/files/{item['id']}/pieza.stl", headers=other).status_code == 404
+    assert client.post("/v1/files", headers=other, json={"scan_job": job_id}).status_code == 404
+    assert client.get("/v1/files", headers=other).json()["files"] == []
+    assert client.patch(f"/v1/files/{item['id']}", headers=user, json={"name": "Engranaje 40"}).json()["name"] == "Engranaje 40"
+    # «Publicar»: the same files, signed by the app.
+    app = App(client, user)
+    app.bind()
+    files = [{"path": "pieza.stl", "role": "project", "size": stl["size"], "sha256": stl["sha256"]}]
+    wrong = [{"path": "pieza.stl", "role": "project", "size": stl["size"], "sha256": "d" * 64}]
+    assert client.post("/v1/library/models", headers=user, json={**app.body(wrong), "from_file": item["id"]}).status_code == 422
+    r = client.post("/v1/library/models", headers=user, json={**app.body(files), "from_file": item["id"]})
+    assert r.status_code == 201, r.text
+    assert client.get("/v1/files", headers=user).json()["files"][0]["published_model"] == r.json()["id"]
+    assert [m["id"] for m in signed(client, "index")["models"]] == [r.json()["id"]]
+    assert client.delete(f"/v1/files/{item['id']}", headers=user).status_code == 200
+    assert client.get("/v1/files", headers=user).json()["files"] == []
+
+
+def test_what_cannot_be_kept(client, f, settings):
+    from tisma_cloud.models import Job
+
+    user = f.user("sofia@x.com")
+    job_id = scan_done(f, user)
+    with f.db.session() as s:
+        s.get(Job, job_id).status = "running"
+    assert client.post("/v1/files", headers=user, json={"scan_job": job_id}).status_code == 409
+    with f.db.session() as s:
+        s.get(Job, job_id).status = "done"
+    client.app.state.services.storage.remove_job(job_id)
+    assert client.post("/v1/files", headers=user, json={"scan_job": job_id}).status_code == 410
+    assert client.post("/v1/files", headers=user, json={"scan_job": "nada"}).status_code == 404
+    # A slicing job is not a scan.
+    sliced = f.submit(user)
+    assert client.post("/v1/files", headers=user, json={"scan_job": sliced["id"]}).status_code == 404
+
+
+def test_the_files_quota_and_deleting_the_account(client, f):
+    user = f.user("sofia@x.com")
+    services = client.app.state.services
+    services.settings.account_files_gb = 0
+    assert client.post("/v1/files", headers=user, json={"scan_job": scan_done(f, user)}).status_code == 413
+    services.settings.account_files_gb = 5
+    item = client.post("/v1/files", headers=user, json={"scan_job": scan_done(f, user)}).json()
+    app = App(client, user)
+    app.bind()
+    app.publish()
+    folder = services.settings.storage_dir / "files" / item["id"]
+    assert folder.is_dir() and len(signed(client, "index")["models"]) == 1
+    with f.db.session() as s:
+        from sqlalchemy import select
+
+        from tisma_cloud.models import AccountFile
+        uid = s.execute(select(AccountFile.user_id)).scalar_one()
+    services.delete_account(uid)
+    assert not folder.exists() and signed(client, "index")["models"] == []

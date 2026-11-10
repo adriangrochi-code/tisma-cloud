@@ -30,6 +30,8 @@ class Settings:
     # checks the certificate of the library's own key; the hours an address stays blocked.
     library_project_key: str = field(default_factory=lambda: os.environ.get("TISMA_LIBRARY_PROJECT_KEY", ""))
     library_address_block_h: int = field(default_factory=lambda: _int("TISMA_LIBRARY_ADDRESS_BLOCK_H", 24))
+    # The files kept in each account (the parts of its scans, p2p_library.md 7 bis) [GB].
+    account_files_gb: int = field(default_factory=lambda: _int("TISMA_ACCOUNT_FILES_GB", 5))
     # Library keys of the past that the apps must refuse (a stolen master), base64, separated by commas; and serving
     # the lists before the owner certified the key (only to try the library: the apps do not use them).
     library_revoked_keys: str = field(default_factory=lambda: os.environ.get("TISMA_LIBRARY_REVOKED_KEYS", ""))

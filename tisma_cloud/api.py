@@ -14,6 +14,7 @@ import re
 import shutil
 import threading
 import uuid
+import zipfile
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
@@ -37,8 +38,9 @@ from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
 from .jobs import (ESTIMATE_MAX_TRIANGLES, JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles,
                    estimate_seconds, plan_job)
-from .models import (Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job, LibraryBlock, LibraryModel,
-                     LibraryReport, Node, Payment, Plan, PlaySubscription, RemoteCommand, ScanUpload, Usage, User, month_of, utcnow)
+from .models import (AccountFile, Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job, LibraryBlock,
+                     LibraryModel, LibraryPeerKey, LibraryReport, Node, Payment, Plan, PlaySubscription, RemoteCommand,
+                     ScanUpload, Usage, User, month_of, utcnow)
 from .guard import Guard
 from .presence import Presence
 from .publicip import CHECK_S as PUBLIC_ADDRESS_CHECK_S, PublicAddress
@@ -292,8 +294,12 @@ class Services:
             bridges = s.execute(select(Bridge.id).where(Bridge.user_id == user_id)).scalars().all()
             commands = s.execute(select(RemoteCommand.id).where(RemoteCommand.bridge_id.in_(bridges))).scalars().all() \
                 if bridges else []
-            for model in (ApiToken, EmailCode, Usage, PlaySubscription, Job, Bridge, BugReport):
+            files = s.execute(select(AccountFile.id).where(AccountFile.user_id == user_id)).scalars().all()
+            for model in (ApiToken, EmailCode, Usage, PlaySubscription, Job, Bridge, BugReport, AccountFile,
+                          LibraryModel, LibraryPeerKey):
                 s.execute(delete(model).where(model.user_id == user_id))
+            # Its published models leave the index.
+            library.bump(s, "index")
             if commands:
                 s.execute(delete(RemoteCommand).where(RemoteCommand.id.in_(commands)))
             user.email = f"deleted-{user.id}@deleted.invalid"
@@ -302,6 +308,8 @@ class Services:
             user.extra_printers = 0
         for job_id in jobs:
             self.storage.remove_job(job_id)
+        for file_id in files:
+            shutil.rmtree(Path(self.settings.storage_dir) / "files" / file_id, ignore_errors=True)
         for command_id in commands:
             self.remote_files.remove_command(command_id)
         for bridge_id in bridges:
@@ -1084,6 +1092,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, f"'thumbnail_webp' is a WebP image of at most {library.MAX_THUMBNAIL_BYTES >> 10} KB")
         with db.session() as s:
             u = s.get(User, user.id)
+            source: AccountFile | None = None
+            if body.get("from_file"):
+                # Published from a file kept in the account (a scanned part): the files are those, the same bytes.
+                source = s.get(AccountFile, str(body["from_file"]))
+                if source is None or source.user_id != u.id:
+                    raise HTTPException(404, "No such file in the account")
+                kept = {(x["path"], x["size"], x["sha256"]) for x in json.loads(source.files)}
+                if any((f["path"], f["size"], f["sha256"]) not in kept for f in pub.files):
+                    raise HTTPException(422, "The files are not those of the account's file")
             if not library.owns_key(s, u, pub.peer_key):
                 raise HTTPException(409, "'peer_key' is not a key of this account (POST /v1/library/peer-key)")
             if library.blocked(s, "account", library.account_id(u.id)) or library.blocked(s, "peer", pub.peer_key):
@@ -1116,12 +1133,126 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                manifest_signature=pub.manifest_signature)
             s.add(row)
             s.flush()
+            if source is not None:
+                source.published_model = model_id
             library.bump(s, "index")
             return library.model_entry(row)
 
     @app.post("/v1/library/models", status_code=201)
     def library_publish(user: UserDep, body: dict = Body(...)) -> dict:
         return publish(user, body, None)
+
+    # ---- the files kept in the account (p2p_library.md 7 bis): the part of a scan, for «Mi biblioteca» of Tisma and
+    # to publish from it. Private: only its account sees them.
+    SCAN_KEPT = ("pieza.stl", "pieza_informe.json")
+
+    def files_dir(file_id: str) -> Path:
+        return Path(cfg.storage_dir) / "files" / file_id
+
+    def file_view(f: AccountFile) -> dict:
+        return {"id": f.id, "name": f.name, "kind": f.kind, "source_job": f.source_job,
+                "created_at": f.created_at.isoformat(timespec="seconds") + "Z", "size": f.size,
+                "files": json.loads(f.files), "published_model": f.published_model}
+
+    def own_file(s, user: User, file_id: str) -> AccountFile:  # noqa: ANN001
+        f = s.get(AccountFile, file_id)
+        if f is None or f.user_id != user.id:
+            raise HTTPException(404, "No such file")
+        return f
+
+    @app.post("/v1/files", status_code=201)
+    def keep_file(user: UserDep, response: Response, body: dict = Body(...)) -> dict:
+        job_id = str(body.get("scan_job", "")).strip()
+        name = str(body.get("name", "")).strip()[:120]
+        with db.session() as s:
+            job = s.get(Job, job_id) if job_id else None
+            if job is None or job.user_id != user.id or job.kind != "scan":
+                raise HTTPException(404, "No such scan job")
+            kept = s.execute(select(AccountFile).where(AccountFile.user_id == user.id,
+                                                       AccountFile.source_job == job.id)).scalars().first()
+            if kept is not None:
+                response.status_code = 200
+                return file_view(kept)
+            if job.status != "done":
+                raise HTTPException(409, "The scan is not done")
+            result = services.storage.find_result(job.id)
+            if result is None or result.suffix != ".zip":
+                raise HTTPException(410, f"The result of the scan was removed ({cfg.retention_h} h after it ended)")
+            used = s.execute(select(func.coalesce(func.sum(AccountFile.size), 0))
+                             .where(AccountFile.user_id == user.id)).scalar_one()
+            file_id = "af_" + uuid.uuid4().hex
+            folder = files_dir(file_id)
+            listed: list[dict] = []
+            try:
+                with zipfile.ZipFile(result) as z:
+                    names = {Path(n).name: n for n in z.namelist() if Path(n).name in SCAN_KEPT}
+                    if "pieza.stl" not in names:
+                        raise HTTPException(410, "The result of the scan has no part")
+                    sizes = sum(z.getinfo(n).file_size for n in names.values())
+                    if used + sizes > cfg.account_files_gb << 30:
+                        raise HTTPException(413, f"The files of the account are over {cfg.account_files_gb} GB: "
+                                                 "delete some first")
+                    folder.mkdir(parents=True, exist_ok=True)
+                    for kept_name in SCAN_KEPT:
+                        if kept_name not in names:
+                            continue
+                        digest = hashlib.sha256()
+                        size = 0
+                        with z.open(names[kept_name]) as src, open(folder / kept_name, "wb") as out:
+                            for chunk in iter(lambda: src.read(1 << 20), b""):
+                                digest.update(chunk)
+                                size += len(chunk)
+                                out.write(chunk)
+                        listed.append({"path": kept_name, "size": size, "sha256": digest.hexdigest()})
+            except (zipfile.BadZipFile, OSError):
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+            except HTTPException:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+            item = AccountFile(id=file_id, user_id=user.id, name=name or (job.input_name or "pieza").rsplit(".", 1)[0],
+                               kind="scan", source_job=job.id, size=sum(f["size"] for f in listed),
+                               files=json.dumps(listed))
+            s.add(item)
+            s.flush()
+            return file_view(item)
+
+    @app.get("/v1/files")
+    def list_files(user: UserDep) -> dict:
+        with db.session() as s:
+            rows = s.execute(select(AccountFile).where(AccountFile.user_id == user.id)
+                             .order_by(AccountFile.created_at.desc())).scalars().all()
+            return {"files": [file_view(f) for f in rows]}
+
+    @app.get("/v1/files/{file_id}/{path}")
+    def get_file(user: UserDep, file_id: str, path: str) -> Response:
+        with db.session() as s:
+            f = own_file(s, user, file_id)
+            if path not in {x["path"] for x in json.loads(f.files)}:
+                raise HTTPException(404, "No such file")
+            name = f.name
+        target = files_dir(file_id) / path
+        if not target.is_file():
+            raise HTTPException(404, "No such file")
+        download = safe_filename(f"{name}{Path(path).suffix}" if path == "pieza.stl" else path, path)
+        return FileResponse(target, media_type="application/octet-stream", filename=download)
+
+    @app.patch("/v1/files/{file_id}")
+    def rename_file(user: UserDep, file_id: str, body: dict = Body(...)) -> dict:
+        name = str(body.get("name", "")).strip()
+        if not name or len(name) > 120:
+            raise HTTPException(422, "'name' from 1 to 120 characters")
+        with db.session() as s:
+            f = own_file(s, user, file_id)
+            f.name = name
+            return file_view(f)
+
+    @app.delete("/v1/files/{file_id}")
+    def delete_file(user: UserDep, file_id: str) -> dict:
+        with db.session() as s:
+            s.delete(own_file(s, user, file_id))
+        shutil.rmtree(files_dir(file_id), ignore_errors=True)
+        return {"ok": True}
 
     @app.post("/v1/library/models/{model_id}/revisions", status_code=201)
     def library_revision(user: UserDep, model_id: str, body: dict = Body(...)) -> dict:

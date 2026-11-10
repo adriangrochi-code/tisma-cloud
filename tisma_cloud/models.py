@@ -515,3 +515,20 @@ class LibraryCounter(Base):
     __tablename__ = "library_counters"
     name: Mapped[str] = mapped_column(String(20), primary_key=True)
     value: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AccountFile(Base):
+    """A file kept in the account, private (p2p_library.md 7 bis): the part of a scan, for «Mi biblioteca» of Tisma on
+    the phone and the computer, and to publish in the library from it. Its files are in storage_dir/files/<id>/."""
+    __tablename__ = "account_files"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Encrypted, default="")
+    kind: Mapped[str] = mapped_column(String(20), default="scan")
+    # The job it came from (one item per job).
+    source_job: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    # JSON: [{path, size, sha256}].
+    files: Mapped[str] = mapped_column(Text, default="[]")
+    published_model: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
