@@ -659,3 +659,14 @@ def test_a_master_restored_without_its_library_key_says_so(client, f, settings, 
         with TestClient(create_app(settings)) as restored:
             assert restored.get("/v1/library/index.json").status_code == 503
     assert any("library key was made now" in r.message and "1 models" in r.message for r in caplog.records)
+
+
+def test_a_certificate_left_without_its_key_is_not_served(tmp_path):
+    """library.cert restored without library.key: the new key has no certificate (the old one is of another key)."""
+    project = Ed25519PrivateKey.generate()
+    hex_key = library.public_bytes(project.public_key()).hex()
+    old = library.LibraryKey(tmp_path)
+    old.install_certificate(library.b64(project.sign(library.CERT_PREFIX + old.public)), hex_key)
+    (tmp_path / "library.key").unlink()
+    new = library.LibraryKey(tmp_path)
+    assert new.public != old.public and new.certificate() is None

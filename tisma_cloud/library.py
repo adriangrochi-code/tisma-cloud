@@ -106,6 +106,9 @@ class LibraryKey:
             fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w") as f:
                 f.write(b64(raw) + "\n")
+        if self.made_now and self.cert_path.exists():
+            # A certificate restored without its key is of another key: kept aside, never served for this one.
+            self.cert_path.replace(self.cert_path.with_name("library.cert.old"))
         self._private = Ed25519PrivateKey.from_private_bytes(raw)
         self.public = public_bytes(self._private.public_key())
 
