@@ -592,3 +592,32 @@ def test_the_index_goes_compressed_and_its_signature_is_of_the_plain_bytes(clien
     assert data == plain.content and len(raw) < len(data)
     key = library.unb64(client.get("/v1/library/key").json()["public_key"], 32)
     assert library.verify(key, client.get("/v1/library/index.json.sig").content, data)
+
+
+def test_the_thumbnail_of_a_removed_model_or_a_deleted_account_is_not_served(client, f):
+    admin = f.user("root@x.com", admin=True)
+    user = f.user("lucia@x.com")
+    app = App(client, user)
+    app.bind()
+    entry = app.publish()
+    thumb = f"/v1/library/thumbs/{entry['thumbnail']['sha256']}.webp"
+    assert client.get(thumb).status_code == 200
+    client.post(f"/v1/admin/library/models/{entry['id']}/remove", headers=admin, json={"reason": "imagen ofensiva"})
+    assert client.get(thumb).status_code == 404
+    # Another account's model with an image of its own; its author deletes the account: the image file goes too.
+    other = App(client, f.user("ana@x.com"))
+    other.bind()
+    webp2 = b"RIFF" + (20).to_bytes(4, "little") + b"WEBPVP8 " + bytes(11) + b"\x01"
+    body = other.body([{"path": "maceta.3mf", "role": "project", "size": 10, "sha256": "f" * 64}])
+    body["thumbnail_webp"] = base64.b64encode(webp2).decode()
+    second = client.post("/v1/library/models", headers=other.headers, json=body).json()
+    path = client.app.state.services.settings.storage_dir / "library" / "thumbs" / f"{second['thumbnail']['sha256']}.webp"
+    assert path.is_file()
+    with f.db.session() as s:
+        from sqlalchemy import select
+
+        from tisma_cloud.models import LibraryModel
+        uid = s.execute(select(LibraryModel.user_id).where(LibraryModel.model_id == second["id"])).scalar_one()
+    client.app.state.services.delete_account(uid)
+    assert not path.exists()
+    assert client.get(f"/v1/library/thumbs/{second['thumbnail']['sha256']}.webp").status_code == 404

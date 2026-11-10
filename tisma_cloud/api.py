@@ -300,13 +300,17 @@ class Services:
             commands = s.execute(select(RemoteCommand.id).where(RemoteCommand.bridge_id.in_(bridges))).scalars().all() \
                 if bridges else []
             files = s.execute(select(AccountFile.id).where(AccountFile.user_id == user_id)).scalars().all()
+            thumbs = set(s.execute(select(LibraryModel.thumbnail_sha256).where(LibraryModel.user_id == user_id)).scalars())
             if files:
                 s.execute(delete(AccountFileTaken).where(AccountFileTaken.file_id.in_(files)))
             for model in (ApiToken, EmailCode, Usage, PlaySubscription, Job, Bridge, BugReport, AccountFile,
                           LibraryModel, LibraryPeerKey):
                 s.execute(delete(model).where(model.user_id == user_id))
-            # Its published models leave the index.
+            # Its published models leave the index, and their images the disk (unless another model uses the same).
             library.bump(s, "index")
+            s.flush()
+            shared = set(s.execute(select(LibraryModel.thumbnail_sha256)
+                                   .where(LibraryModel.thumbnail_sha256.in_(thumbs))).scalars()) if thumbs else set()
             if commands:
                 s.execute(delete(RemoteCommand).where(RemoteCommand.id.in_(commands)))
             user.email = f"deleted-{user.id}@deleted.invalid"
@@ -317,6 +321,8 @@ class Services:
             self.storage.remove_job(job_id)
         for file_id in files:
             shutil.rmtree(Path(self.settings.storage_dir) / "files" / file_id, ignore_errors=True)
+        for digest in thumbs - shared:
+            (Path(self.settings.storage_dir) / "library" / "thumbs" / f"{digest}.webp").unlink(missing_ok=True)
         for command_id in commands:
             self.remote_files.remove_command(command_id)
         for bridge_id in bridges:
@@ -1080,6 +1086,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def library_thumbnail(name: str) -> Response:
         sha256 = name.removesuffix(".webp")
         if not re.fullmatch(r"[0-9a-f]{64}", sha256) or not thumbnail_path(sha256).is_file():
+            raise HTTPException(404, "No such image")
+        # Only the image of a model still published: a model removed in the review (an offensive image) or by its
+        # author is not shown by its address either.
+        with db.session() as s:
+            used = s.execute(select(LibraryModel.id).where(LibraryModel.thumbnail_sha256 == sha256,
+                                                           LibraryModel.removed_at.is_(None)).limit(1)).first()
+        if used is None:
             raise HTTPException(404, "No such image")
         return Response(thumbnail_path(sha256).read_bytes(), media_type="image/webp",
                         headers={"Cache-Control": "public, max-age=31536000, immutable"})
