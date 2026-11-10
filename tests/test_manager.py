@@ -319,3 +319,26 @@ def test_the_window_errors_of_the_role_and_the_service_are_in_spanish(tmp_path, 
         m.set_role("node")
     with pytest.raises(ValueError, match="El puerto va de 1 a 65535"):
         m.set_port(70000)
+
+
+def test_the_diagnosis_says_whether_the_library_key_is_certified(tmp_path, monkeypatch):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from tisma_cloud import library
+
+    monkeypatch.delenv("TISMA_STORAGE_DIR", raising=False)
+    monkeypatch.delenv("TISMA_LIBRARY_PROJECT_KEY", raising=False)
+    m = Manager(tmp_path)
+    m.set_role("master")
+    check = m._library_check()
+    assert check.ok is None and "sin clave" in check.detail.lower()
+    key = library.LibraryKey(tmp_path / "storage")
+    assert m._library_check().ok is None and "503" in m._library_check().detail
+    project = Ed25519PrivateKey.generate()
+    hex_key = library.public_bytes(project.public_key()).hex()
+    key.install_certificate(library.b64(project.sign(library.CERT_PREFIX + key.public)), hex_key)
+    monkeypatch.setenv("TISMA_LIBRARY_PROJECT_KEY", hex_key)
+    assert m._library_check().ok is True
+    # A certificate of another key (a wrong file copied in): wrong, said plainly.
+    (tmp_path / "storage" / "library.cert").write_text(library.b64(project.sign(b"otra")) + "\n")
+    assert m._library_check().ok is False

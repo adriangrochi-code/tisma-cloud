@@ -814,6 +814,37 @@ class Manager:
         return found
 
     # ---- diagnosis
+    def _library_check(self) -> Check:
+        """The library shared between users answers only with its key certified by the owner (library.py)."""
+        from . import library
+
+        env = self.read_env()
+        storage = Path(os.environ.get("TISMA_STORAGE_DIR") or env.get("TISMA_STORAGE_DIR") or "./storage")
+        if not storage.is_absolute():
+            storage = self.home / storage
+        key_file, cert_file = storage / "library.key", storage / "library.cert"
+        steps = ("tisma-cloud admin library-key y, con el USB, deploy/certify_library_key.py; después "
+                 "tisma-cloud admin library-cert <certificado> (README, «Biblioteca entre usuarios»)")
+        if not key_file.exists():
+            return Check("Biblioteca entre usuarios", None, "Todavía sin clave (se hace al iniciar el maestro); "
+                                                            "después hay que certificarla: " + steps)
+        if not cert_file.exists():
+            return Check("Biblioteca entre usuarios", None, "La clave no está certificada: la biblioteca responde 503 "
+                                                            "y las apps no la usan. " + steps)
+        project = os.environ.get("TISMA_LIBRARY_PROJECT_KEY") or env.get("TISMA_LIBRARY_PROJECT_KEY", "")
+        if project:
+            try:
+                key = library.unb64(key_file.read_text().strip(), 32)
+                public = library.public_bytes(library.Ed25519PrivateKey.from_private_bytes(key).public_key())
+                cert = library.unb64(cert_file.read_text().strip(), 64)
+                good = library.verify(library.project_key_bytes(project), cert, library.CERT_PREFIX + public)
+            except (OSError, ValueError):
+                good = False
+            if not good:
+                return Check("Biblioteca entre usuarios", False, "El certificado no es de esta clave con la clave del "
+                                                                 "proyecto: las apps rechazan la biblioteca. " + steps)
+        return Check("Biblioteca entre usuarios", True, "Clave certificada por el dueño")
+
     def _backup_check(self) -> Check:
         """The daily backup of the database (backup.py): where it goes and how old the last one is."""
         from types import SimpleNamespace
@@ -904,6 +935,7 @@ class Manager:
                              f"Servidor de correo {smtp}" if smtp else
                              "Sin servidor de correo (TISMA_SMTP_HOST): los códigos para confirmar una cuenta y elegir "
                              "una contraseña nueva van solo al registro, así que nadie puede confirmar su cuenta"))
+            out.append(self._library_check())
             env = self.read_env()
             url = env.get("TISMA_PUBLIC_URL", "")
             if url:
