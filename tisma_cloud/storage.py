@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import uuid
 from pathlib import Path
 from typing import BinaryIO
 
@@ -44,7 +45,8 @@ class Storage:
         """Copies the stream to the file; raises TooLarge (and removes the file) past max_bytes."""
         path.parent.mkdir(parents=True, exist_ok=True)
         size = 0
-        tmp = path.with_suffix(path.suffix + ".part")
+        # Its own temporary file: two uploads of the same file at once never write over each other.
+        tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:12]}.part")
         try:
             with open(tmp, "wb") as out:
                 while True:

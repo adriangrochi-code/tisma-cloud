@@ -107,3 +107,40 @@ def test_jobs_of_one_user_ending_at_once_all_count(client, f):
     with db.session() as s:
         rows = s.execute(select(Usage).where(Usage.user_id == user_id)).scalars().all()
         assert len(rows) == 1 and abs(rows[0].seconds - 10 * len(ids)) < 1e-6
+
+
+def test_a_result_sent_twice_at_once_is_kept_and_charged_once(client, f):
+    """A node that times out while the master still receives its result sends it again: both arrive together."""
+    import threading
+    from datetime import timedelta
+
+    from tisma_cloud.models import Job, utcnow
+
+    user = f.user()
+    node = f.node("n", "slice")
+    job = f.submit(user)
+    f.claim(node)
+    with f.db.session() as s:
+        s.get(Job, job["id"]).started_at = utcnow() - timedelta(minutes=30)
+    gcode = b"G1 X1\n" * 200_000
+    barrier = threading.Barrier(2)
+    codes = []
+
+    def send():
+        barrier.wait()
+        try:
+            r = client.post(f"/v1/node/jobs/{job['id']}/result", headers=node,
+                            files={"file": ("p.gcode", gcode, "text/plain")}, data={"summary": "{}"})
+            codes.append(r.status_code)
+        except Exception as ex:  # noqa: BLE001 (a server error in the test client)
+            codes.append(repr(ex)[:300])
+
+    threads = [threading.Thread(target=send) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(codes, key=str) == [200, 404], codes
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
+    assert client.get(f"/v1/jobs/{job['id']}/result", headers=user).content == gcode
+    assert round(f.me(user)["hours_used"], 2) == 0.5, f.me(user)

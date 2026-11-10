@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import errno
 import multiprocessing
 import os
@@ -1023,8 +1024,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "No such job")
         return job
 
-    def node_job(s, node: Node, job_id: str) -> Job:  # noqa: ANN001
-        job = s.get(Job, job_id)
+    # One lock per job whose result is being received, with how many requests use it (forgotten when none does).
+    result_locks: dict[str, list] = {}
+    result_locks_guard = threading.Lock()
+
+    @contextlib.contextmanager
+    def result_lock(job_id: str):  # noqa: ANN202
+        with result_locks_guard:
+            entry = result_locks.setdefault(job_id, [threading.Lock(), 0])
+            entry[1] += 1
+        try:
+            with entry[0]:
+                yield
+        finally:
+            with result_locks_guard:
+                entry[1] -= 1
+                if entry[1] == 0:
+                    result_locks.pop(job_id, None)
+
+    def node_job(s, node: Node, job_id: str, lock: bool = False) -> Job:  # noqa: ANN001
+        # lock: the row is held until the session ends (PostgreSQL; SQLite writes one at a time anyway).
+        job = s.get(Job, job_id, with_for_update=lock)
         if job is None or job.node_id != node.id or job.status != "running":
             raise HTTPException(404, "No such running job on this node")
         return job
@@ -2360,8 +2380,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if ext not in ALLOWED_RESULTS:
             raise HTTPException(422, f"Results are {', '.join(ALLOWED_RESULTS)} files")
         refused: HTTPException | None = None
-        with db.session() as s:
-            job = node_job(s, node, job_id)
+        # A node that timed out sends its result again while the first is still being received: the second waits for
+        # the first and then finds the job done (404), instead of writing the same file and finishing it twice.
+        with result_lock(job_id), db.session() as s:
+            job = node_job(s, node, job_id, lock=True)
             path = services.storage.result_path(job.id, ext)
             try:
                 services.storage.save_stream(file.file, path, cfg.max_result_mb << 20)
