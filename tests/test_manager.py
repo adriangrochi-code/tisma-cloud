@@ -379,3 +379,28 @@ def test_an_internal_account_is_made_for_a_new_address(tmp_path, monkeypatch):
         me = c.get("/v1/me", headers={"Authorization": f"Bearer {r.json()['token']}"}).json()
         assert me["email"] == "nueva@tisma.com.uy"
 
+
+def test_the_panel_opens_in_the_browser_when_its_window_fails(tmp_path, monkeypatch, capsys):
+    import sys
+    import types
+    import webbrowser
+
+    from tisma_cloud import cli
+
+    m = Manager(tmp_path)
+    monkeypatch.setattr(m, "role", lambda: "master")
+    monkeypatch.setattr(m, "health", lambda: True)
+    monkeypatch.setattr(m, "panel_url", lambda: "http://127.0.0.1:8000/admin#token=tu_x")
+    fake = types.ModuleType("webview")
+    fake.create_window = lambda *a, **k: None
+
+    def broken():
+        raise RuntimeError("WebView2 could not start")
+
+    fake.start = broken
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
+    assert cli.open_panel(m) == 0
+    assert opened == ["http://127.0.0.1:8000/admin#token=tu_x"]
+    assert "navegador" in capsys.readouterr().err

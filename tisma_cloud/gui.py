@@ -1141,10 +1141,24 @@ class App:
                 if not password:
                     return
                 self.m.create_admin(email, password)
-            # The window of the panel runs in its own process (the engine of the window needs its main thread).
-            subprocess.Popen(run_command()[:-1] + ["panel"], cwd=str(self.m.home), env=own_env())
+            # The window of the panel runs in its own process (the engine of the window needs its main thread). Its
+            # errors are shown here: before, they went to a console that closed at once.
+            child = subprocess.Popen(run_command(self.m.home)[:-1] + ["panel"], cwd=str(self.m.home),
+                                     env=own_env(PYTHONIOENCODING="utf-8"),
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("Tisma Cloud", f"No se pudo abrir el panel: {e}", parent=self.root)
+            return
+
+        def watch() -> None:
+            err = child.stderr.read().decode("utf-8", "replace").strip() if child.stderr else ""
+            if child.wait() != 0:
+                text = err or f"el panel terminó con el código {child.returncode}"
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Tisma Cloud", f"No se pudo abrir el panel: {text}\n\nEn el navegador de esta máquina: "
+                    f"http://127.0.0.1:{self.m.port()}/admin", parent=self.root))
+
+        threading.Thread(target=watch, daemon=True).start()
 
     # ---- role and service
     def on_role(self) -> None:

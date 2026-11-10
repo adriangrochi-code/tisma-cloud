@@ -345,9 +345,11 @@ def open_panel(manager) -> int:
         webview.create_window("Tisma Cloud · Panel", url, width=1280, height=900, min_size=(900, 600))
         webview.start()
     except Exception as e:  # noqa: BLE001
-        print(f"La ventana del panel no se pudo abrir ({e}).\n" + PANEL_WITHOUT_WEBVIEW2.format(port=manager.port()),
-              file=sys.stderr)
-        return 2
+        # The window's engine failed (pythonnet, WebView2): the same panel, signed in, in the browser.
+        print(f"La ventana del panel no se pudo abrir ({e}); se abre en el navegador.", file=sys.stderr)
+        if not webbrowser.open(manager.panel_url()):
+            print(PANEL_WITHOUT_WEBVIEW2.format(port=manager.port()), file=sys.stderr)
+            return 2
     return 0
 
 
