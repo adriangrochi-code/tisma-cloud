@@ -826,9 +826,17 @@ class App:
     def make_internal(self) -> None:
         email = simpledialog.askstring("Cuenta interna", "Correo de la cuenta (lamina sin límite y sin cobro):",
                                        parent=self.root)
-        if email:
-            self.admin(["user-set", email, "--unlimited"])
-            self.refresh(reschedule=False)
+        if not email:
+            return
+        # It was "admin user-set", which changes only existing accounts: a new address failed silently (its error
+        # went to the console page).
+        try:
+            done = self.m.make_internal(email)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("Tisma Cloud", f"No se pudo hacer la cuenta interna: {e}", parent=self.root)
+            return
+        messagebox.showinfo("Tisma Cloud", done, parent=self.root)
+        self.refresh(reschedule=False)
 
     # ---- settings
     def build_settings(self) -> None:

@@ -617,6 +617,32 @@ class Manager:
             user.is_admin, user.enabled, user.email_verified = True, True, True
             user.password_hash = hash_password(password)
 
+    def make_internal(self, email: str) -> str:
+        """«Cuenta interna»: the account of the address computes without limit and is never charged; made when it does
+        not exist yet (without a password: the person enters with «Olvidé mi contraseña» or with Google)."""
+        import re
+
+        from sqlalchemy import select
+
+        from . import crypto
+        from .models import Plan, User
+
+        email = email.strip().lower()
+        if not re.fullmatch(r"[^@\s]{1,64}@[^@\s]{1,190}\.[A-Za-z]{2,}", email):
+            raise ValueError(f"«{email}» no es un correo")
+        db, _settings = self._database()
+        with db.session() as s:
+            user = s.execute(select(User).where(User.email_index == crypto.index(email))).scalar_one_or_none()
+            if user is None:
+                plan = s.execute(select(Plan.name).where(Plan.public.is_(True)).order_by(Plan.price_cents)
+                                 ).scalars().first() or s.execute(select(Plan.name).order_by(Plan.monthly_hours)
+                                                                  ).scalars().first() or "trial"
+                s.add(User(email=email, plan_name=plan, unlimited=True))
+                return (f"Cuenta interna creada: {email}. Para entrar, esa persona usa «Olvidé mi contraseña» con ese "
+                        "correo (o entra con Google).")
+            user.unlimited = True
+            return f"{email} ahora es una cuenta interna: lamina sin límite y sin cobro."
+
     def panel_token(self) -> str:
         """A session of the first administrator for the panel opened by the program (it replaces the previous one)."""
         from sqlalchemy import select

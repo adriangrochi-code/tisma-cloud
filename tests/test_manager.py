@@ -342,3 +342,40 @@ def test_the_diagnosis_says_whether_the_library_key_is_certified(tmp_path, monke
     # A certificate of another key (a wrong file copied in): wrong, said plainly.
     (tmp_path / "storage" / "library.cert").write_text(library.b64(project.sign(b"otra")) + "\n")
     assert m._library_check().ok is False
+
+
+def test_an_internal_account_is_made_for_a_new_address(tmp_path, monkeypatch):
+    """«Cuenta interna…» of the window ran `admin user-set`, which changes only existing accounts: a new address failed
+    without a word (owner, 2026-11-10 23:00)."""
+    from fastapi.testclient import TestClient
+
+    from tisma_cloud.api import create_app
+    from tisma_cloud.cli import admin_output
+    from tisma_cloud.settings import Settings
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TISMA_DATABASE_URL", raising=False)
+    m = Manager(tmp_path)
+    m.set_role("master")
+    assert "creada" in m.make_internal(" Nueva@Tisma.com.uy ")
+    assert admin_output(m, ["user-add", "vieja@x.com", "--plan", "trial"])[0] == 0
+    assert "interna" in m.make_internal("vieja@x.com")
+    with pytest.raises(ValueError):
+        m.make_internal("no es un correo")
+    listed = admin_output(m, ["user-list"])[1]
+    assert "nueva@tisma.com.uy" in listed and "vieja@x.com" in listed and listed.count("unlimited") == 2
+    # The person enters with «Olvidé mi contraseña» (the code goes to the log without e-mail).
+    codes = []
+    app = create_app(Settings(database_url=f"sqlite:///{tmp_path / 'tisma.db'}", storage_dir=tmp_path / "storage"))
+    with TestClient(app, client=("127.0.0.1", 50000)) as c:
+        monkeypatch.setattr(app.state.services.mailer, "send", lambda to, subject, text: codes.append(text))
+        assert c.post("/v1/auth/password/forgot", json={"email": "nueva@tisma.com.uy"}).status_code == 200
+        import re
+
+        code = re.search(r"\b\d{6}\b", codes[-1]).group(0)
+        r = c.post("/v1/auth/password/reset", json={"email": "nueva@tisma.com.uy", "code": code,
+                                                     "password": "una clave larga"})
+        assert r.status_code == 200, r.text
+        me = c.get("/v1/me", headers={"Authorization": f"Bearer {r.json()['token']}"}).json()
+        assert me["email"] == "nueva@tisma.com.uy"
+
