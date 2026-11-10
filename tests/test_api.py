@@ -675,3 +675,16 @@ def test_projects_are_deleted_when_the_job_ends(client, f):
         assert not storage.input_path(job["id"]).exists()
     # The result stays for its download.
     assert client.get(f"/v1/jobs/{done['id']}/result", headers=user).content == b"G1"
+
+
+def test_a_daily_rate_limiter_forgets_its_old_keys_within_minutes():
+    """The daily limit of codes is counted per e-mail, a key anyone can make up: the keys whose day ended must not
+    stay in memory for ten days."""
+    from tisma_cloud.ratelimit import RateLimiter
+
+    daily = RateLimiter(86400.)
+    for i in range(1000):
+        assert daily.allow(f"mail-day:{i}@x.com", 10, now=1000.)
+    # A day later, one more request (after the cleanup interval): the ended keys are gone.
+    assert daily.allow("mail-day:new@x.com", 10, now=1000. + 86400. + 601.)
+    assert len(daily._hits) == 1

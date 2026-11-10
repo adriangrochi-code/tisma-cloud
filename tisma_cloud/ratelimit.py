@@ -7,6 +7,8 @@ import threading
 import time
 from collections import deque
 
+CLEANUP_S = 600.
+
 
 class RateLimiter:
     def __init__(self, window_s: float = 60.) -> None:
@@ -25,7 +27,9 @@ class RateLimiter:
             if len(hits) >= limit:
                 return False
             hits.append(now)
-            if now - self._last_cleanup > self.window_s * 10:
+            # The keys whose window ended are forgotten every ten windows, at most every CLEANUP_S (a daily limit
+            # per e-mail, a key anyone can make up, would otherwise keep them ten days).
+            if now - self._last_cleanup > min(self.window_s * 10, CLEANUP_S):
                 self._cleanup(now)
             return True
 
