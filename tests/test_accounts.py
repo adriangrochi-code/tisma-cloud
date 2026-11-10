@@ -151,10 +151,11 @@ def test_google_sign_in(gweb):
 def test_google_links_only_when_google_vouches_for_the_address(gweb):
     gweb.post("/v1/auth/register", json={"email": "ana@gmail.com", "password": "una clave larga"})
     gweb.post("/v1/auth/register", json={"email": "ana@empresa.uy", "password": "una clave larga"})
-    # Gmail: Google is the authority, the existing account is linked (and confirmed).
+    # Gmail: Google is the authority, the existing account is linked (and confirmed). Its password was never confirmed
+    # by the owner of the address (anyone could have registered it first, «pre-hijacking»): it does not open it.
     r = gweb.post("/v1/auth/google", json={"id_token": google_token("ana@gmail.com", sub="g-ana")})
     assert r.status_code == 200
-    assert gweb.post("/v1/auth/login", json={"email": "ana@gmail.com", "password": "una clave larga"}).status_code == 200
+    assert gweb.post("/v1/auth/login", json={"email": "ana@gmail.com", "password": "una clave larga"}).status_code == 401
     # Another domain without Workspace: refused, the account keeps its password only.
     r = gweb.post("/v1/auth/google", json={"id_token": google_token("ana@empresa.uy", sub="g-x")})
     assert r.status_code == 409
@@ -212,3 +213,23 @@ def test_e_mail_codes_to_one_address_are_limited_per_day(web):
     sent = len(services.mailer.sent)
     assert web.post("/v1/auth/password/forgot", json={"email": "d@correo.uy"}).status_code == 429
     assert len(services.mailer.sent) == sent
+
+
+
+def test_an_account_registered_first_by_someone_else_is_not_theirs_after_google(gweb):
+    """Pre-account hijacking: the attacker registers the victim's Gmail address with a password of theirs (they cannot
+    confirm it); the victim later signs in with Google. The attacker's password must not open the victim's account."""
+    gweb.post("/v1/auth/register", json={"email": "victima@gmail.com", "password": "clave del atacante"})
+    r = gweb.post("/v1/auth/google", json={"id_token": google_token("victima@gmail.com", sub="g-victim")})
+    assert r.status_code == 200
+    assert gweb.post("/v1/auth/login", json={"email": "victima@gmail.com",
+                                             "password": "clave del atacante"}).status_code == 401
+    me = gweb.get("/v1/me", headers={"Authorization": f"Bearer {r.json()['token']}"}).json()
+    assert me["email"] == "victima@gmail.com" and me["has_password"] is False
+
+
+def test_a_confirmed_account_keeps_its_password_when_linked_to_google(gweb):
+    gweb.post("/v1/auth/register", json={"email": "ana@gmail.com", "password": "una clave larga"})
+    gweb.post("/v1/auth/verify", json={"email": "ana@gmail.com", "code": code_of(gweb, "ana@gmail.com")})
+    assert gweb.post("/v1/auth/google", json={"id_token": google_token("ana@gmail.com", sub="g-ana")}).status_code == 200
+    assert gweb.post("/v1/auth/login", json={"email": "ana@gmail.com", "password": "una clave larga"}).status_code == 200

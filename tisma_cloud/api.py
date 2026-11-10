@@ -1869,6 +1869,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # Linking needs Google to be the authority on the address, or the account could be taken.
                     if not who.authoritative or user.google_sub:
                         raise HTTPException(409, "An account with this e-mail exists: log in with its password")
+                    if not user.email_verified:
+                        # Its password was never confirmed by the owner of the address: anyone could have registered
+                        # it first («pre-account hijacking»). It does not open the account any more, nor its sessions.
+                        user.password_hash = ""
+                        s.execute(ApiToken.__table__.delete().where(ApiToken.user_id == user.id))
+                        services.tokens.drop_user(user.id)
                     user.google_sub = who.sub
                     user.email_verified = True
                 else:
