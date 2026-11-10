@@ -71,6 +71,9 @@ SCAN_ROOM_LEFT = 2 << 30
 # The library (library.py): models published and reports sent by one account in a day.
 LIBRARY_PUBLISH_PER_DAY = 20
 LIBRARY_REPORTS_PER_DAY = 20
+# Apps (peer keys) of one account, and announcements of an account per minute (all its apps).
+LIBRARY_PEER_KEYS_PER_ACCOUNT = 10
+LIBRARY_ANNOUNCES_PER_MINUTE = 30
 
 
 def bridge_key(bridge_id: str) -> str:
@@ -1079,7 +1082,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def library_peer_key(user: UserDep, body: dict = Body(...)) -> dict:
         with db.session() as s:
             try:
-                library.bind_peer_key(s, s.get(User, user.id), str(body.get("public_key", "")))
+                library.bind_peer_key(s, s.get(User, user.id), str(body.get("public_key", "")),
+                                      LIBRARY_PEER_KEYS_PER_ACCOUNT)
             except library.LibraryError as ex:
                 raise HTTPException(422 if "base64" in str(ex) or "bytes" in str(ex) else 409, str(ex)) from None
         return {"ok": True, "account": library.account_id(user.id)}
@@ -1167,6 +1171,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/library/peers/announce")
     def library_announce(user: UserDep, request: Request, body: dict = Body(...)) -> dict:
+        if not limiter.allow(f"library-announce:{user.id}", LIBRARY_ANNOUNCES_PER_MINUTE):
+            raise HTTPException(429, "Too many announcements: once every 10 minutes is enough",
+                                headers={"Retry-After": "60"})
         peer_key = str(body.get("peer_key", ""))
         models, addrs, direct, when = body.get("models"), body.get("addrs"), body.get("direct"), body.get("time")
         if not (isinstance(models, list) and len(models) <= peers.MAX_MODELS and all(isinstance(m, str) for m in models)
@@ -1389,6 +1396,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         reason = str(body.get("reason", "")).strip()
         if not reason or len(reason) > 2000:
             raise HTTPException(422, "'reason' is needed (at most 2000 characters)")
+        if not model_id and not sha256:
+            raise HTTPException(422, "'model' or 'sha256' is needed")
         if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
             raise HTTPException(422, "'sha256' is 64 hexadecimal digits")
         if not services.daily.allow(f"library-report:{user.id}", LIBRARY_REPORTS_PER_DAY):

@@ -514,3 +514,14 @@ def test_the_swarm_of_a_model_is_checked(client, f):
     for bad in ({**good, "piece_size": 4096}, {**good, "protocol": "bittorrent"}, {**good, "piece_roots": {}},
                 {**good, "pieces": {sha: ["e" * 64]}}):
         app.publish(expect=422, swarm=bad)
+
+
+def test_an_account_keeps_at_most_ten_app_keys_and_a_report_names_what(client, f):
+    user = f.user("sofia@x.com")
+    apps = [App(client, user) for _ in range(11)]
+    for a in apps:
+        a.bind()
+    # The oldest let go: it no longer publishes for this account; the newest does.
+    apps[0].publish(expect=409)
+    apps[10].publish()
+    assert client.post("/v1/library/reports", headers=user, json={"reason": "algo"}).status_code == 422

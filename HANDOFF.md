@@ -12,6 +12,9 @@ Windows service), which must be up and stable for it; 1.0 in the second week of 
 
 ## Work list (in order)
 
+0. Owner's rule (10-11, via QA): every 3 h, part of the block goes to finding bugs and optimising the server (errors,
+   security, load, slow queries, memory, Spanish texts); report to QA in a few lines.
+
 1. Set up: done.
 2. Server against the engine's `docs/spec/features/cloud.md` (read-only clone in
    `/home/user/adriangrochi-code/tisma_engine`, owner's permission 2026-11-04; dev bc900da + spec/next): rules 1 to 21

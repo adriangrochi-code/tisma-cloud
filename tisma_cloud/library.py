@@ -425,8 +425,9 @@ class Signed:
             return cached[2], cached[3], cached[4]
 
 
-def bind_peer_key(session: Session, user: User, public_key_b64: str) -> None:
-    """Ties an app's key to the account (rule 5): a key belongs to one account only."""
+def bind_peer_key(session: Session, user: User, public_key_b64: str, most: int = 10) -> None:
+    """Ties an app's key to the account (rule 5): a key belongs to one account only, and an account has at most `most`
+    apps (the oldest key is let go to bind a new one: a phone replaced keeps no slot)."""
     unb64(public_key_b64, 32)
     row = session.execute(select(LibraryPeerKey).where(LibraryPeerKey.public_key == public_key_b64)).scalar_one_or_none()
     if row is not None and row.user_id != user.id:
@@ -434,6 +435,10 @@ def bind_peer_key(session: Session, user: User, public_key_b64: str) -> None:
     if blocked(session, "peer", public_key_b64):
         raise LibraryError("This app is blocked in the library")
     if row is None:
+        keys = session.execute(select(LibraryPeerKey).where(LibraryPeerKey.user_id == user.id)
+                               .order_by(LibraryPeerKey.created_at, LibraryPeerKey.id)).scalars().all()
+        for old in keys[:max(0, len(keys) - most + 1)]:
+            session.delete(old)
         session.add(LibraryPeerKey(user_id=user.id, public_key=public_key_b64))
 
 
