@@ -521,6 +521,8 @@ class AccountFile(Base):
     """A file kept in the account, private (p2p_library.md 7 bis): the part of a scan, for «Mi biblioteca» of Tisma on
     the phone and the computer, and to publish in the library from it. Its files are in storage_dir/files/<id>/."""
     __tablename__ = "account_files"
+    # One item per job of an account, also when the app retries «Imprimir» while the first request still runs.
+    __table_args__ = (UniqueConstraint("user_id", "source_job"),)
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(Encrypted, default="")

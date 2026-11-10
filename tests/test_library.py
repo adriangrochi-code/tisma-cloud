@@ -541,3 +541,16 @@ def test_disabling_an_author_takes_their_models_out_of_the_cached_index(client, 
     client.put("/v1/admin/users/lucia@x.com/enabled", headers=admin, json={"enabled": True}).raise_for_status()
     back = signed(client, "index")
     assert len(back["models"]) == 1 and back["sequence"] > off["sequence"]
+
+
+def test_keeping_the_same_scan_at_once_makes_one_item(client, f):
+    """An app that retries «Imprimir» while the first request is still running gets the same item, not two copies."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    user = f.user("sofia@x.com")
+    job_id = scan_done(f, user)
+    with ThreadPoolExecutor(8) as pool:
+        answers = list(pool.map(lambda _: client.post("/v1/files", headers=user, json={"scan_job": job_id}), range(8)))
+    assert all(a.status_code in (200, 201) for a in answers), [a.text for a in answers]
+    assert len({a.json()["id"] for a in answers}) == 1
+    assert len(client.get("/v1/files", headers=user).json()["files"]) == 1

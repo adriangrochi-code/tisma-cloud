@@ -1286,9 +1286,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             item = AccountFile(id=file_id, user_id=user.id, name=name or (job.input_name or "pieza").rsplit(".", 1)[0],
                                kind="scan", source_job=job.id, size=sum(f["size"] for f in listed),
                                files=json.dumps(listed))
-            s.add(item)
-            s.flush()
-            return file_view(item)
+            source_job = job.id
+        try:
+            with db.session() as s:
+                s.add(item)
+                s.flush()
+                return file_view(item)
+        except IntegrityError:
+            # Another request kept the same job meanwhile: that one is the item.
+            shutil.rmtree(folder, ignore_errors=True)
+            with db.session() as s:
+                kept = s.execute(select(AccountFile).where(AccountFile.user_id == user.id,
+                                                           AccountFile.source_job == source_job)).scalars().first()
+                if kept is None:
+                    raise
+                response.status_code = 200
+                return file_view(kept)
 
     @app.get("/v1/files")
     def list_files(user: UserDep) -> dict:
