@@ -646,15 +646,16 @@ def test_a_master_restored_without_its_library_key_says_so(client, f, settings, 
 
     from fastapi.testclient import TestClient
 
-    from conftest import new_app
-
     app = App(client, f.user("lucia@x.com"))
     app.bind()
     app.publish()
     key_file = settings.storage_dir / "library.key"
     (settings.storage_dir / "library.cert").unlink()
     key_file.unlink()
+    from tisma_cloud.api import create_app
+
+    # The same database (new_app would empty a shared PostgreSQL one), without the key.
     with caplog.at_level(logging.ERROR, logger="tisma_cloud"):
-        with TestClient(new_app(settings)) as restored:
+        with TestClient(create_app(settings)) as restored:
             assert restored.get("/v1/library/index.json").status_code == 503
     assert any("library key was made now" in r.message and "1 models" in r.message for r in caplog.records)
