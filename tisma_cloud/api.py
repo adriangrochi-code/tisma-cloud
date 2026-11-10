@@ -39,9 +39,9 @@ from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
 from .jobs import (ESTIMATE_MAX_TRIANGLES, JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles,
                    estimate_seconds, plan_job)
-from .models import (AccountFile, AccountFileTaken, Alert, ApiToken, Bridge, BugReport, EmailCode, HourAdjustment, Job,
-                     LibraryBlock, LibraryModel, LibraryPeerKey, LibraryReport, Node, Payment, Plan, PlaySubscription, RemoteCommand,
-                     ScanUpload, Usage, User, month_of, utcnow)
+from .models import (AccountFile, AccountFileTaken, Alert, ApiToken, AppleSubscription, Bridge, BugReport, EmailCode,
+                     HourAdjustment, Job, LibraryBlock, LibraryModel, LibraryPeerKey, LibraryReport, Node, Payment, Plan,
+                     PlaySubscription, RemoteCommand, ScanUpload, Usage, User, month_of, utcnow)
 from .guard import Guard
 from .presence import Presence
 from .publicip import CHECK_S as PUBLIC_ADDRESS_CHECK_S, PublicAddress
@@ -317,8 +317,8 @@ class Services:
             thumbs = set(s.execute(select(LibraryModel.thumbnail_sha256).where(LibraryModel.user_id == user_id)).scalars())
             if files:
                 s.execute(delete(AccountFileTaken).where(AccountFileTaken.file_id.in_(files)))
-            for model in (ApiToken, EmailCode, Usage, PlaySubscription, Job, Bridge, BugReport, AccountFile,
-                          LibraryModel, LibraryPeerKey):
+            for model in (ApiToken, EmailCode, Usage, PlaySubscription, AppleSubscription, Job, Bridge, BugReport,
+                          AccountFile, LibraryModel, LibraryPeerKey):
                 s.execute(delete(model).where(model.user_id == user_id))
             # Its published models leave the index, and their images the disk (unless another model uses the same).
             library.bump(s, "index")
@@ -329,6 +329,7 @@ class Services:
                 s.execute(delete(RemoteCommand).where(RemoteCommand.id.in_(commands)))
             user.email = f"deleted-{user.id}@deleted.invalid"
             user.password_hash, user.google_sub, user.play_account, user.external_id = "", None, None, None
+            user.apple_account, user.library_name = None, None
             user.enabled = user.email_verified = user.unlimited = False
             user.extra_printers = 0
         for job_id in jobs:

@@ -201,3 +201,26 @@ def test_web_payments_are_off_unless_turned_on(settings):
     settings.web_payments = True
     with TestClient(new_app(settings), client=("200.40.10.7", 1)) as c:
         assert c.get("/v1/health").json()["payments"] is True
+
+
+def test_deleting_the_account_forgets_its_app_store_subscription(store):
+    f = Factory(store)
+    user = f.user("ana@x.com", plan="basico", paid_days=None)
+    acc = account_of(store, user)
+    tx = store.fake.transaction(acc)
+    assert store.post("/v1/billing/apple/purchase", headers=user, json={"signed_transaction": tx}).status_code == 200
+    services = store.app.state.services
+    with services.db.session() as s:
+        from sqlalchemy import func, select
+
+        from tisma_cloud.models import AppleSubscription, User
+        uid = s.execute(select(User.id).where(User.apple_account == acc)).scalar_one()
+    services.delete_account(uid)
+    with services.db.session() as s:
+        assert s.execute(select(func.count()).select_from(AppleSubscription)).scalar_one() == 0
+        assert s.get(User, uid).apple_account is None
+    # A notification of that subscription afterwards finds no account.
+    r = store.post("/v1/billing/apple/notify", json={"signedPayload": store.fake.notification(tx, "DID_RENEW")})
+    assert r.status_code == 200
+    with services.db.session() as s:
+        assert s.execute(select(func.count()).select_from(AppleSubscription)).scalar_one() == 0
