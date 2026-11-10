@@ -54,7 +54,7 @@ this repository and uses it when no artifact is left. The window's Nodos actions
 | 3D scans upload | /v1/scans (5), scans.py | revisado 11-06/11-10: pieces, 507 when full, zip limits, e2e in CI; pendiente: deep pass on piece offsets/retries after restart |
 | Jobs and nodes | /v1/jobs (5), /v1/node (8), scheduler, agent | revisado 11-09/11-10: result sent twice (lock), node_error requeue, cancel vs node failure, full disk (507, node pause), DB restart, parallel claims; pendiente: progress/heartbeat edge cases |
 | Auth and accounts | /v1/auth (8), /v1/me (13) | revisado 11-06/11-09: login limits, codes per day, re-login; pendiente: deep pass (Google sign-in, delete account, sessions) |
-| Billing and plans | /v1/billing (6), /v1/plans, /v1/site (3), /v1/admin/plans, payments | pendiente (deep pass: webhooks, Google Play, double application, amounts) |
+| Billing and plans | /v1/billing (6), /v1/plans, /v1/site (3), /v1/admin/plans, payments | revisado 11-10: provider notices (amount/currency check, idempotent), FOUND one payment notified at once paying 3-4 months, fixed 7b7cbe2; two payments at once both count; pendiente: Google Play purchases and notifications |
 | Remote printers | /v1/bridges (5), /v1/remote (6) | revisado 11-10 (token cache on disable); pendiente: deep pass |
 | Problem reports | /v1/reports, /v1/admin/reports (6), report-groups (2) | pendiente |
 | Admin panel: users, payments, capacity, queue, jobs, alerts, nodes | /v1/admin/* | revisado 11-09 (names, payments form, browser console clean); pendiente: deep pass on users/payments |
