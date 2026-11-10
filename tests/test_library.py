@@ -621,3 +621,21 @@ def test_the_thumbnail_of_a_removed_model_or_a_deleted_account_is_not_served(cli
     client.app.state.services.delete_account(uid)
     assert not path.exists()
     assert client.get(f"/v1/library/thumbs/{second['thumbnail']['sha256']}.webp").status_code == 404
+
+
+def test_the_engine_test_vectors_of_the_peers(tmp_path):
+    """The same bytes on both sides (the engine's vectors, 2026-11-10; RFC 8032 section 7.1 test keys, not secrets)."""
+    from tisma_cloud import peers
+
+    peer = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+    assert peers.peer_id(peer) == "12D3KooWQK1wnefoLrcVHbbnf5tLzbopUd3K3bFAoJpA7YJgL5pV"
+    (tmp_path / "library.key").write_text(base64.b64encode(bytes.fromhex(
+        "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")).decode() + "\n")
+    key = library.LibraryKey(tmp_path)
+    assert key.public.hex() == "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+    made = peers.ticket(key, "acct_test", peer, 512, now=1767225600 - peers.TICKET_TTL_S)
+    assert made["expires"] == 1767225600
+    assert made["ticket"] == (
+        "eyJhY2NvdW50IjoiYWNjdF90ZXN0IiwiY2FwX21iX3Blcl9ob3VyIjo1MTIsImV4cGlyZXMiOjE3NjcyMjU2MDAsInBlZXJfaWQiOiIxMkQzS29v"
+        "V1FLMXduZWZvTHJjVkhiYm5mNXRMemJvcFVkM0szYkZBb0pwQTdZSmdMNXBWIn0.SUYZztJ0XusuSVGgTXz4YvFJ2goMrX5oWBzlkVB6orEqigWeQ3N"
+        "jV_N99Y-mKN6SlpQnV6lJF8mmjfCILE_OCA")
