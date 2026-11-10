@@ -751,3 +751,10 @@ def test_the_author_is_the_account_with_one_name_for_all_its_publications(client
     other = App(client, f.user("nuevo@x.com"))
     other.bind()
     other.publish(expect=422, author_name="", files=[{"path": "c.3mf", "role": "project", "size": 5, "sha256": "6" * 64}])
+
+
+def test_renaming_the_author_is_limited(client, f):
+    """Each rename rebuilds the signed index every app downloads: a few a day."""
+    user = f.user("sofia@x.com")
+    codes = [client.put("/v1/me/library-name", headers=user, json={"name": f"Nombre {i}"}).status_code for i in range(8)]
+    assert codes[:5] == [200] * 5 and codes[5:] == [429] * 3

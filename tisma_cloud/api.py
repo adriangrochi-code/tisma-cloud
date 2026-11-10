@@ -71,6 +71,7 @@ SCAN_ROOM_LEFT = 2 << 30
 # The library (library.py): models published and reports sent by one account in a day.
 LIBRARY_PUBLISH_PER_DAY = 20
 LIBRARY_REPORTS_PER_DAY = 20
+LIBRARY_RENAMES_PER_DAY = 5
 # Apps (peer keys) of one account, and announcements of an account per minute (all its apps).
 LIBRARY_PEER_KEYS_PER_ACCOUNT = 10
 LIBRARY_ANNOUNCES_PER_MINUTE = 30
@@ -1651,6 +1652,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             name = library._text(body, "name", 60)
         except library.LibraryError as ex:
             raise HTTPException(422, str(ex)) from None
+        # Each rename rebuilds the signed index every app downloads.
+        if not services.daily.allow(f"library-rename:{user.id}", LIBRARY_RENAMES_PER_DAY):
+            raise HTTPException(429, "Too many name changes today", headers={"Retry-After": "3600"})
         with db.session() as s:
             u = s.get(User, user.id)
             u.library_name = name
