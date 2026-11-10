@@ -68,8 +68,12 @@ jobs:
           if grep -i "traceback" load-master.log; then exit 1; fi
 
   # The server as one program, tisma-cloud (.exe on Windows): master, node and administration (tisma-cloud.spec).
+  # The package (tisma-cloud with Tisma Slicer and tisma-engine next to it) runs only on the owner's machines and is
+  # never given to anyone: it is built only when asked (Actions > Cloud server > Run workflow), and it is uploaded (and
+  # the copy of the slicer kept) only while this repository is private; a public one builds and tests it, nothing more.
   executable:
     needs: tests
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -108,6 +112,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.TISMA_SLICER_TOKEN || github.token }}
           CLOUD_TOKEN: ${{ github.token }}
+          REPO_PRIVATE: ${{ github.event.repository.private }}
           SLICER_REPO: adriangrochi-code/Nuevo-slicer-basado-en-prusa-
         run: |
           set -e
@@ -129,7 +134,7 @@ jobs:
           done
           kept=$(GH_TOKEN=$CLOUD_TOKEN gh release download "$cache" -R "$GITHUB_REPOSITORY" -p "$pkg.txt" -O - 2>/dev/null || true)
           if [ -n "$run_id" ]; then
-            if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && [ "$kept" != "$run_id $branch $sha" ]; then
+            if [ "$REPO_PRIVATE" = true ] && [ "$GITHUB_REF" = refs/heads/main ] && [ "$kept" != "$run_id $branch $sha" ]; then
               python -m zipfile -c "$pkg.zip" tisma-download
               echo "$run_id $branch $sha" > "$pkg.txt"
               GH_TOKEN=$CLOUD_TOKEN gh release create "$cache" -R "$GITHUB_REPOSITORY" --prerelease --title "Tisma Slicer (copy for the CI)" \
@@ -350,6 +355,7 @@ jobs:
           pip install ".[master,test]"
           pytest -q tests/test_system.py tests/test_manager.py
       - uses: actions/upload-artifact@v4
+        if: github.event.repository.private
         with:
           name: tisma-cloud-${{ matrix.name }}
           path: |

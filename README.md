@@ -328,9 +328,10 @@ túnel gratuito de Cloudflare, sin abrir puertos ni DNS dinámico.
 
 ### Programa tisma-cloud (Windows y Linux, sin Docker ni Python)
 
-Cada pull request y cada cambio en `main` de este repositorio genera el programa **`tisma-cloud`** (`tisma-cloud.exe`
-en Windows) en la pestaña *Actions* del PR, artefactos `tisma-cloud-windows` y `tisma-cloud-linux` (se guardan 30
-días). Es el mismo programa para todas las máquinas: en cada una se elige si es el **maestro** (el servidor central)
+El programa **`tisma-cloud`** (`tisma-cloud.exe` en Windows) se arma a pedido: pestaña *Actions* › *Cloud server* ›
+*Run workflow*. Con el repositorio privado queda como artefactos `tisma-cloud-windows` y `tisma-cloud-linux` (7 días);
+con el repositorio público se arma y se prueba igual, pero no se sube (el paquete trae Tisma Slicer y tisma-engine y es
+solo para las máquinas del dueño). Es el mismo programa para todas las máquinas: en cada una se elige si es el **maestro** (el servidor central)
 o un **nodo de cómputo** (esclavo).
 
 **Trae todo lo que necesita:** el paquete es `dist/tisma-cloud.exe` y, al lado, la carpeta `dist/tisma-slicer/` con
