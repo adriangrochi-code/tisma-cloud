@@ -1945,16 +1945,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with db.session() as s:
             return {"account_id": google_play.play_account(s, s.get(User, user.id))}
 
+    def play_once_more(apply):  # noqa: ANN001, ANN202
+        """The app and Google's notification report a new purchase at about the same time, and both make its row: the
+        one that loses (the same purchase token, unique) applies it again over the row the other made."""
+        try:
+            return apply()
+        except IntegrityError:
+            return apply()
+
     @app.post("/v1/billing/play/purchase")
     def play_purchase(user: UserDep, body: PlayPurchaseBody) -> dict:
         """A purchase made in the app: verified with Google, acknowledged and applied to the account."""
         store = play_store()
-        try:
+
+        def link() -> dict:
             with db.session() as s:
                 u = s.get(User, user.id)
                 sub = store.link(s, u, body.purchase_token)
-                result = {"state": sub.state, "plan": sub.plan_name,
-                          **scheduler.account(s, u, cfg.grace_days).as_dict()}
+                return {"state": sub.state, "plan": sub.plan_name,
+                        **scheduler.account(s, u, cfg.grace_days).as_dict()}
+
+        try:
+            result = play_once_more(link)
         except google_play.PlayError as ex:
             raise HTTPException(422, str(ex)) from None
         except google_play.PlayUnavailable as ex:
@@ -1986,7 +1998,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if services.play.refresh(s, token) is None:
                     log.info("Google Play notification %s for a purchase of no account", message_id)
         try:
-            await run_in_threadpool(refresh)
+            await run_in_threadpool(play_once_more, refresh)
         except google_play.PlayError as ex:
             # Not ours (another product, an unknown token): nothing to retry.
             log.warning("Google Play notification %s refused: %s", message_id, ex)

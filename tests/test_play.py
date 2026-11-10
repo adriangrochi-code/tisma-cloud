@@ -273,3 +273,43 @@ def test_disabled_without_settings(settings):
         assert c.post("/v1/billing/play/notify", json={}).status_code == 404
         user = register(c)
         assert c.get("/v1/billing/play/account", headers=user).status_code == 503
+
+
+def test_the_app_and_googles_notification_of_one_purchase_at_once(play):
+    """When someone buys, the app reports the purchase and Google notifies it at about the same time: both answer
+    well and the purchase is kept once."""
+    import threading
+
+    user = register(play, "ana@correo.com")
+    acc = account_id(play, user)
+    play.google.buy("tok-race", acc, "tisma_pro")
+    barrier = threading.Barrier(4)
+    codes = []
+
+    def app_reports():
+        barrier.wait()
+        try:
+            codes.append(play.post("/v1/billing/play/purchase", headers=user,
+                                   json={"purchase_token": "tok-race"}).status_code)
+        except Exception as ex:  # noqa: BLE001
+            codes.append(repr(ex)[:200])
+
+    def google_notifies():
+        barrier.wait()
+        try:
+            codes.append(notify(play, notification("tok-race", 4, "m-race")).status_code)
+        except Exception as ex:  # noqa: BLE001
+            codes.append(repr(ex)[:200])
+
+    threads = [threading.Thread(target=t) for t in (app_reports, app_reports, google_notifies, google_notifies)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert all(c in (200, 204) for c in codes), codes
+    with play.app.state.services.db.session() as s:
+        from sqlalchemy import func, select
+
+        from tisma_cloud.models import PlaySubscription
+        assert s.execute(select(func.count()).select_from(PlaySubscription)).scalar_one() == 1
+    assert play.get("/v1/me", headers=user).json()["paid"] is True
