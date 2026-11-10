@@ -186,6 +186,12 @@ def test_an_address_is_blocked_for_a_day_and_then_forgotten(client, f):
     assert key.address_salt("2026-11-10") != key.address_salt("2026-11-11")
     assert client.post("/v1/admin/library/blocks", headers=admin,
                        json={"kind": "address", "value": "no es una ip"}).status_code == 422
+    # One address written as a network of one is that address; a range is refused.
+    one = client.post("/v1/admin/library/blocks", headers=admin, json={"kind": "address", "value": "198.51.100.7/32"})
+    assert one.status_code == 201 and one.json()["value"] == "198.51.100.7"
+    assert client.post("/v1/admin/library/blocks", headers=admin,
+                       json={"kind": "address", "value": "198.51.100.0/24"}).status_code == 422
+    client.delete(f"/v1/admin/library/blocks/{one.json()['id']}", headers=admin)
     # When it ends, the row is deleted (a personal datum) and the list moves on.
     with f.db.session() as s:
         s.query(LibraryBlock).update({LibraryBlock.until: utcnow() - timedelta(minutes=1)})

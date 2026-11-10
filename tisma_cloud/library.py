@@ -312,9 +312,13 @@ def add_block(session: Session, kind: str, value: str, reason: str = "", hours: 
         import ipaddress
 
         try:
-            value = str(ipaddress.ip_address(value))
+            # One address, also written as a network of one (203.0.113.5/32, 2001:db8::1/128); never a range.
+            network = ipaddress.ip_network(value, strict=True)
         except ValueError:
             raise LibraryError(f"Not an address: {value}") from None
+        if network.num_addresses != 1:
+            raise LibraryError(f"One address only, not a range: {value}")
+        value = str(network.network_address)
         hours = hours or 24.
     block = LibraryBlock(kind=kind, value=value[:100], reason=reason[:300],
                          until=utcnow() + timedelta(hours=hours) if hours else None)
