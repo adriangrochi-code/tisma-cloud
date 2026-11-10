@@ -482,18 +482,18 @@ def test_relay_tickets_and_who_shares_a_model(settings):
         assert c.post("/v1/library/relay-ticket", headers=ana.headers, json={"peer_key": lucia.public}).status_code == 409
         # Lucía shares directly, Diego through the relay; the master knows their addresses, nobody else unless both
         # chose «Directo».
-        assert announce(c, lucia, [model], True, ["/ip4/203.0.113.7/udp/4001/quic-v1"]) == 200
+        assert announce(c, lucia, [model], True, ["/ip4/192.168.1.20/udp/4001/quic-v1"]) == 200
         assert announce(c, diego, [model], False, ["/ip4/198.51.100.2/tcp/4001"]) == 200
-        assert announce(c, ana, [], True, ["/ip4/192.0.2.9/tcp/4001"]) == 200
+        assert announce(c, ana, [], True, ["/ip4/192.168.1.20/tcp/4002"]) == 200
         seen_by_direct = c.get("/v1/library/peers", headers=ana.headers, params={"model": model, "peer_key": ana.public})
         found = {p["peer_id"]: p["addrs"] for p in seen_by_direct.json()["peers"]}
         lucia_id, diego_id = (peers.peer_id(library.unb64(a.public, 32)) for a in (lucia, diego))
-        assert found[lucia_id] == ["/ip4/203.0.113.7/udp/4001/quic-v1"]
+        assert found[lucia_id] == ["/ip4/192.168.1.20/udp/4001/quic-v1"]
         assert found[diego_id] == [f"{relay}/p2p-circuit/p2p/{diego_id}"]
         # An app through the relay sees nobody's address.
         seen = c.get("/v1/library/peers", headers=diego.headers, params={"model": model, "peer_key": diego.public}).json()
         assert seen["peers"] == [{"peer_id": lucia_id, "addrs": [f"{relay}/p2p-circuit/p2p/{lucia_id}"]}]
-        assert "203.0.113.7" not in json.dumps(seen) and "198.51.100.2" not in str(c.get("/v1/library/peers",
+        assert "192.168.1.20" not in json.dumps(seen) and "198.51.100.2" not in str(c.get("/v1/library/peers",
                headers=ana.headers, params={"model": model}).json())
         # A bad signature, an old time, a blocked peer.
         assert announce(c, lucia, [model], True, [], when=int(time.time()) - 3600) == 422
@@ -687,3 +687,25 @@ def test_published_texts_carry_no_control_or_direction_characters(client, f):
     app.publish(expect=422, files=[{"path": "pieza\u202elmth.3mf", "role": "project", "size": 1, "sha256": "a" * 64}])
     # A description may have line breaks.
     assert app.publish(description="Primera línea\nSegunda línea")["description"] == "Primera línea\nSegunda línea"
+
+
+def test_an_app_announces_only_its_own_address(settings):
+    """Announcing another machine's address would send every downloader to it (a reflection attack): the direct
+    addresses must be the one the announcement comes from."""
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from conftest import Factory, new_app
+
+    with TestClient(new_app(dataclasses.replace(settings)), client=("203.0.113.7", 50000)) as c:
+        certify(c)
+        f = Factory(c)
+        app = App(c, f.user("lucia@x.com"))
+        app.bind()
+        model = app.publish()["id"]
+        assert announce(c, app, [model], True, ["/ip4/203.0.113.7/udp/4001/quic-v1", "/ip4/203.0.113.7/tcp/4001"]) == 200
+        assert announce(c, app, [model], True, ["/ip4/198.51.100.99/tcp/4001"]) == 422
+        assert announce(c, app, [model], True, ["/dns4/victima.example/tcp/443"]) == 422
+        # Through the relay no address is kept, so anything goes.
+        assert announce(c, app, [model], False, ["/ip4/198.51.100.99/tcp/4001"]) == 200

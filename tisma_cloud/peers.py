@@ -110,3 +110,20 @@ def addresses_for(provider: Peer, asker_direct: bool, relays: list[str]) -> list
     if provider.direct and asker_direct:
         return list(provider.addrs)
     return [f"{relay.rstrip('/')}/p2p-circuit/p2p/{provider.id}" for relay in relays]
+
+
+def normal_ip(text: str) -> str | None:
+    import ipaddress
+
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        return None
+
+
+def address_of(multiaddr: str) -> str | None:
+    """The IP of a multiaddr that starts with /ip4/<ip>/ or /ip6/<ip>/ (None for any other: /dns4, a relay...)."""
+    parts = multiaddr.split("/")
+    if len(parts) >= 3 and parts[0] == "" and parts[1] in ("ip4", "ip6"):
+        return normal_ip(parts[2])
+    return None

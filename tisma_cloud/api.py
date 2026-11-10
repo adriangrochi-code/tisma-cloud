@@ -1229,6 +1229,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ok = False
         if not ok:
             raise HTTPException(422, "'signature' is not the peer key's signature of the announcement")
+        if direct:
+            # Only its own address: announcing another machine's would send every downloader to it.
+            own = client_key(request)
+            for addr in addrs:
+                if peers.address_of(addr) != peers.normal_ip(own):
+                    raise HTTPException(422, "'addrs' are this app's own public address (/ip4 or /ip6), the one it "
+                                             "announces from")
         with db.session() as s:
             peer_allowed(s, user, peer_key, request)
         services.peers.announce(peers.Peer(peer_key=peer_key, account=library.account_id(user.id),
