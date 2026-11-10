@@ -186,11 +186,22 @@ class Publication:
     manifest_signature: str
 
 
+# Control characters and the marks that change the direction of text (a name that shows «gpj.exe» reversed, colours of
+# a terminal): never in what others read. A description keeps its line breaks.
+_HIDDEN = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+
+
+def plain_text(value: str, key: str, lines: bool = False) -> str:
+    if _HIDDEN.search(value) or (not lines and ("\n" in value or "\t" in value)):
+        raise LibraryError(f"'{key}' has control or direction characters")
+    return value
+
+
 def _text(body: dict, key: str, most: int, needed: bool = True) -> str:
     value = body.get(key, "")
     if not isinstance(value, str):
         raise LibraryError(f"'{key}' is text")
-    value = value.strip()
+    value = plain_text(value.strip(), key, lines=key == "description")
     if needed and not value:
         raise LibraryError(f"'{key}' is needed")
     if len(value) > most:
@@ -209,6 +220,8 @@ def parse_publication(body: dict) -> Publication:
     if not isinstance(tags, list) or len(tags) > 10 or not all(isinstance(t, str) and 0 < len(t.strip()) <= 30
                                                                 for t in tags):
         raise LibraryError("'tags': at most 10 texts of up to 30 characters")
+    for t in tags:
+        plain_text(t, "tags")
     files = body.get("files")
     if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
         raise LibraryError(f"'files': from 1 to {MAX_FILES} files")
@@ -217,7 +230,7 @@ def parse_publication(body: dict) -> Publication:
         if not isinstance(f, dict):
             raise LibraryError("Each file is an object")
         path, role, size, sha = f.get("path"), f.get("role"), f.get("size"), f.get("sha256")
-        if not isinstance(path, str) or not _PATH.match(path) or path.strip(" .") != path:
+        if not isinstance(path, str) or not _PATH.match(path) or path.strip(" .") != path or _HIDDEN.search(path):
             raise LibraryError(f"Bad file name: {path!r}")
         if role not in ROLES:
             raise LibraryError(f"'role' is one of {', '.join(ROLES)}")

@@ -676,3 +676,14 @@ def test_a_certificate_left_without_its_key_is_not_served(tmp_path):
     (tmp_path / "library.key").unlink()
     new = library.LibraryKey(tmp_path)
     assert new.public != old.public and new.certificate() is None
+
+
+def test_published_texts_carry_no_control_or_direction_characters(client, f):
+    app = App(client, f.user("lucia@x.com"))
+    app.bind()
+    for field, value in (("name", "Soporte‮gpj.exe"), ("author_name", "Lu\x00cía"), ("name", "a\x1b[31mrojo"),
+                         ("tags", ["ok", "ma‏l"])):
+        app.publish(expect=422, **{field: value})
+    app.publish(expect=422, files=[{"path": "pieza\u202elmth.3mf", "role": "project", "size": 1, "sha256": "a" * 64}])
+    # A description may have line breaks.
+    assert app.publish(description="Primera línea\nSegunda línea")["description"] == "Primera línea\nSegunda línea"
