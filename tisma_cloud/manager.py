@@ -819,18 +819,15 @@ class Manager:
         from . import library
 
         env = self.read_env()
-        storage = Path(os.environ.get("TISMA_STORAGE_DIR") or env.get("TISMA_STORAGE_DIR") or "./storage")
-        if not storage.is_absolute():
-            storage = self.home / storage
+        storage = self._storage_dir()
         key_file, cert_file = storage / "library.key", storage / "library.cert"
-        steps = ("tisma-cloud admin library-key y, con el USB, deploy/certify_library_key.py; después "
-                 "tisma-cloud admin library-cert <certificado> (README, «Biblioteca entre usuarios»)")
+        steps = "«Arreglar» la certifica con la clave del proyecto de tu pendrive (README, «Biblioteca entre usuarios»)"
         if not key_file.exists():
-            return Check("Biblioteca entre usuarios", None, "Todavía sin clave (se hace al iniciar el maestro); "
-                                                            "después hay que certificarla: " + steps)
+            return Check("Biblioteca entre usuarios", None, "Todavía sin clave (se hace al iniciar el maestro) ni "
+                                                            "certificado. " + steps, fix="library_cert")
         if not cert_file.exists():
             return Check("Biblioteca entre usuarios", None, "La clave no está certificada: la biblioteca responde 503 "
-                                                            "y las apps no la usan. " + steps)
+                                                            "y las apps no la usan. " + steps, fix="library_cert")
         project = os.environ.get("TISMA_LIBRARY_PROJECT_KEY") or env.get("TISMA_LIBRARY_PROJECT_KEY", "")
         if project:
             try:
@@ -842,8 +839,39 @@ class Manager:
                 good = False
             if not good:
                 return Check("Biblioteca entre usuarios", False, "El certificado no es de esta clave con la clave del "
-                                                                 "proyecto: las apps rechazan la biblioteca. " + steps)
+                                                                 "proyecto: las apps rechazan la biblioteca. " + steps,
+                             fix="library_cert")
         return Check("Biblioteca entre usuarios", True, "Clave certificada por el dueño")
+
+    def _storage_dir(self) -> Path:
+        env = self.read_env()
+        storage = Path(os.environ.get("TISMA_STORAGE_DIR") or env.get("TISMA_STORAGE_DIR") or "./storage")
+        return storage if storage.is_absolute() else self.home / storage
+
+    def certify_library(self, key_file: str | Path, password: str | None = None, replace: bool = False) -> str:
+        """Certifies the library key with the project key on the owner's USB stick (clave.pem): the file is read into
+        memory only for that signature and zeroed after it; it is not copied, logged or deleted, and nothing goes over
+        the network. TISMA_LIBRARY_PROJECT_KEY is set from the key when it was not (or, with replace, changed)."""
+        from . import library
+
+        configured = os.environ.get("TISMA_LIBRARY_PROJECT_KEY") or self.read_env().get("TISMA_LIBRARY_PROJECT_KEY", "")
+        pem = secret = None
+        try:
+            pem = library.read_secret(Path(key_file))
+            secret = bytearray(password.encode()) if password else None
+            storage = self._storage_dir()
+            storage.mkdir(parents=True, exist_ok=True)
+            public = library.certify(library.LibraryKey(storage), pem, configured, secret, replace)
+        except OSError as e:
+            raise RuntimeError(f"No se pudo leer la clave: {e.strerror or e}") from None
+        finally:
+            library.wipe(pem)
+            library.wipe(secret)
+        if not configured or replace:
+            self.write_env({"TISMA_LIBRARY_PROJECT_KEY": public.hex()})
+            if "TISMA_LIBRARY_PROJECT_KEY" in os.environ:
+                os.environ["TISMA_LIBRARY_PROJECT_KEY"] = public.hex()
+        return "Certificada. Ya podés sacar el pendrive."
 
     def _backup_check(self) -> Check:
         """The daily backup of the database (backup.py): where it goes and how old the last one is."""
@@ -1025,6 +1053,9 @@ class Manager:
             return "Programas encontrados: " + ", ".join(found.values())
         if key == "scan_modules":
             return self._fix_scan_modules()
+        if key == "library_cert":
+            raise RuntimeError("Para certificar la biblioteca hace falta la clave del proyecto: elegila con «Arreglar» "
+                               "en la ventana o con tisma-cloud admin library-certify --key <clave.pem>")
         raise ValueError(f"Nothing to fix for {key}")
 
     def _fix_scan_modules(self) -> str:

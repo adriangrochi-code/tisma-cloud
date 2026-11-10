@@ -63,6 +63,14 @@ class LibraryError(ValueError):
     """What was sent cannot be published (the message says why, for the person)."""
 
 
+class KeyPasswordNeeded(LibraryError):
+    """The project's key file is protected by a password and none was given."""
+
+
+class ProjectKeyMismatch(LibraryError):
+    """The key given is not the project key configured (TISMA_LIBRARY_PROJECT_KEY)."""
+
+
 # ---- the keys
 def b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
@@ -139,6 +147,61 @@ class LibraryKey:
         """The salt of the addresses of one day (p2p_library.md 8 quinquies): it changes every day, so the hash of an
         address in the blocklist cannot be followed from one day to the next."""
         return hashlib.sha256(b"tisma-library-address-salt/1\n" + self._private.private_bytes_raw() + day.encode()).digest()
+
+
+MAX_PEM_BYTES = 64 << 10
+
+
+def read_secret(path: Path) -> bytearray:
+    """The bytes of a key file in a buffer the caller zeroes (wipe) after use, never in an immutable bytes copy."""
+    with open(path, "rb", buffering=0) as f:
+        size = os.fstat(f.fileno()).st_size
+        if size > MAX_PEM_BYTES:
+            raise LibraryError(f"{path.name} no es una clave: tiene {size} bytes")
+        buf = bytearray(size)
+        read = f.readinto(buf)
+    if read != size:
+        wipe(buf)
+        raise LibraryError(f"{path.name} cambió mientras se leía")
+    return buf
+
+
+def wipe(buf: bytearray | None) -> None:
+    if buf is not None:
+        buf[:] = bytes(len(buf))
+
+
+def certify(key: LibraryKey, pem: bytearray, configured: str = "", password: bytearray | None = None,
+            replace: bool = False) -> bytes:
+    """Certifies the library key with the project's private key (PEM, PKCS#8, as tools/sign_release.py of the engine
+    uses it), given in memory only: it signs CERT_PREFIX + the library key, checks the signature and installs it.
+
+    configured is TISMA_LIBRARY_PROJECT_KEY as it is now: a key whose public half is another is refused (the wrong USB
+    stick) unless replace (the owner changed the project key on purpose). Returns the project's public key (32 bytes).
+    The caller zeroes pem and password; nothing of the private key is written or logged here."""
+    try:
+        private = serialization.load_pem_private_key(pem, password=password or None)
+    except TypeError:
+        if not password:
+            raise KeyPasswordNeeded("La clave tiene contraseña: escribila") from None
+        raise LibraryError("Esta clave no lleva contraseña") from None
+    except ValueError:
+        raise LibraryError("No es una clave privada PEM, o la contraseña no es la correcta") from None
+    if not isinstance(private, Ed25519PrivateKey):
+        raise LibraryError("No es una clave Ed25519: la clave del proyecto es Ed25519 (la de tools/sign_release.py)")
+    public = public_bytes(private.public_key())
+    if configured and not replace:
+        try:
+            same = project_key_bytes(configured) == public
+        except LibraryError:
+            same = False
+        if not same:
+            raise ProjectKeyMismatch("Esta clave no es la del proyecto configurada en TISMA_LIBRARY_PROJECT_KEY: ¿es el "
+                               "pendrive correcto? Si cambiaste la clave del proyecto a propósito, reemplazala.")
+    cert = private.sign(CERT_PREFIX + key.public)
+    del private
+    key.install_certificate(b64(cert), public.hex())
+    return public
 
 
 def project_key_bytes(text: str) -> bytes:

@@ -61,11 +61,11 @@ tisma-cloud admin plan-set escaneo --hours 10 --concurrent 1 --classes scan --pu
       de pago todavía, el período pago se da a mano (`admin user-set correo --paid-until AAAA-MM-DD`) o con una cuenta
       interna.
 
-- [ ] **La biblioteca entre usuarios** (una sola vez, con el USB de la clave del proyecto; README, «Biblioteca entre
-      usuarios»): en el maestro `tisma-cloud config TISMA_LIBRARY_PROJECT_KEY <la clave pública, 64 hex>` y
-      `tisma-cloud admin library-key`; en tu computadora `python deploy/certify_library_key.py --key E:\tisma\clave.pem
-      --library-key <lo que mostró> --public-key <64 hex>`; en el maestro `tisma-cloud admin library-cert <certificado>`.
-      Sin esto la biblioteca no se sirve.
+- [ ] **La biblioteca entre usuarios** (una sola vez; README, «Biblioteca entre usuarios»): enchufá el pendrive de la
+      clave del proyecto en el maestro, **Diagnóstico → «Certificar con mi pendrive»** y elegí `clave.pem`. Cuando diga
+      «Certificada», sacá el pendrive (la clave queda en él; el maestro la usó solo en memoria). En Linux:
+      `tisma-cloud admin library-certify --key /ruta/clave.pem`. Sin esto la biblioteca no se sirve. Sin enchufar el
+      pendrive en el maestro, el camino de tres pasos del README sigue andando.
 
 ## 5. Los nodos
 

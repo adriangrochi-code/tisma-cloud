@@ -143,6 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("library-key", help="the public key of the library and whether its certificate is installed")
     p = sub.add_parser("library-cert", help="install the owner's signature of the library key (project key, base64)")
     p.add_argument("certificate")
+    p = sub.add_parser("library-certify", help="certify the library key with the project key (clave.pem on the USB "
+                                              "stick), read into memory only")
+    p.add_argument("--key", required=True, help="the project's private key (PEM, PKCS#8)")
+    p.add_argument("--replace-project-key", action="store_true",
+                   help="the project key changed on purpose: replace TISMA_LIBRARY_PROJECT_KEY with this key's")
     p = sub.add_parser("reports", help="the catalog of the problems reported, for the programmers (and their AI)")
     p.add_argument("--status", default="new,confirmed", help="comma separated: " + ", ".join(reports.STATUSES))
     p.add_argument("--app", choices=reports.APPS)
@@ -151,6 +156,23 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     settings = Settings()
+    if args.command == "library-certify":
+        import getpass
+
+        from .manager import Manager
+        from . import library
+
+        manager = Manager()
+        try:
+            try:
+                print(manager.certify_library(args.key, replace=args.replace_project_key))
+            except library.KeyPasswordNeeded:
+                print(manager.certify_library(args.key, getpass.getpass("Contraseña de la clave: "),
+                                              args.replace_project_key))
+        except (library.LibraryError, RuntimeError) as ex:
+            print(ex, file=sys.stderr)
+            return 1
+        return 0
     if args.command in ("library-key", "library-cert"):
         # The library's signing key (library.py): its public key, for the owner to sign once with the project key on
         # the USB, and that certificate installed.

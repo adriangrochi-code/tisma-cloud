@@ -939,6 +939,9 @@ class App:
         bar.pack(fill="x", pady=(10, 0))
         ttk.Button(bar, text="Arreglar", style="Accent.TButton", command=self.fix_selected).pack(side="left")
         ttk.Button(bar, text="Arreglar todo", command=self.fix_all).pack(side="left", padx=6)
+        if self.m.role() == "master":
+            # The one-time certification of the library shared between users (point «Biblioteca entre usuarios»).
+            ttk.Button(bar, text="Certificar con mi pendrive", command=self.certify_library).pack(side="left")
         ttk.Button(bar, text="Volver a comprobar", command=self.load_checks).pack(side="right")
         tk.Label(box.inner, text="Algunos arreglos piden abrir Tisma Cloud como administrador.", bg=CARD, fg=MUTED,
                  font=self.f_small).pack(anchor="w", pady=(8, 0))
@@ -991,6 +994,13 @@ class App:
         self.run_fixes([c for c in self.checks if c.ok is False and c.fix])
 
     def run_fixes(self, checks: list) -> None:
+        if any(c.fix == "library_cert" for c in checks):
+            # It needs the owner's USB stick: asked here, apart from the other fixes.
+            checks = [c for c in checks if c.fix != "library_cert"]
+            self.certify_library()
+            if not checks:
+                return
+
         def work() -> None:
             done, errors = [], []
             for c in checks:
@@ -1012,6 +1022,48 @@ class App:
         threading.Thread(target=self.load_autostart, daemon=True).start()
         self.load_checks()
         self.refresh(reschedule=False)
+
+    def certify_library(self, path: str = "", password: str | None = None, replace: bool = False) -> None:
+        """«Certificar con mi pendrive»: the project key (clave.pem on the USB stick) signs the library key once. The
+        file is only read into memory for that signature (Manager.certify_library) and stays on the stick."""
+        from . import library
+
+        if not path:
+            path = filedialog.askopenfilename(
+                parent=self.root, title="La clave del proyecto (clave.pem, en tu pendrive)",
+                filetypes=(("Clave PEM", "*.pem"), ("Todos los archivos", "*.*")))
+            if not path:
+                return
+
+        def work() -> None:
+            try:
+                done = self.m.certify_library(path, password, replace)
+            except library.KeyPasswordNeeded:
+                self.root.after(0, ask_password)
+                return
+            except library.ProjectKeyMismatch as e:
+                self.root.after(0, lambda e=e: ask_replace(str(e)))
+                return
+            except Exception as e:  # noqa: BLE001
+                self.root.after(0, lambda e=e: messagebox.showerror("Tisma Cloud", f"No se certificó: {e}",
+                                                                     parent=self.root))
+                return
+            self.root.after(0, lambda: (messagebox.showinfo("Tisma Cloud", done, parent=self.root),
+                                        self.load_checks()))
+
+        def ask_password() -> None:
+            text = simpledialog.askstring("Tisma Cloud", "La contraseña de la clave del proyecto:", show="*",
+                                          parent=self.root)
+            if text:
+                self.certify_library(path, text, replace)
+
+        def ask_replace(why: str) -> None:
+            if messagebox.askyesno("Tisma Cloud", why + "\n\n¿Reemplazar la clave del proyecto configurada por esta? "
+                                   "Las apps que tienen la anterior dejarán de aceptar la biblioteca.", icon="warning",
+                                   default="no", parent=self.root):
+                self.certify_library(path, password, True)
+
+        threading.Thread(target=work, daemon=True).start()
 
     # ---- log and console of the master
     def build_log(self) -> None:

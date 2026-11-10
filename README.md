@@ -595,7 +595,15 @@ Los modelos que la gente publica viajan de una app a otra; el central **no guard
 Las dos se bajan sin sesión con su firma Ed25519 aparte (64 bytes): `GET /v1/library/index.json` y `.sig`,
 `GET /v1/library/blocklist.json` y `.sig`. Las firma la **clave de la biblioteca**, `storage\library.key`, que el central
 hace la primera vez. La clave del proyecto vive solo en el USB del dueño, que certifica la de la biblioteca **una sola
-vez**:
+vez**. Lo más corto: en la ventana del maestro, **Diagnóstico → «Certificar con mi pendrive»** (o «Arreglar» en
+«Biblioteca entre usuarios»), elegir `clave.pem` del pendrive y listo; en Linux,
+`tisma-cloud admin library-certify --key /ruta/clave.pem`. El maestro lee la clave **solo en memoria** para esa firma
+(no la copia a disco, ni al registro, ni a la base, ni a la copia de respaldo; no manda nada por la red) y borra esos
+bytes de la memoria enseguida; el archivo queda en el pendrive, que hace falta para firmar las actualizaciones y para
+volver a certificar. Pone `TISMA_LIBRARY_PROJECT_KEY` si no estaba, y rechaza una clave que no sea la configurada (¿otro
+pendrive?); si se cambió la clave del proyecto a propósito, la ventana pregunta si reemplazarla
+(`--replace-project-key` en la consola). Con una clave de la biblioteca nueva, se certifica igual otra vez. El camino
+de tres pasos sigue andando, para no enchufar el pendrive en el maestro:
 
 ```
 tisma-cloud admin library-key                      # en el maestro: la clave de la biblioteca (base64)
