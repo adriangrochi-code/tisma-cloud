@@ -139,7 +139,8 @@ class Services:
         self.twins = Twins()
         self.updates = UpdateMirror(settings.updates_url, Path(settings.storage_dir) / "updates")
         # The library shared between users (library.py): its own signing key and the signed index and blocklist.
-        self.library = library.Signed(library.LibraryKey(Path(settings.storage_dir)))
+        self.library = library.Signed(library.LibraryKey(Path(settings.storage_dir)),
+                                      tuple(k.strip() for k in settings.library_revoked_keys.split(",") if k.strip()))
         # The last daily backup that failed (backup.py), for the alerts; None when the last one was good.
         self.backup_failed: str | None = None
         self._backup_lock = threading.Lock()
@@ -1017,6 +1018,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- the library shared between users (library.py; p2p_library.md): an index and a blocklist, signed; the files
     # themselves never come here.
     def library_file(name: str, signature: bool, request: Request) -> Response:
+        if services.library.key.certificate() is None and not cfg.library_uncertified:
+            # The apps use only lists of a certified key (p2p_library.md 3 quinquies).
+            raise HTTPException(503, "The library key is not certified yet (tisma-cloud admin library-cert)",
+                                headers={"Retry-After": "3600"})
         with db.session() as s:
             data, sig, etag = services.library.get(s, name)
         if signature:

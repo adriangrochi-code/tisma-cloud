@@ -475,6 +475,8 @@ class LibraryModel(Base):
     swarm: Mapped[str] = mapped_column(Text, default="null")
     peer_key: Mapped[str] = mapped_column(String(64))
     manifest_signature: Mapped[str] = mapped_column(String(100))
+    # A seeder downloaded and checked its files (ClamAV and the checks of p2p_library.md 3 octies).
+    checked: Mapped[bool] = mapped_column(Boolean, default=False)
     published_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     # Removed by its author or by the review (with the reason): out of the index.
     removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

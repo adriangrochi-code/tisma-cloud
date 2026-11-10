@@ -563,25 +563,32 @@ Los modelos que la gente publica viajan de una app a otra; el central **no guard
 `p2p_library.md` del motor). Guarda solo:
 
 - **el índice**: por modelo, nombre, autor (un id de cuenta que no es el correo), licencia, miniatura, tamaño, el
-  resumen del análisis y la huella SHA-256 de cada archivo, firmados por la clave de la app que lo publicó;
-- **la lista de bloqueo**: huellas retiradas, cuentas suspendidas, claves de apps y, por 24 h como mucho, direcciones IP
-  (al vencer se borran de la base).
+  resumen del análisis y la huella SHA-256 de cada archivo, firmados por la clave de la app que lo publicó. Sin G-code:
+  se publican el proyecto, la receta (perfil de impresión y de filamento), los análisis y fotos, y cada uno lamina en
+  su equipo o en la nube;
+- **la lista de bloqueo**: huellas retiradas, cuentas suspendidas, claves de apps, claves de biblioteca revocadas
+  (`TISMA_LIBRARY_REVOKED_KEYS`) y, por 24 h como mucho, direcciones IP. Una IP sale en la lista solo como huella
+  (SHA-256 con una sal que cambia cada día) y al vencer se borra de la base.
 
 Las dos se bajan sin sesión con su firma Ed25519 aparte (64 bytes): `GET /v1/library/index.json` y `.sig`,
 `GET /v1/library/blocklist.json` y `.sig`. Las firma la **clave de la biblioteca**, `storage\library.key`, que el central
-hace la primera vez. La clave del proyecto vive solo en el USB del dueño, así que el dueño firma una vez la clave de la
-biblioteca con ella y la instala:
+hace la primera vez. La clave del proyecto vive solo en el USB del dueño, que certifica la de la biblioteca **una sola
+vez**:
 
 ```
-tisma-cloud admin library-key                 # la clave pública y qué firmar
-tisma-cloud admin library-cert <firma en base64>   # con TISMA_LIBRARY_PROJECT_KEY puesto, la comprueba y la guarda
+tisma-cloud admin library-key                      # en el maestro: la clave de la biblioteca (base64)
+python deploy/certify_library_key.py --key E:\tisma\clave.pem --library-key <base64> --public-key <64 hex>
+                                                   # en la computadora del dueño, con el USB (openssl, como sign_release.py)
+tisma-cloud admin library-cert <certificado>       # en el maestro, con TISMA_LIBRARY_PROJECT_KEY (64 hex) puesto
 ```
 
-`GET /v1/library/key` da la clave y su certificado (`null` hasta instalarlo). Publicar (`POST /v1/library/models`) manda
-solo los datos y las huellas, con la miniatura WebP (64 KB como mucho). «Denunciar» (`POST /v1/library/reports`) llega
-al panel; ahí una persona retira el modelo (sus huellas pasan a la lista) o descarta la denuncia, y bloquea cuentas,
-claves o direcciones (`/v1/admin/library/...`, solo red local). `library.key` va **aparte**, como `data.key`: sin ella
-hay que firmar una clave nueva.
+Hasta tener el certificado la biblioteca no se sirve (503); `TISMA_LIBRARY_UNCERTIFIED=on` la sirve igual, solo para
+probar (las apps no usan una lista sin certificado). `GET /v1/library/key` da la clave y su certificado. Publicar
+(`POST /v1/library/models`) manda solo los datos y las huellas, con la miniatura WebP (64 KB como mucho). «Denunciar»
+(`POST /v1/library/reports`) llega al panel; ahí una persona retira el modelo (sus huellas pasan a la lista) o descarta
+la denuncia, y bloquea cuentas, claves o direcciones (`/v1/admin/library/...`, solo red local). `library.key` va
+**aparte**, como `data.key`: si se pierde o la roban, se certifica una clave nueva y la vieja va a
+`TISMA_LIBRARY_REVOKED_KEYS`.
 
 ## Avisos de problemas
 

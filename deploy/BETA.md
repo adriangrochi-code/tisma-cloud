@@ -61,6 +61,12 @@ tisma-cloud admin plan-set escaneo --hours 10 --concurrent 1 --classes scan --pu
       de pago todavía, el período pago se da a mano (`admin user-set correo --paid-until AAAA-MM-DD`) o con una cuenta
       interna.
 
+- [ ] **La biblioteca entre usuarios** (una sola vez, con el USB de la clave del proyecto; README, «Biblioteca entre
+      usuarios»): en el maestro `tisma-cloud config TISMA_LIBRARY_PROJECT_KEY <la clave pública, 64 hex>` y
+      `tisma-cloud admin library-key`; en tu computadora `python deploy/certify_library_key.py --key E:\tisma\clave.pem
+      --library-key <lo que mostró> --public-key <64 hex>`; en el maestro `tisma-cloud admin library-cert <certificado>`.
+      Sin esto la biblioteca no se sirve.
+
 ## 5. Los nodos
 
 - [ ] En cada PC de cómputo: el mismo paquete, **Nodo**, la dirección del maestro en la red local

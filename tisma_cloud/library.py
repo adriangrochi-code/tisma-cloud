@@ -43,7 +43,12 @@ BLOCKLIST_VALID = timedelta(days=7)
 # Licences a model may be published under (SPDX identifiers).
 LICENSES = ("CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC-BY-NC-4.0", "CC-BY-NC-SA-4.0", "CC-BY-ND-4.0",
             "CC-BY-NC-ND-4.0", "MIT", "GPL-3.0-or-later", "LicenseRef-All-Rights-Reserved")
-ROLES = ("project", "gcode", "analysis", "photo", "profile", "other")
+# No G-code in the library (owner, 2026-11-10; p2p_library.md 3 sexies): the project, its general settings (the recipe),
+# the analyses and photos; whoever downloads it slices it.
+ROLES = ("project", "profile", "analysis", "photo")
+GCODE_EXTENSIONS = (".gcode", ".bgcode", ".gco", ".g")
+# The types a file may be (3 octies): the apps and the seeder check the contents; the master, the names.
+EXTENSIONS = (".3mf", ".stl", ".obj", ".step", ".stp", ".json", ".tea", ".taero", ".webp", ".png", ".jpg", ".jpeg")
 BLOCK_KINDS = ("file", "account", "peer", "address")
 MAX_FILES = 50
 MAX_FILE_BYTES = 2 << 30
@@ -112,14 +117,34 @@ class LibraryKey:
         except LibraryError:
             return None
 
-    def install_certificate(self, certificate_b64: str, project_key_b64: str) -> None:
-        """Keeps the owner's signature of this key after checking it with the project key."""
-        if not project_key_b64:
+    def install_certificate(self, certificate_b64: str, project_key: str) -> None:
+        """Keeps the owner's signature of this key after checking it with the project key (64 hex digits, as
+        tools/sign_release.py of the engine prints it, or base64)."""
+        if not project_key:
             raise LibraryError("Falta TISMA_LIBRARY_PROJECT_KEY, la clave pública del proyecto, para comprobarlo")
         cert = unb64(certificate_b64.strip(), 64)
-        if not verify(unb64(project_key_b64, 32), cert, CERT_PREFIX + self.public):
+        if not verify(project_key_bytes(project_key), cert, CERT_PREFIX + self.public):
             raise LibraryError("El certificado no es una firma de esta clave de la biblioteca con la clave del proyecto")
         self.cert_path.write_text(b64(cert) + "\n")
+
+
+    def address_salt(self, day: str) -> bytes:
+        """The salt of the addresses of one day (p2p_library.md 8 quinquies): it changes every day, so the hash of an
+        address in the blocklist cannot be followed from one day to the next."""
+        return hashlib.sha256(b"tisma-library-address-salt/1\n" + self._private.private_bytes_raw() + day.encode()).digest()
+
+
+def project_key_bytes(text: str) -> bytes:
+    text = text.strip()
+    if re.fullmatch(r"[0-9a-fA-F]{64}", text):
+        return bytes.fromhex(text)
+    return unb64(text, 32)
+
+
+def address_hash(salt: bytes, address: str) -> str:
+    """How an address goes in the blocklist: SHA-256 of the day's salt and the address as text (an app that sees a
+    peer's address compares it the same way)."""
+    return hashlib.sha256(salt + address.encode()).hexdigest()
 
 
 # ---- what the index says of the people and their files
@@ -190,6 +215,11 @@ def parse_publication(body: dict) -> Publication:
             raise LibraryError(f"Bad file name: {path!r}")
         if role not in ROLES:
             raise LibraryError(f"'role' is one of {', '.join(ROLES)}")
+        extension = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        if extension in GCODE_EXTENSIONS:
+            raise LibraryError(f"{path}: the library has no G-code (whoever downloads the model slices it)")
+        if extension not in EXTENSIONS:
+            raise LibraryError(f"{path}: the files are {', '.join(EXTENSIONS)}")
         if not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= MAX_FILE_BYTES:
             raise LibraryError(f"{path}: 'size' from 1 byte to {MAX_FILE_BYTES >> 30} GB")
         if not isinstance(sha, str) or not _SHA256.match(sha):
@@ -257,7 +287,7 @@ def add_block(session: Session, kind: str, value: str, reason: str = "", hours: 
         import ipaddress
 
         try:
-            value = str(ipaddress.ip_network(value, strict=False))
+            value = str(ipaddress.ip_address(value))
         except ValueError:
             raise LibraryError(f"Not an address: {value}") from None
         hours = hours or 24.
@@ -317,7 +347,8 @@ def model_entry(m: LibraryModel) -> dict:
             "author": {"account": account_id(m.user_id), "name": m.author_name},
             "thumbnail": {"sha256": m.thumbnail_sha256, "size": m.thumbnail_size, "type": "image/webp"},
             "size": m.size, "files": json.loads(m.files), "analysis": json.loads(m.analysis),
-            "peer_key": m.peer_key, "manifest_signature": m.manifest_signature, "swarm": json.loads(m.swarm)}
+            "peer_key": m.peer_key, "manifest_signature": m.manifest_signature, "swarm": json.loads(m.swarm),
+            "checked": bool(m.checked)}
 
 
 def build_index(session: Session, now: datetime | None = None) -> bytes:
@@ -327,8 +358,10 @@ def build_index(session: Session, now: datetime | None = None) -> bytes:
     return json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
-def build_blocklist(session: Session, now: datetime | None = None) -> bytes:
+def build_blocklist(session: Session, key: LibraryKey, revoked: tuple[str, ...] = (),
+                    now: datetime | None = None) -> bytes:
     now = now or utcnow()
+    salt = key.address_salt(now.strftime("%Y-%m-%d"))
     purge_addresses(session, now)
     rows = session.execute(select(LibraryBlock).order_by(LibraryBlock.id)).scalars().all()
     doc = {"format": BLOCKLIST_FORMAT, "version": FORMAT_VERSION, "generated": _stamp(now),
@@ -336,8 +369,11 @@ def build_blocklist(session: Session, now: datetime | None = None) -> bytes:
            "files": [{"sha256": b.value, "reason": b.reason} for b in rows if b.kind == "file"],
            "accounts": [b.value for b in rows if b.kind == "account"],
            "peers": [b.value for b in rows if b.kind == "peer"],
-           "addresses": [{"ip": b.value, "until": _stamp(b.until)} for b in rows if b.kind == "address" and b.until],
-           "revoked_keys": []}
+           # The addresses only as hashes with the salt of the day, given with them (8 quinquies).
+           "address_salt": salt.hex(),
+           "addresses": [{"sha256": address_hash(salt, b.value), "until": _stamp(b.until)} for b in rows
+                         if b.kind == "address" and b.until],
+           "revoked_keys": list(revoked)}
     return json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
@@ -345,10 +381,11 @@ class Signed:
     """The two signed lists, kept in memory and built again when their sequence changes (or, the blocklist, every
     RESIGN_S): (bytes, signature, etag)."""
 
-    def __init__(self, key: LibraryKey) -> None:
+    def __init__(self, key: LibraryKey, revoked: tuple[str, ...] = ()) -> None:
         self.key = key
+        self.revoked = revoked
         self._lock = threading.Lock()
-        self._cache: dict[str, tuple[int, float, bytes, bytes, str]] = {}
+        self._cache: dict[str, tuple[int, float, bytes, bytes, str, str]] = {}
 
     def get(self, session: Session, name: str) -> tuple[bytes, bytes, str]:
         if name == "blocklist":
@@ -357,12 +394,14 @@ class Signed:
         seq = sequence(session, name)
         with self._lock:
             cached = self._cache.get(name)
-            fresh = cached and cached[0] == seq and (name == "index" or time.monotonic() - cached[1] < RESIGN_S)
+            day = utcnow().strftime("%Y-%m-%d")
+            fresh = cached and cached[0] == seq and (name == "index" or (time.monotonic() - cached[1] < RESIGN_S
+                                                                       and cached[5] == day))
             if not fresh:
-                data = build_index(session) if name == "index" else build_blocklist(session)
+                data = build_index(session) if name == "index" else build_blocklist(session, self.key, self.revoked)
                 sig = self.key.sign(data)
                 etag = '"' + hashlib.sha256(data).hexdigest()[:32] + '"'
-                cached = (seq, time.monotonic(), data, sig, etag)
+                cached = (seq, time.monotonic(), data, sig, etag, day)
                 self._cache[name] = cached
             return cached[2], cached[3], cached[4]
 

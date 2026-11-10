@@ -30,6 +30,11 @@ class Settings:
     # checks the certificate of the library's own key; the hours an address stays blocked.
     library_project_key: str = field(default_factory=lambda: os.environ.get("TISMA_LIBRARY_PROJECT_KEY", ""))
     library_address_block_h: int = field(default_factory=lambda: _int("TISMA_LIBRARY_ADDRESS_BLOCK_H", 24))
+    # Library keys of the past that the apps must refuse (a stolen master), base64, separated by commas; and serving
+    # the lists before the owner certified the key (only to try the library: the apps do not use them).
+    library_revoked_keys: str = field(default_factory=lambda: os.environ.get("TISMA_LIBRARY_REVOKED_KEYS", ""))
+    library_uncertified: bool = field(default_factory=lambda: os.environ.get("TISMA_LIBRARY_UNCERTIFIED", "")
+                                      .lower() in ("1", "on", "yes", "true"))
     # Largest body of any other request (JSON of the API, notifications of the payment providers) [KB]: FastAPI reads a
     # body whole before it checks it, so without a limit anyone could fill the memory of the master (guard.py).
     max_body_kb: int = field(default_factory=lambda: _int("TISMA_MAX_BODY_KB", 1024))

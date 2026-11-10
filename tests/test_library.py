@@ -45,9 +45,26 @@ class App:
         return r.json()
 
 
+PROJECT = Ed25519PrivateKey.generate()
+PROJECT_HEX = library.public_bytes(PROJECT.public_key()).hex()
+
+
+def certify(client) -> None:
+    """The owner's signature of the library key, with a project key of the tests."""
+    key = client.app.state.services.library.key
+    key.install_certificate(library.b64(PROJECT.sign(library.CERT_PREFIX + key.public)), PROJECT_HEX)
+
+
+@pytest.fixture(autouse=True)
+def certified(client):
+    certify(client)
+
+
 def signed(client, name: str) -> dict:
-    """The list, after checking its signature with the library key the master gives."""
-    key = library.unb64(client.get("/v1/library/key").json()["public_key"], 32)
+    """The list, after checking its signature with the library key the master gives and that key's certificate."""
+    given = client.get("/v1/library/key").json()
+    key = library.unb64(given["public_key"], 32)
+    assert library.verify(bytes.fromhex(PROJECT_HEX), library.unb64(given["certificate"], 64), library.CERT_PREFIX + key)
     data = client.get(f"/v1/library/{name}.json").content
     sig = client.get(f"/v1/library/{name}.json.sig").content
     assert len(sig) == 64 and library.verify(key, sig, data)
@@ -94,6 +111,11 @@ def test_what_cannot_be_published(client, f):
     body["manifest_signature"] = library.b64(other.key.sign(library.manifest(files)))
     assert client.post("/v1/library/models", headers=user, json=body).status_code == 422
     for bad in ({"license": "WTFPL"}, {"files": [{"path": "a.gcode", "role": "gcode", "size": 1, "sha256": "a" * 64}]},
+                {"files": [{"path": "a.3mf", "role": "project", "size": 1, "sha256": "a" * 64},
+                           {"path": "plate.bgcode", "role": "profile", "size": 1, "sha256": "b" * 64}]},
+                {"files": [{"path": "a.3mf", "role": "project", "size": 1, "sha256": "a" * 64},
+                           {"path": "setup.exe", "role": "photo", "size": 1, "sha256": "b" * 64}]},
+                {"files": [{"path": "a.3mf", "role": "other", "size": 1, "sha256": "a" * 64}]},
                 {"files": [{"path": "../a.3mf", "role": "project", "size": 1, "sha256": "a" * 64}]},
                 {"files": [{"path": "a.3mf", "role": "project", "size": 1, "sha256": "A" * 64}]},
                 {"thumbnail_webp": base64.b64encode(b"\x89PNG....").decode()}):
@@ -154,8 +176,14 @@ def test_an_address_is_blocked_for_a_day_and_then_forgotten(client, f):
     r = client.post("/v1/admin/library/blocks", headers=admin, json={"kind": "address", "value": "203.0.113.5"})
     assert r.status_code == 201
     until = r.json()["until"]
-    listed = signed(client, "blocklist")["addresses"]
-    assert listed == [{"ip": "203.0.113.5/32", "until": until}]
+    blocklist = signed(client, "blocklist")
+    # Only as a hash with the salt of the day, never the address itself (p2p_library.md 8 quinquies).
+    salt = bytes.fromhex(blocklist["address_salt"])
+    assert blocklist["addresses"] == [{"sha256": hashlib.sha256(salt + b"203.0.113.5").hexdigest(), "until": until}]
+    assert b"203.0.113.5" not in client.get("/v1/library/blocklist.json").content
+    # Another day, another salt.
+    key = client.app.state.services.library.key
+    assert key.address_salt("2026-11-10") != key.address_salt("2026-11-11")
     assert client.post("/v1/admin/library/blocks", headers=admin,
                        json={"kind": "address", "value": "no es una ip"}).status_code == 422
     # When it ends, the row is deleted (a personal datum) and the list moves on.
@@ -195,6 +223,8 @@ def test_the_certificate_of_the_library_key(tmp_path):
     assert library.LibraryKey(tmp_path).public == key.public
     with pytest.raises(library.LibraryError, match="TISMA_LIBRARY_PROJECT_KEY"):
         key.install_certificate("x", "")
+    # The project key as tools/sign_release.py prints it (64 hex digits) or in base64.
+    assert library.project_key_bytes(library.public_bytes(project.public_key()).hex()) == library.unb64(project_b64, 32)
     wrong = library.b64(project.sign(b"otra cosa"))
     with pytest.raises(library.LibraryError, match="no es una firma"):
         key.install_certificate(wrong, project_b64)
@@ -208,7 +238,7 @@ def test_the_admin_commands_of_the_library_key(tmp_path, monkeypatch, capsys):
 
     project = Ed25519PrivateKey.generate()
     monkeypatch.setenv("TISMA_DATABASE_URL", f"sqlite:///{tmp_path / 'db.sqlite'}")
-    monkeypatch.setenv("TISMA_STORAGE_DIR", str(tmp_path / "storage"))
+    monkeypatch.setenv("TISMA_STORAGE_DIR", str(tmp_path / "admin-storage"))
     monkeypatch.setenv("TISMA_LIBRARY_PROJECT_KEY", library.b64(library.public_bytes(project.public_key())))
     assert admin.main(["library-key"]) == 0
     out = capsys.readouterr().out
@@ -217,3 +247,54 @@ def test_the_admin_commands_of_the_library_key(tmp_path, monkeypatch, capsys):
     assert admin.main(["library-cert", library.b64(project.sign(b"otra"))]) == 1
     assert admin.main(["library-cert", library.b64(project.sign(library.CERT_PREFIX + public))]) == 0
     assert "instalado" in capsys.readouterr().out
+
+
+def test_without_a_certificate_the_library_is_not_served(settings, tmp_path):
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from conftest import new_app
+
+    with TestClient(new_app(dataclasses.replace(settings, storage_dir=tmp_path / "other"))) as fresh:
+        assert fresh.get("/v1/library/key").json()["certificate"] is None
+        for name in ("index.json", "index.json.sig", "blocklist.json", "blocklist.json.sig"):
+            assert fresh.get(f"/v1/library/{name}").status_code == 503
+    with TestClient(new_app(dataclasses.replace(settings, storage_dir=tmp_path / "other",
+                                                library_uncertified=True))) as trying:
+        assert trying.get("/v1/library/index.json").status_code == 200
+
+
+def test_revoked_keys_are_in_the_blocklist(settings, tmp_path):
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from conftest import new_app
+
+    old = library.b64(bytes(32))
+    with TestClient(new_app(dataclasses.replace(settings, library_revoked_keys=old))) as c:
+        certify(c)
+        assert signed(c, "blocklist")["revoked_keys"] == [old]
+
+
+def test_the_owner_certifies_the_key_with_the_usb_key_and_openssl(tmp_path, client):
+    """deploy/certify_library_key.py with a PEM key as tools/sign_release.py of the engine reads it."""
+    import shutil
+    import subprocess
+    import sys
+
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl is not installed")
+    pem = tmp_path / "clave.pem"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", str(pem)], check=True, capture_output=True)
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "deploy"))
+    import certify_library_key as tool
+
+    project = tool.public_key_raw("openssl", str(pem))
+    key = library.LibraryKey(tmp_path / "master")
+    with pytest.raises(tool.Failure, match="pendrive"):
+        tool.certify(str(pem), library.b64(key.public), public_hex="00" * 32)
+    cert = tool.certify(str(pem), library.b64(key.public), public_hex=project.hex())
+    key.install_certificate(cert, project.hex())
+    assert key.certificate() is not None
