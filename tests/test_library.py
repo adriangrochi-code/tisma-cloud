@@ -639,3 +639,22 @@ def test_the_engine_test_vectors_of_the_peers(tmp_path):
         "eyJhY2NvdW50IjoiYWNjdF90ZXN0IiwiY2FwX21iX3Blcl9ob3VyIjo1MTIsImV4cGlyZXMiOjE3NjcyMjU2MDAsInBlZXJfaWQiOiIxMkQzS29v"
         "V1FLMXduZWZvTHJjVkhiYm5mNXRMemJvcFVkM0szYkZBb0pwQTdZSmdMNXBWIn0.SUYZztJ0XusuSVGgTXz4YvFJ2goMrX5oWBzlkVB6orEqigWeQ3N"
         "jV_N99Y-mKN6SlpQnV6lJF8mmjfCILE_OCA")
+
+
+def test_a_master_restored_without_its_library_key_says_so(client, f, settings, caplog):
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    from conftest import new_app
+
+    app = App(client, f.user("lucia@x.com"))
+    app.bind()
+    app.publish()
+    key_file = settings.storage_dir / "library.key"
+    (settings.storage_dir / "library.cert").unlink()
+    key_file.unlink()
+    with caplog.at_level(logging.ERROR, logger="tisma_cloud"):
+        with TestClient(new_app(settings)) as restored:
+            assert restored.get("/v1/library/index.json").status_code == 503
+    assert any("library key was made now" in r.message and "1 models" in r.message for r in caplog.records)

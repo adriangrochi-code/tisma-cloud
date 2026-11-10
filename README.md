@@ -683,6 +683,10 @@ máquina.
 python deploy/restore_drill.py --users 300 --exe C:\TismaCloud\tisma-cloud.exe --folder D:\simulacro
 ```
 
+Restaurar también `storage\library.key` y `storage\library.cert` (la biblioteca entre usuarios). Sin ellos el maestro
+hace una clave nueva, lo dice en el registro y la biblioteca responde 503 hasta certificarla otra vez (README,
+«Biblioteca entre usuarios»).
+
 ### El maestro también calcula
 
 Con una sola máquina (o para aprovechar la del maestro) el maestro también corre trabajos: es la opción **«El maestro

@@ -96,6 +96,8 @@ class LibraryKey:
     def __init__(self, folder: Path) -> None:
         self.path = Path(folder) / "library.key"
         self.cert_path = Path(folder) / "library.cert"
+        # Made now (no key yet): after restoring a master without its library.key, the owner certifies the new one.
+        self.made_now = not self.path.exists()
         if self.path.exists():
             raw = unb64(self.path.read_text().strip(), 32)
         else:

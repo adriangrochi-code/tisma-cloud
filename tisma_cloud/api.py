@@ -146,7 +146,17 @@ class Services:
         # The library shared between users (library.py): its own signing key and the signed index and blocklist.
         # Who shares which model, in memory only (peers.py).
         self.peers = peers.Announcements()
-        self.library = library.Signed(library.LibraryKey(Path(settings.storage_dir)),
+        key = library.LibraryKey(Path(settings.storage_dir))
+        if key.made_now:
+            with self.db.session() as s:
+                published = s.execute(select(func.count()).select_from(LibraryModel)).scalar_one()
+            if published:
+                # A master restored without its library.key: the lists are not served until the new key is certified.
+                log.error("The library key was made now, but %d models were published with another one (a master "
+                          "restored without storage/library.key?): the library answers 503 until the owner certifies "
+                          "the new key (tisma-cloud admin library-key, then library-cert); put the old one in "
+                          "TISMA_LIBRARY_REVOKED_KEYS if it was lost or stolen", published)
+        self.library = library.Signed(key,
                                       tuple(k.strip() for k in settings.library_revoked_keys.split(",") if k.strip()))
         # The last daily backup that failed (backup.py), for the alerts; None when the last one was good.
         self.backup_failed: str | None = None
