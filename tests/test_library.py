@@ -525,3 +525,19 @@ def test_an_account_keeps_at_most_ten_app_keys_and_a_report_names_what(client, f
     apps[0].publish(expect=409)
     apps[10].publish()
     assert client.post("/v1/library/reports", headers=user, json={"reason": "algo"}).status_code == 422
+
+
+def test_disabling_an_author_takes_their_models_out_of_the_cached_index(client, f):
+    admin = f.user("root@x.com", admin=True)
+    app = App(client, f.user("lucia@x.com"))
+    app.bind()
+    app.publish()
+    first = signed(client, "index")
+    assert len(first["models"]) == 1
+    # Disabled from the panel (the console and the web site change the same flag).
+    client.put("/v1/admin/users/lucia@x.com/enabled", headers=admin, json={"enabled": False}).raise_for_status()
+    off = signed(client, "index")
+    assert off["models"] == [] and off["sequence"] > first["sequence"]
+    client.put("/v1/admin/users/lucia@x.com/enabled", headers=admin, json={"enabled": True}).raise_for_status()
+    back = signed(client, "index")
+    assert len(back["models"]) == 1 and back["sequence"] > off["sequence"]

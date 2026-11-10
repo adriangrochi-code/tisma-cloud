@@ -396,6 +396,13 @@ def build_blocklist(session: Session, key: LibraryKey, revoked: tuple[str, ...] 
     return json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+def disabled_authors(session: Session) -> str:
+    """The disabled accounts that published something, as a short text to compare."""
+    ids = session.execute(select(LibraryModel.user_id).join(User, User.id == LibraryModel.user_id)
+                          .where(User.enabled.is_(False)).distinct().order_by(LibraryModel.user_id)).scalars().all()
+    return ",".join(str(i) for i in ids)
+
+
 class Signed:
     """The two signed lists, kept in memory and built again when their sequence changes (or, the blocklist, every
     RESIGN_S): (bytes, signature, etag)."""
@@ -404,15 +411,20 @@ class Signed:
         self.key = key
         self.revoked = revoked
         self._lock = threading.Lock()
-        self._cache: dict[str, tuple[int, float, bytes, bytes, str, str]] = {}
+        self._cache: dict[str, tuple[int, float, bytes, bytes, str, str, str]] = {}
 
     def get(self, session: Session, name: str) -> tuple[bytes, bytes, str]:
         if name == "blocklist":
             # An address whose block ended leaves the list at once (its sequence moves).
             purge_addresses(session)
+        # An author disabled or enabled again (from the panel, the console or the web site) changes the index without
+        # moving its sequence: the disabled authors are part of what the cached index was built from.
+        authors_off = disabled_authors(session) if name == "index" else ""
         seq = sequence(session, name)
         with self._lock:
             cached = self._cache.get(name)
+            if cached and name == "index" and cached[6] != authors_off:
+                seq = bump(session, "index")
             day = utcnow().strftime("%Y-%m-%d")
             fresh = cached and cached[0] == seq and (name == "index" or (time.monotonic() - cached[1] < RESIGN_S
                                                                        and cached[5] == day))
@@ -420,7 +432,7 @@ class Signed:
                 data = build_index(session) if name == "index" else build_blocklist(session, self.key, self.revoked)
                 sig = self.key.sign(data)
                 etag = '"' + hashlib.sha256(data).hexdigest()[:32] + '"'
-                cached = (seq, time.monotonic(), data, sig, etag, day)
+                cached = (seq, time.monotonic(), data, sig, etag, day, authors_off)
                 self._cache[name] = cached
             return cached[2], cached[3], cached[4]
 
