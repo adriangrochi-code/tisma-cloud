@@ -119,8 +119,8 @@ registrado directamente en el central, sin pasar por el servidor externo de la p
 
 ## Suscripciones del App Store (iPhone y Mac)
 
-Los planes se venden por las tiendas oficiales (ficha `cloud.md` 5b): Google Play, el App Store y, más adelante, la
-Microsoft Store. El plan queda en la cuenta de Tisma Cloud y vale en todos los equipos; el central solo acepta compras
+Los planes se venden por las tiendas oficiales (ficha `cloud.md` 5b): Google Play, el App Store y la Microsoft Store
+(abajo). El plan queda en la cuenta de Tisma Cloud y vale en todos los equipos; el central solo acepta compras
 que firmó la tienda. El pago en la página (`TISMA_BILLING_PROVIDER`) queda **apagado** salvo `TISMA_WEB_PAYMENTS=on`.
 
 Del App Store, el central acepta solo lo que firmó Apple, comprobado con la biblioteca oficial de Apple
@@ -138,6 +138,31 @@ Del App Store, el central acepta solo lo que firmó Apple, comprobado con la bib
 Ajustes: `TISMA_APPLE_BUNDLE_ID`, `TISMA_APPLE_APP_ID` (el Apple ID de la app, un número; obligatorio en
 Production), `TISMA_APPLE_ENVIRONMENT` (`Production` o `Sandbox`) y `TISMA_APPLE_PRODUCTS`
 (`producto:plan, ...`). Sin bundle o sin productos, el App Store está apagado (404).
+
+## Suscripciones de la Microsoft Store (Windows)
+
+El plan es un complemento de suscripción de la app en la Microsoft Store. Microsoft no avisa al central: el central
+pregunta con la **API de compras de la Microsoft Store**, como lo documenta Microsoft
+(learn.microsoft.com/windows/uwp/monetize/view-and-grant-products-from-a-service, get-subscriptions-for-a-user,
+renew-a-windows-store-id-key):
+
+- una aplicación de **Entra ID** del dueño (inquilino, id de la aplicación y su secreto), asociada a la app en Partner
+  Center (Servicios > Colecciones de productos y compras). Hace falta un inquilino de Entra ID y una cuenta de
+  desarrollador que Microsoft habilitó para **complementos de suscripción** (la misma página dice que la mayoría no
+  los tiene todavía): confirmalo en Partner Center antes de contar con esto;
+- la app pide `GET /v1/billing/microsoft/ticket` (el permiso para crear la clave y un id al azar de la cuenta, que
+  Microsoft guarda sin saber quién es), llama a `StoreContext.GetCustomerPurchaseIdAsync(service_ticket,
+  publisher_user_id)` y manda la clave a `POST /v1/billing/microsoft/purchase` (`{"purchase_key": ...}`), al comprar y
+  al arrancar;
+- el central guarda la clave **cifrada**, comprueba que sea de nuestra aplicación y de esa cuenta, y pregunta las
+  suscripciones de esa cuenta de Microsoft; después una vez por día, renovando la clave antes de que venza (dura 30
+  días). Si Microsoft la rechaza, se borra y la app manda una nueva;
+- `Active` e `InDunning` dan acceso hasta `expirationTimeWithGrace` (o `expirationTime`); `Inactive`, `Canceled` y
+  `Failed` no. La cuenta tiene el acceso más largo de todas sus tiendas.
+
+Ajustes: `TISMA_MICROSOFT_TENANT`, `TISMA_MICROSOFT_CLIENT_ID`, `TISMA_MICROSOFT_CLIENT_SECRET` (secreto: va aparte,
+como `data.key`) y `TISMA_MICROSOFT_PRODUCTS` (`Store ID del complemento:plan, ...`). Sin ellos, apagada (404).
+Probado contra respuestas armadas como las documenta Microsoft; **no** contra la tienda real.
 
 ## Suscripciones con Google Play
 

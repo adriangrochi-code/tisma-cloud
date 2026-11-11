@@ -1,4 +1,4 @@
-"""The access an account has from the app stores (Google Play, the App Store): that of its subscription that lasts
+"""The access an account has from the app stores (Google Play, the App Store, the Microsoft Store): that of its subscription that lasts
 longest in any store; its plan becomes the plan of the account (cloud.md 5b: the plan lives on the account and applies
 on every device)."""
 
@@ -7,13 +7,13 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import AppleSubscription, Plan, PlaySubscription, User, utcnow
+from .models import AppleSubscription, MicrosoftSubscription, Plan, PlaySubscription, User, utcnow
 
 
 def update_access(session: Session, user: User) -> None:
     now = utcnow()
     best = None
-    for table in (PlaySubscription, AppleSubscription):
+    for table in (PlaySubscription, AppleSubscription, MicrosoftSubscription):
         sub = session.execute(select(table).where(
             table.user_id == user.id, table.entitled_until.is_not(None), table.entitled_until > now)
             .order_by(table.entitled_until.desc())).scalars().first()

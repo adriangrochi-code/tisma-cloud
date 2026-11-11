@@ -43,6 +43,12 @@ class Settings:
     # Ask Apple's OCSP whether its certificates were revoked (on; off only for tests with a chain of their own).
     apple_online_checks: bool = field(default_factory=lambda: os.environ.get("TISMA_APPLE_ONLINE_CHECKS", "on")
                                       .lower() not in ("0", "off", "no", "false"))
+    # Microsoft Store subscriptions (microsoft.py): the Entra ID application of the master (tenant, application id and
+    # its client secret), associated with the app in Partner Center, and the add-ons («Store ID:plan, ...»).
+    microsoft_tenant: str = field(default_factory=lambda: os.environ.get("TISMA_MICROSOFT_TENANT", ""))
+    microsoft_client_id: str = field(default_factory=lambda: os.environ.get("TISMA_MICROSOFT_CLIENT_ID", ""))
+    microsoft_client_secret: str = field(default_factory=lambda: os.environ.get("TISMA_MICROSOFT_CLIENT_SECRET", ""))
+    microsoft_products: str = field(default_factory=lambda: os.environ.get("TISMA_MICROSOFT_PRODUCTS", ""))
     # Paying the plan on the web site (TISMA_BILLING_PROVIDER): off unless turned on; the plans are sold through the app
     # stores (cloud.md 5b).
     web_payments: bool = field(default_factory=lambda: os.environ.get("TISMA_WEB_PAYMENTS", "")

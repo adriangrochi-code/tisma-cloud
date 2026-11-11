@@ -32,7 +32,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from . import (__version__, alerts, apple, backup, billing, capacity, codes, crypto, google_play, library, pairing, peers,
+from . import (__version__, alerts, apple, backup, billing, capacity, codes, crypto, google_play, library, microsoft,
+               pairing, peers,
                remote, reports, scans, scheduler, triage)
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
@@ -40,8 +41,8 @@ from .db import Database
 from .jobs import (ESTIMATE_MAX_TRIANGLES, JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, JobError, count_triangles,
                    estimate_seconds, plan_job)
 from .models import (AccountFile, AccountFileTaken, Alert, ApiToken, AppleSubscription, Bridge, BugReport, EmailCode,
-                     HourAdjustment, Job, LibraryBlock, LibraryModel, LibraryPeerKey, LibraryReport, Node, Payment, Plan,
-                     PlaySubscription, RemoteCommand, ScanUpload, Usage, User, month_of, utcnow)
+                     HourAdjustment, Job, LibraryBlock, LibraryModel, LibraryPeerKey, LibraryReport, MicrosoftKey,
+                     MicrosoftSubscription, Node, Payment, Plan, PlaySubscription, RemoteCommand, ScanUpload, Usage, User, month_of, utcnow)
 from .guard import Guard
 from .presence import Presence
 from .publicip import CHECK_S as PUBLIC_ADDRESS_CHECK_S, PublicAddress
@@ -180,6 +181,9 @@ class Services:
         self.play = google_play.store_for(settings.play_package, settings.play_credentials, settings.play_products)
         self.apple = apple.store_for(settings.apple_bundle_id, settings.apple_app_id, settings.apple_environment,
                                      settings.apple_products, settings.apple_root_certs, settings.apple_online_checks)
+        self.microsoft = microsoft.store_for(settings.microsoft_tenant, settings.microsoft_client_id,
+                                             settings.microsoft_client_secret, settings.microsoft_products)
+        self._microsoft_checked: float | None = None
         self.play_push = (google_play.PushVerifier(settings.play_push_audience, settings.play_push_account)
                           if settings.play_push_audience and settings.play_push_account else None)
         # When the alerts were last checked (time.monotonic(), None: never). Not 0: the monotonic clock counts from the
@@ -198,6 +202,24 @@ class Services:
             for user in s.execute(select(User).where(User.unlimited.is_(False))).scalars():
                 if self.settings.is_internal_email(user.email):
                     user.unlimited = True
+
+    def refresh_microsoft(self, now: datetime | None = None) -> int:
+        """The Microsoft Store sends no notifications: the subscriptions of the accounts with a key are asked again once
+        a day (microsoft.py). Returns how many accounts were asked."""
+        if self.microsoft is None:
+            return 0
+        with self.db.session() as s:
+            due = self.microsoft.due(s, now)
+        for user_id in due:
+            try:
+                with self.db.session() as s:
+                    user = s.get(User, user_id)
+                    if user is not None and self.microsoft.refresh(s, user, now) is None:
+                        log.info("Microsoft Store key of account %s refused by Microsoft: dropped", user_id)
+            except microsoft.MicrosoftUnavailable as ex:
+                log.warning("Microsoft Store not reachable: %s", ex)
+                break
+        return len(due)
 
     def sweep(self) -> None:
         """Requeues the jobs of lost nodes, removes the files of old jobs and fails the remote commands not taken."""
@@ -235,6 +257,11 @@ class Services:
         if self._forgot_at is None or time.monotonic() - self._forgot_at >= 3600:
             self._forgot_at = time.monotonic()
             self.forget_old_data()
+        # The Microsoft Store subscriptions, looked at every 10 minutes (each account once a day).
+        if self.microsoft is not None and (self._microsoft_checked is None
+                                           or time.monotonic() - self._microsoft_checked >= 600):
+            self._microsoft_checked = time.monotonic()
+            self.refresh_microsoft()
         # The alerts of the administrators, once a minute.
         if self._alerts_checked is None or time.monotonic() - self._alerts_checked >= 60:
             self._alerts_checked = time.monotonic()
@@ -317,8 +344,8 @@ class Services:
             thumbs = set(s.execute(select(LibraryModel.thumbnail_sha256).where(LibraryModel.user_id == user_id)).scalars())
             if files:
                 s.execute(delete(AccountFileTaken).where(AccountFileTaken.file_id.in_(files)))
-            for model in (ApiToken, EmailCode, Usage, PlaySubscription, AppleSubscription, Job, Bridge, BugReport,
-                          AccountFile, LibraryModel, LibraryPeerKey):
+            for model in (ApiToken, EmailCode, Usage, PlaySubscription, AppleSubscription, MicrosoftSubscription,
+                          MicrosoftKey, Job, Bridge, BugReport, AccountFile, LibraryModel, LibraryPeerKey):
                 s.execute(delete(model).where(model.user_id == user_id))
             # Its published models leave the index, and their images the disk (unless another model uses the same).
             library.bump(s, "index")
@@ -329,7 +356,7 @@ class Services:
                 s.execute(delete(RemoteCommand).where(RemoteCommand.id.in_(commands)))
             user.email = f"deleted-{user.id}@deleted.invalid"
             user.password_hash, user.google_sub, user.play_account, user.external_id = "", None, None, None
-            user.apple_account, user.library_name = None, None
+            user.apple_account, user.microsoft_account, user.library_name = None, None, None
             user.enabled = user.email_verified = user.unlimited = False
             user.extra_printers = 0
         for job_id in jobs:
@@ -1061,7 +1088,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "payments": bool(provider),
                 # The web client ID of "Sign in with Google" (the first one), for the account page.
                 "google_client_id": services.google.client_ids[0] if services.google.client_ids else "",
-                "play_payments": services.play is not None}
+                "play_payments": services.play is not None, "apple_payments": services.apple is not None,
+                "microsoft_payments": services.microsoft is not None}
 
     # The signed list of versions, byte for byte (updates.py): a second address for the programs and the app.
     def update_file(index: int, media_type: str) -> Response:
@@ -1995,6 +2023,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return play_once_more(link)
         except apple.AppleError as ex:
             raise HTTPException(422, str(ex)) from None
+
+    # ---- Microsoft Store subscriptions (Windows; microsoft.py)
+    class MicrosoftPurchaseBody(BaseModel):
+        purchase_key: str = Field(min_length=20, max_length=20000)
+
+    def microsoft_store() -> microsoft.Store:
+        if services.microsoft is None:
+            raise HTTPException(404, "Microsoft Store payments are not set up")
+        return services.microsoft
+
+    @app.get("/v1/billing/microsoft/ticket")
+    def microsoft_ticket(user: UserDep) -> dict:
+        """What the app passes to StoreContext.GetCustomerPurchaseIdAsync: the service ticket and the account's
+        publisherUserId (a random id)."""
+        store = microsoft_store()
+        try:
+            ticket = store.service_ticket()
+        except microsoft.MicrosoftUnavailable as ex:
+            log.warning("Microsoft Store ticket: %s", ex)
+            raise HTTPException(503, "The Microsoft Store cannot be reached now", headers={"Retry-After": "60"}) from None
+        with db.session() as s:
+            return {**ticket, "publisher_user_id": microsoft.microsoft_account(s, s.get(User, user.id))}
+
+    @app.post("/v1/billing/microsoft/purchase")
+    def microsoft_purchase(user: UserDep, body: MicrosoftPurchaseBody) -> dict:
+        """The Microsoft Store ID key the app made after a purchase (or at start): its subscriptions, applied."""
+        store = microsoft_store()
+
+        def link() -> dict:
+            with db.session() as s:
+                u = s.get(User, user.id)
+                subs = store.link(s, u, body.purchase_key)
+                return {"subscriptions": [{"plan": x.plan_name, "state": x.state} for x in subs],
+                        **scheduler.account(s, u, cfg.grace_days).as_dict()}
+
+        try:
+            return play_once_more(link)
+        except microsoft.MicrosoftError as ex:
+            raise HTTPException(422, str(ex)) from None
+        except microsoft.MicrosoftUnavailable as ex:
+            log.warning("Microsoft Store: %s", ex)
+            raise HTTPException(503, "The Microsoft Store cannot be reached now", headers={"Retry-After": "60"}) from None
 
     @app.post("/v1/billing/apple/notify")
     async def apple_notify(request: Request) -> dict:

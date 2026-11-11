@@ -93,6 +93,8 @@ class User(Base):
     library_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
     # Random id of the account given to the App Store with each purchase (appAccountToken, a UUID), to know whose it is.
     apple_account: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True)
+    # The publisherUserId given to the Microsoft Store (microsoft.py): random, made the first time.
+    microsoft_account: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     plan: Mapped[Plan] = relationship(lazy="joined")
@@ -573,4 +575,28 @@ class AppleSubscription(Base):
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     # The time of the transaction applied last: an older one arriving late does not undo a newer one.
     signed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class MicrosoftKey(Base):
+    """The Microsoft Store ID key (purchase API) the app of an account sent, kept encrypted to ask Microsoft again and
+    renewed before it ends (microsoft.py)."""
+    __tablename__ = "microsoft_keys"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    key: Mapped[str] = mapped_column(Encrypted)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class MicrosoftSubscription(Base):
+    """A Microsoft Store subscription add-on and the access it gives, as the purchase API answered last."""
+    __tablename__ = "microsoft_subscriptions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    subscription_id: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    product_id: Mapped[str] = mapped_column(String(100), default="")
+    plan_name: Mapped[str] = mapped_column(ForeignKey("plans.name"))
+    state: Mapped[str] = mapped_column(String(20), default="")
+    # expirationTimeWithGrace (or expirationTime) while Active or InDunning, none otherwise.
+    entitled_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
