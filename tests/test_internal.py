@@ -97,3 +97,28 @@ def test_admin_command(settings, f, monkeypatch, capsys):
     assert admin_cli.main(["user-set", "eq@x.com", "--limited"]) == 0
     with f.db.session() as s:
         assert not s.execute(select(User.unlimited).where(User.email_index == crypto.index("eq@x.com"))).scalar_one()
+
+
+def test_paid_until_a_date_is_through_that_whole_day_on_the_masters_clock(monkeypatch):
+    """«--paid-until 2026-12-01» (deploy/BETA.md) ended the paid period at midnight UTC: 21:00 of 30/11 in Uruguay, a
+    day less than given. A date with a zone was kept with its digits, off by its hours."""
+    import time
+    from datetime import datetime
+
+    from tisma_cloud.admin import parse_date
+
+    if not hasattr(time, "tzset"):
+        import pytest
+
+        pytest.skip("no time.tzset on this system")
+    monkeypatch.setenv("TZ", "America/Montevideo")
+    time.tzset()
+    try:
+        assert parse_date("2026-12-01") == datetime(2026, 12, 2, 2, 59, 59)
+        assert parse_date("2026-12-01T10:00-03:00") == datetime(2026, 12, 1, 13, 0)
+        assert parse_date("2026-12-01T10:00Z") == datetime(2026, 12, 1, 10, 0)
+        # A time without a zone is the master's clock too.
+        assert parse_date("2026-12-01T10:00") == datetime(2026, 12, 1, 13, 0)
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()

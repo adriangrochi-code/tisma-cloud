@@ -64,10 +64,20 @@ def classes_text(plan: Plan) -> str:
 
 
 def parse_date(text: str) -> datetime:
+    """A date or time given here, as the database keeps it (UTC, without zone). A date alone is through that whole day
+    and a time without a zone is on this machine's clock: «--paid-until 2026-12-01» in Uruguay lasts to 23:59:59 of
+    the 1st there, not to 21:00 of the 30th."""
+    from datetime import time as day_time, timezone
+
     try:
-        return datetime.fromisoformat(text)
+        value = datetime.fromisoformat(text.strip())
     except ValueError:
         raise SystemExit(f"Not a date: {text} (YYYY-MM-DD)") from None
+    if "T" not in text and " " not in text.strip():
+        value = datetime.combine(value.date(), day_time(23, 59, 59))
+    if value.tzinfo is None:
+        value = value.astimezone()          # this machine's zone
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def ask_password() -> str:

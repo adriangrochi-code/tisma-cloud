@@ -968,7 +968,7 @@ python -m tisma_cloud.admin node-requests                 # máquinas que piden 
 python -m tisma_cloud.admin node-accept ID --name i7-3    # aceptar una (node-reject ID: rechazarla)
 python -m tisma_cloud.admin queue                         # trabajos esperando y corriendo por clase
 python -m tisma_cloud.admin user-list                     # plan, si está al día, horas usadas
-python -m tisma_cloud.admin user-set ana@correo.com --paid-until 2026-12-31
+python -m tisma_cloud.admin user-set ana@correo.com --paid-until 2026-12-31   # hasta el final de ese día, hora de esta máquina
 python -m tisma_cloud.admin user-set equipo@tisma.com.uy --unlimited   # cuenta interna (ver «Cuentas internas»)
 ```
 
