@@ -1,4 +1,4 @@
-"""Runs a job with the Tisma programs (tisma-engine, or tisma-slicer and tisma-fea), as separate programs."""
+"""Runs a job with the Tisma programs (tisma-engine; tisma_scan for 3D scans), as separate programs."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import zipfile
@@ -24,18 +23,6 @@ from .config import NodeConfig
 
 # Largest total uncompressed size of a project accepted by a node.
 MAX_PROJECT_BYTES = 4 << 30
-CONFIG_FILE = "Metadata/Slic3r_PE.config"
-MODEL_CONFIG_FILE = "Metadata/Slic3r_PE_model.config"
-# Projects of other slicers (Bambu Studio, OrcaSlicer): their settings are converted by Tisma when loaded, so they are
-# not accepted (the client always sends Tisma projects).
-FOREIGN_CONFIGS = ("Metadata/project_settings.config",)
-# A project saved by the new Tisma (tisma-engine's interface, the app): its settings, which only the engine reads
-# (tisma_engine docs/PROJECT.md, «El paquete 3MF»).
-ENGINE_PROJECT = "Metadata/tisma_project.json"
-# Exit codes of tisma-engine (its README, «Códigos de salida») after which Tisma Slicer may try a bare model: the
-# command line (an older engine), a file it could not read, an order not made yet, a G-code that failed its own check,
-# or a crash. Not 4 (the model cannot be printed: Tisma Slicer would not print it either) nor 5 (analyses).
-ENGINE_RETRY_CODES = (1, 2, 3, 6)
 
 
 class JobFailed(Exception):
@@ -62,16 +49,10 @@ Progress = Callable[[int], None]
 Cancelled = Callable[[], bool]
 
 
-def sanitize_project(src: Path, dst: Path, for_slicing: bool, engine: bool = False) -> None:
-    """Copies the project without what could run commands on the node.
-
-    The print settings may name post-processing scripts (post_process), which the slicer runs after exporting the
-    G-code: they are removed. Projects of other slicers are refused, and so are archives that decompress to more than
-    MAX_PROJECT_BYTES. Resin projects are not sliced in the cloud yet.
-
-    For tisma-engine (engine=True) only the size is checked and the files are copied as they are: the engine runs with
-    --sandbox, which runs no post-processing script nor plugin, and it opens the projects of other slicers itself.
-    """
+def sanitize_project(src: Path, dst: Path) -> None:
+    """Copies the project after checking it is a 3MF that decompresses to at most MAX_PROJECT_BYTES. Its files go as
+    they are: tisma-engine runs with --sandbox, which runs no post-processing script nor plugin, and it opens the
+    projects of other slicers itself (formats.md, rule 18)."""
     try:
         archive = zipfile.ZipFile(src)
     except zipfile.BadZipFile:
@@ -80,28 +61,10 @@ def sanitize_project(src: Path, dst: Path, for_slicing: bool, engine: bool = Fal
         infos = archive.infolist()
         if sum(i.file_size for i in infos) > MAX_PROJECT_BYTES:
             raise JobFailed("The project is too large once decompressed")
-        names = {i.filename for i in infos}
-        if not engine and any(n in names for n in FOREIGN_CONFIGS):
-            raise JobFailed("Only Tisma projects are accepted: save the project with Tisma Slicer first")
         with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out:
             for info in infos:
-                if info.is_dir():
-                    continue
-                data = archive.read(info)
-                if engine:
-                    pass
-                elif info.filename == CONFIG_FILE:
-                    text = data.decode("utf-8", errors="replace")
-                    if for_slicing and re.search(r"^; printer_technology = SLA\s*$", text, re.M):
-                        raise JobFailed("Slicing resin projects in the cloud is not available yet")
-                    text = re.sub(r"^; post_process = .*$", "; post_process = ", text, flags=re.M)
-                    data = text.encode("utf-8")
-                elif info.filename == MODEL_CONFIG_FILE:
-                    # Settings of the objects: post_process is not one of them, removed in case a project has it.
-                    text = data.decode("utf-8", errors="replace")
-                    text = re.sub(r'<metadata[^>]*key="post_process"[^>]*/>', "", text)
-                    data = text.encode("utf-8")
-                out.writestr(info.filename, data, compress_type=zipfile.ZIP_DEFLATED)
+                if not info.is_dir():
+                    out.writestr(info.filename, archive.read(info), compress_type=zipfile.ZIP_DEFLATED)
 
 
 def _run(cmd: list[str], cfg: NodeConfig, progress_re: re.Pattern, progress: Progress, cancelled: Cancelled,
@@ -113,13 +76,6 @@ def _run(cmd: list[str], cfg: NodeConfig, progress_re: re.Pattern, progress: Pro
     else:
         kwargs["start_new_session"] = True
     env = program_env()
-    if cfg.gpu:
-        # The slicer casts the visibility rays of the seam on the graphics card (OpenCL: the NVIDIA cards and the Intel
-        # HD Graphics 4000; on the CPU when there is none). TISMA_GPU_DEVICE, when set, picks the card by its name.
-        env.setdefault("TISMA_GPU_SLICING", "1")
-    else:
-        env["TISMA_FEA_GPU"] = "0"
-        env["TISMA_GPU_SLICING"] = "0"
     proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                             env=env, text=True, errors="replace", **kwargs)
     err_tail: list[str] = []
@@ -169,26 +125,6 @@ def _kill(proc: subprocess.Popen) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
-
-
-def _gcode_summary(path: Path) -> dict:
-    """Print time and filament from the comments at the end of a text G-code."""
-    summary: dict = {}
-    with open(path, "rb") as f:
-        if f.read(4) == b"GCDE":
-            return summary
-        f.seek(max(0, path.stat().st_size - 256 * 1024))
-        tail = f.read().decode("utf-8", errors="replace")
-    patterns = {
-        "print_time": r"^; estimated printing time \(normal mode\) = (.+)$",
-        "filament_g": r"^; (?:total )?filament used \[g\] = ([\d.]+)",
-        "filament_mm": r"^; (?:total )?filament used \[mm\] = ([\d.]+)",
-    }
-    for key, pattern in patterns.items():
-        m = re.search(pattern, tail, re.M)
-        if m:
-            summary[key] = m.group(1).strip() if key == "print_time" else float(m.group(1))
-    return summary
 
 
 ENGINE_PROGRESS = re.compile(r"^progress (\d+)")
@@ -241,157 +177,56 @@ def _run_engine(cfg: NodeConfig, command: str, project: Path, out: Path, extra: 
     return summary
 
 
-def project_kind(project: Path) -> str:
-    """Who saved the project, which decides who slices it: "engine" (the new Tisma: its settings are only read by
-    tisma-engine), "slicer" (Tisma Slicer: only it reads its settings), "foreign" (Bambu Studio or OrcaSlicer) or
-    "model" (a 3MF with no settings)."""
-    try:
-        with zipfile.ZipFile(project) as archive:
-            names = set(archive.namelist())
-    except zipfile.BadZipFile:
-        raise JobFailed("The project is not a 3MF file") from None
-    if ENGINE_PROJECT in names:
-        return "engine"
-    if CONFIG_FILE in names:
-        return "slicer"
-    if any(n in names for n in FOREIGN_CONFIGS):
-        return "foreign"
-    return "model"
-
-
 def _binary_suffix(out: Path) -> Path:
     with open(out, "rb") as f:
         binary = f.read(4) == b"GCDE"
     return out.rename(out.with_suffix(".bgcode")) if binary else out
 
 
-def _slice_with_engine(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
-                       cancelled: Cancelled) -> Outcome:
+def _engine_only(cfg: NodeConfig, what: str) -> None:
+    """Every calculation runs with tisma-engine (Tisma Slicer was left, the owner, 2026-11-11)."""
+    if not cfg.tisma_engine:
+        raise JobFailed(f"This node cannot run {what}: it needs tisma_engine in its configuration",
+                        {"code": "needs_engine", "error_es": "Este servidor de cálculo no tiene tisma-engine"})
+
+
+def run_slice(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
+              cancelled: Cancelled) -> Outcome:
+    """Slices with tisma-engine (cloud.md, rule 18): a project of the new Tisma, a bare model, or a project of another
+    slicer (the engine reads the parts of it it knows, formats.md rule 18)."""
+    _engine_only(cfg, "slicing")
     clean = work / "project.3mf"
-    sanitize_project(project, clean, for_slicing=True, engine=True)
+    sanitize_project(project, clean)
     out = work / "plate.gcode"
     summary = _run_engine(cfg, "slice", clean, out, [], work, progress, cancelled, params)
     return Outcome(_binary_suffix(out), {**summary, "slicer": "tisma-engine"})
 
 
-def _slice_with_slicer(cfg: NodeConfig, project: Path, work: Path, progress: Progress, cancelled: Cancelled) -> Outcome:
-    clean = work / "project.3mf"
-    sanitize_project(project, clean, for_slicing=True)
-    out = work / "plate.gcode"
-    # A fresh data directory: no profile or setting of another job leaks into this one; the project carries its own.
-    datadir = Path(tempfile.mkdtemp(prefix="datadir-", dir=work))
-    try:
-        cmd = [cfg.tisma_slicer, "--datadir", str(datadir), "--loglevel", "1", "--export-gcode", "--output", str(out),
-               str(clean)]
-        code, err = _run(cmd, cfg, re.compile(r"^\s*(\d+)% =>"), progress, cancelled, work)
-    finally:
-        shutil.rmtree(datadir, ignore_errors=True)
-    if code != 0 or not out.exists() or out.stat().st_size == 0:
-        raise JobFailed(err.strip() or f"Slicing failed (code {code})")
-    out = _binary_suffix(out)
-    return Outcome(out, {**_gcode_summary(out), "slicer": "tisma-slicer"})
-
-
-def run_slice(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
-              cancelled: Cancelled) -> Outcome:
-    """Slices with the program that reads the project's settings (project_kind). A project of the new Tisma goes to
-    tisma-engine, one of Tisma Slicer to Tisma Slicer: the other one would ignore its settings and slice it with its
-    own defaults. A bare model goes to tisma-engine (F6: the engine replaces Tisma Slicer), with Tisma Slicer as the
-    fallback when the engine fails for a reason that is not the model's (ENGINE_RETRY_CODES)."""
-    kind = project_kind(project)
-    engine, slicer = bool(cfg.tisma_engine), bool(cfg.tisma_slicer)
-    if kind == "engine":
-        if not engine:
-            raise JobFailed("This project was saved by the new Tisma and this computing server has no tisma-engine",
-                            {"code": "needs_engine", "error_es": "Este servidor de cálculo no tiene tisma-engine, que "
-                                                                 "hace falta para los proyectos del Tisma nuevo"})
-        return _slice_with_engine(cfg, params, project, work, progress, cancelled)
-    if kind == "slicer":
-        if not slicer:
-            raise JobFailed("This project was saved by Tisma Slicer and this computing server does not have it",
-                            {"code": "needs_slicer", "error_es": "Este servidor de cálculo no tiene Tisma Slicer, que "
-                                                                 "hace falta para los proyectos guardados con él"})
-        return _slice_with_slicer(cfg, project, work, progress, cancelled)
-    if not engine:
-        return _slice_with_slicer(cfg, project, work, progress, cancelled)
-    try:
-        return _slice_with_engine(cfg, params, project, work, progress, cancelled)
-    except JobFailed as ex:
-        code = ex.exit_code
-        # A crash is a negative code (a signal) on Linux and a large one (an NTSTATUS) on Windows.
-        crashed = code is not None and (code < 0 or code > 255)
-        if kind != "model" or not slicer or not (code in ENGINE_RETRY_CODES or crashed):
-            raise
-        logging.getLogger("tisma_cloud").warning("tisma-engine failed (code %s: %s); slicing the model with Tisma Slicer", ex.exit_code, ex)
-        for leftover in work.glob("plate.*"):
-            leftover.unlink(missing_ok=True)
-        outcome = _slice_with_slicer(cfg, project, work, progress, cancelled)
-        outcome.summary["fallback_from"] = f"tisma-engine (code {ex.exit_code})"
-        return outcome
-
-
-def _fea_quality(params: dict) -> str:
-    """The quality for tisma-fea, the program of Tisma Slicer: it has no "use the project's own" (an empty quality,
-    which only tisma-engine understands, cloud.md rule 19) and calls "extreme" by its old name, "ultra"."""
-    quality = params.get("quality") or "normal"
-    return "ultra" if quality == "extreme" else quality
-
-
 def run_fea(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
             cancelled: Cancelled) -> Outcome:
-    if cfg.tisma_engine:
-        clean = work / "project.3mf"
-        sanitize_project(project, clean, for_slicing=False, engine=True)
-        out = work / "result.tea"
-        extra = ["--mode", params.get("mode", "analyze"),
-                 "--object", str(int(params.get("object", 0))), "--instance", str(int(params.get("instance", 0)))]
-        if params.get("quality"):
-            extra += ["--quality", params["quality"]]
-        if params.get("solid"):
-            extra.append("--solid")
-        if params.get("zones") is False:
-            extra.append("--no-zones")
-        if params.get("ribs"):
-            extra.append("--ribs")
-        return Outcome(out, _run_engine(cfg, "analyze", clean, out, extra, work, progress, cancelled, params))
+    """The structural analysis of tisma-engine (cloud.md, rule 19)."""
+    _engine_only(cfg, "structural analyses")
     clean = work / "project.3mf"
-    sanitize_project(project, clean, for_slicing=False)
-    out = work / "result.tfea"
-    summary_path = work / "summary.json"
-    cmd = [cfg.tisma_fea, "--input", str(clean), "--output", str(out), "--summary", str(summary_path),
-           "--mode", params.get("mode", "analyze"), "--quality", _fea_quality(params),
-           "--object", str(int(params.get("object", 0))), "--instance", str(int(params.get("instance", 0)))]
+    sanitize_project(project, clean)
+    out = work / "result.tea"
+    extra = ["--mode", params.get("mode", "analyze"),
+             "--object", str(int(params.get("object", 0))), "--instance", str(int(params.get("instance", 0)))]
+    if params.get("quality"):
+        extra += ["--quality", params["quality"]]
     if params.get("solid"):
-        cmd.append("--solid")
+        extra.append("--solid")
     if params.get("zones") is False:
-        cmd.append("--no-zones")
+        extra.append("--no-zones")
     if params.get("ribs"):
-        cmd.append("--ribs")
-    if not cfg.gpu:
-        cmd.append("--no-gpu")
-    code, err = _run(cmd, cfg, re.compile(r"^progress (\d+)"), progress, cancelled, work)
-    summary: dict = {}
-    if summary_path.exists():
-        try:
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        except ValueError:
-            summary = {}
-    if code != 0 or not out.exists():
-        raise JobFailed(summary.get("error") or err.strip() or f"The analysis failed (code {code})")
-    return Outcome(out, summary)
-
-
-def _engine_only(cfg: NodeConfig, what: str) -> None:
-    """The aerodynamic analysis and the orientation exist only in tisma-engine (cloud.md, rules 19b and 19c)."""
-    if not cfg.tisma_engine:
-        raise JobFailed(f"This node cannot run {what}: it needs tisma_engine in its configuration")
+        extra.append("--ribs")
+    return Outcome(out, _run_engine(cfg, "analyze", clean, out, extra, work, progress, cancelled, params))
 
 
 def run_aero(cfg: NodeConfig, params: dict, project: Path, work: Path, progress: Progress,
              cancelled: Cancelled) -> Outcome:
     _engine_only(cfg, "aerodynamic analyses")
     clean = work / "project.3mf"
-    sanitize_project(project, clean, for_slicing=False, engine=True)
+    sanitize_project(project, clean)
     out = work / "result.taero"
     direction = params.get("direction", "x")
     if isinstance(direction, list):
@@ -406,7 +241,7 @@ def run_orient(cfg: NodeConfig, params: dict, project: Path, work: Path, progres
                cancelled: Cancelled) -> Outcome:
     _engine_only(cfg, "automatic orientations")
     clean = work / "project.3mf"
-    sanitize_project(project, clean, for_slicing=False, engine=True)
+    sanitize_project(project, clean)
     out = work / "orientation.json"
     extra = ["--object", str(int(params.get("object", 0))), "--instance", str(int(params.get("instance", 0)))]
     return Outcome(out, _run_engine(cfg, "orient", clean, out, extra, work, progress, cancelled, params))

@@ -1,8 +1,8 @@
 # Tisma Cloud — servidor maestro y nodos de cómputo
 
-Software **propietario** (ver `LICENSE`), separado de Tisma Slicer (AGPL). No contiene código de PrusaSlicer ni de
-Tisma: ejecuta `tisma-slicer` y `tisma-fea`, o el slicer nuevo `tisma-engine`, como programas aparte. La versión de Tisma que use el servicio tiene que
-estar publicada con todos sus cambios (AGPL §13).
+Software **propietario** (ver `LICENSE`). No contiene código de PrusaSlicer, de Tisma Slicer ni del motor: los nodos
+ejecutan `tisma-engine` (laminado y análisis) y `tisma_scan` (escaneos 3D) como programas aparte. Desde el 11-11-2026
+los nodos ya no usan Tisma Slicer (lo dejó el dueño): el motor es el único laminador.
 
 ## Cómo funciona
 
@@ -350,10 +350,9 @@ reciben una alerta con lo rechazado en la última hora (solo cuántos y de qué 
 
 ## Seguridad de los nodos
 
-Un 3MF puede traer un script de post-procesado (`post_process`) que el laminador ejecuta al terminar: **el nodo lo
-quita** antes de laminar. Además rechaza proyectos de otros laminadores (Bambu Studio, OrcaSlicer), archivos que
-descomprimidos pasan de 4 GB y, por ahora, el laminado de resina. Cada trabajo usa un directorio de datos vacío y no
-recibe entrada estándar. Con Docker el nodo corre sin privilegios y con el sistema de solo lectura.
+El nodo corre `tisma-engine` con `--sandbox`: no ejecuta scripts de post-procesado (`post_process`) ni complementos
+que traiga el proyecto. Rechaza lo que no es un 3MF y los archivos que descomprimidos pasan de 4 GB. Cada trabajo
+corre en su propia carpeta y no recibe entrada estándar. Con Docker el nodo corre sin privilegios y con el sistema de solo lectura.
 
 ## Instalar el maestro (i5)
 
@@ -394,34 +393,22 @@ en Windows) en la pestaña *Actions* del PR, artefactos `tisma-cloud-windows` y 
 días). Es el mismo programa para todas las máquinas: en cada una se elige si es el **maestro** (el servidor central)
 o un **nodo de cómputo** (esclavo).
 
-**Trae todo lo que necesita:** el paquete es `dist/tisma-cloud.exe` y, al lado, la carpeta `dist/tisma-slicer/` con
-los programas que corren los trabajos (`tisma-slicer-console.exe` y `tisma-fea.exe` en Windows; en Linux el AppImage
-de Tisma Slicer ya extraído, `usr/bin/tisma-slicer` y `usr/bin/tisma-fea`), de la última compilación de `main` que
-pasó el CI y todavía tiene su paquete (GitHub los guarda 30 días; si no hay ninguna, la última de `dev`). `SOURCE.txt`
-dice de qué compilación es. No hace falta instalar Tisma Slicer ni nada más en ninguna máquina: se descomprime el paquete entero y
-`tisma-cloud` encuentra los programas solo (la carpeta `tisma-slicer` tiene que quedar junto a `tisma-cloud.exe`).
-En Linux los programas usan GTK 3, WebKitGTK 4.1 y hidapi del sistema, como el AppImage (Ubuntu 24.04:
-`sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0 libhidapi-hidraw0`). La carpeta lleva la licencia de Tisma Slicer (AGPL-3.0) y en
-`SOURCE.txt` el código fuente exacto de esa compilación.
+**Trae todo lo que necesita:** el paquete es `dist/tisma-cloud.exe` y, al lado, la carpeta `dist/tisma-engine/` con
+el último *nightly* de `tisma-engine`, el programa que corre los laminados y los análisis (`SOURCE.txt` dice qué
+*nightly* es). No hace falta instalar nada más en ninguna máquina: se descomprime el paquete entero y `tisma-cloud`
+encuentra el motor solo (la carpeta `tisma-engine` tiene que quedar junto a `tisma-cloud.exe`).
 
-**El motor nuevo (tisma-engine):** el paquete trae también `dist/tisma-engine/`, el último *nightly* del motor que
-reemplaza a Tisma Slicer. El nodo, y el del maestro, lo encuentran solos. Cada proyecto lo lamina el programa que lee
-sus ajustes:
-- un proyecto del Tisma nuevo (con `Metadata/tisma_project.json`), con tisma-engine;
-- uno de Tisma Slicer, con Tisma Slicer;
-- un modelo sin ajustes, con tisma-engine. Si el motor falla por algo que no es del modelo (códigos 1, 2, 3, 6 o un
-  cierre inesperado), lo intenta Tisma Slicer, y el trabajo lo dice (`"fallback_from"` en el resumen). Hoy el motor
-  lamina solo proyectos guardados por Tisma: a un modelo suelto le responde el código 2, así que esos los lamina
-  Tisma Slicer (medido el 06-11 con el *nightly* en Windows y Linux).
-
-Un proyecto nunca se lamina con el programa equivocado: el otro tomaría solo las piezas y laminaría con sus propios
-ajustes por defecto, sin avisar. Un nodo al que le falta el programa del proyecto lo rechaza con un código claro
-(`needs_engine` o `needs_slicer`). El resumen de cada laminado dice qué programa lo hizo (`"slicer"`).
+Todo proyecto lo lamina el motor: los del Tisma nuevo (con `Metadata/tisma_project.json`), los modelos sin ajustes y
+los de otros laminadores, de los que el motor toma lo que conoce. No hay otro programa al que pasarle un trabajo si el
+motor falla: el trabajo falla con el motivo del motor. Un nodo sin motor (uno solo para escaneos) rechaza los demás
+trabajos con el código `needs_engine`. El resumen de cada laminado lo dice (`"slicer": "tisma-engine"`). El 06-11 el
+*nightly* respondía el código 2 a un modelo suelto (lo laminaba entonces Tisma Slicer); la CI prueba un modelo suelto
+con cada *nightly* sin frenar el paquete.
 
 Se maneja de dos formas, con lo mismo:
 
 - **En la pantalla del servidor:** doble clic en `tisma-cloud.exe` abre la ventana de Tisma Cloud: rol de la máquina,
-  configuración (la del maestro o la del nodo; en un nodo, «Buscar Tisma Slicer» encuentra los programas), Iniciar /
+  configuración (la del maestro o la del nodo; en un nodo, «Buscar programas» encuentra el motor), Iniciar /
   Detener / Reiniciar, «Iniciar con la máquina», en Windows «Abrir el puerto en el firewall», el **Diagnóstico** (lo que
   la máquina necesita para dar servicio, con «Arreglar» para lo que se puede arreglar solo), el registro y, en el
   maestro, la administración:
@@ -492,8 +479,8 @@ Probado por el CI en Windows Server 2022 (los equipos de GitHub Actions): tarea 
 firewall, supervisor que revive el maestro, arrancar y detener. Pasos en el servidor, con una cuenta de administrador:
 
 1. Descomprimir el paquete entero (el artefacto `tisma-cloud-windows`: `tisma-cloud.exe` con la carpeta
-   `tisma-slicer` al lado) en una carpeta propia, por ejemplo `C:\TismaCloud\` (ahí quedan su configuración, la base
-   SQLite y los archivos; sin `tisma-slicer` el maestro sirve pero no calcula). Abrirlo con clic derecho > *Ejecutar como administrador*.
+   `tisma-engine` al lado) en una carpeta propia, por ejemplo `C:\TismaCloud\` (ahí quedan su configuración, la base
+   SQLite y los archivos; sin `tisma-engine` el maestro sirve pero no calcula). Abrirlo con clic derecho > *Ejecutar como administrador*.
 2. Elegir **Maestro**, revisar la configuración (puerto, base de datos, carpeta de archivos) e **Iniciar**.
 3. Marcar **Iniciar con la máquina** y **Abrir el puerto en el firewall** (Windows Server bloquea por defecto las
    conexiones entrantes: sin la regla, los nodos y los clientes no llegan).
@@ -503,11 +490,11 @@ firewall, supervisor que revive el maestro, arrancar y detener. Pasos en el serv
    <https://developer.microsoft.com/microsoft-edge/webview2/> (instalador «Evergreen Standalone», x64). Sin él, el
    panel se abre desde el navegador de otra PC de la red: `http://IP-del-servidor:8000/admin`, con el correo y la
    contraseña del administrador (el Internet Explorer de Windows Server no sirve para el panel).
-6. En cada **nodo** con Windows: descomprimir el paquete entero (con la carpeta `tisma-slicer`), abrir
+6. En cada **nodo** con Windows: descomprimir el paquete entero (con la carpeta `tisma-engine`), abrir
    `tisma-cloud.exe` como administrador, elegir **Nodo**, poner la dirección del maestro, dejar el token vacío e
-   **Iniciar**: el nodo pide unirse y en el maestro aparece en **Nodos** para aceptarlo (ver «Instalar un nodo»). Los
-   programas `tisma-slicer-console.exe` y `tisma-fea.exe` se encuentran solos en la carpeta `tisma-slicer` del paquete
-   (o, si no está, en la instalación de Tisma Slicer: «Buscar Tisma Slicer»).
+   **Iniciar**: el nodo pide unirse y en el maestro aparece en **Nodos** para aceptarlo (ver «Instalar un nodo»). El
+   motor, `tisma-engine.exe`, se encuentra solo en la carpeta `tisma-engine` del paquete («Buscar programas» lo busca
+   de nuevo).
    **Iniciar con la máquina** y **Diagnóstico** igual que en el maestro (un nodo no necesita abrir puertos: él llama
    al maestro).
 
@@ -558,7 +545,7 @@ Después sigue como cualquier trabajo: `GET /v1/jobs/{id}` (avance, `summary` co
 **El nodo** necesita `tisma_scan` en su `node.toml` (el programa de `openscanner`, o su `tools/tisma_scan.py`, que
 corre con el Python de la máquina) y `scan` en sus prioridades (`tisma-cloud admin node-set gpu-1 --priorities
 scan,fea`): un escaneo ocupa la placa de video, así que cuenta como un análisis (`fea_slots`). Puede durar horas:
-`scan_timeout_s` (6 h). Un nodo solo para escaneos no necesita `tisma_slicer` ni `tisma_fea`. El contrato de la línea
+`scan_timeout_s` (6 h). Un nodo solo para escaneos no necesita `tisma_engine`. El contrato de la línea
 de comandos está en `tisma_cloud/node/runners.py`, `run_scan()`:
 
 ```
@@ -589,8 +576,8 @@ máquina sin placa NVIDIA: la caja de 40 × 30 × 20 mm salió de 42,4 × 32,5 �
 41903680499 de `scanner/next`). **Todavía sin probar en un Windows real ni con una placa NVIDIA.**
 
 1. Descomprimir `TismaScan-windows` en la carpeta de `tisma-cloud.exe`, de modo que quede `C:\TismaCloud\tisma-scan\`
-   junto a `tisma-cloud.exe` y `tisma-slicer\`. No hace falta ninguna variable de entorno: `tisma-cloud` encuentra
-   `tisma-scan\tisma_scan.exe` solo (al hacer el nodo, al iniciar y con «Buscar Tisma Slicer»), y `tisma_scan.exe`
+   junto a `tisma-cloud.exe` y `tisma-engine\`. No hace falta ninguna variable de entorno: `tisma-cloud` encuentra
+   `tisma-scan\tisma_scan.exe` solo (al hacer el nodo, al iniciar y con «Buscar programas»), y `tisma_scan.exe`
    encuentra su COLMAP y su OpenMVS al lado. Si `TISMA_COLMAP` o `TISMA_OPENMVS` están definidas en el sistema, se
    usan esas.
 2. En un nodo: reiniciar el servicio (o `tisma-cloud config tisma_scan C:\TismaCloud\tisma-scan\tisma_scan.exe`). En
@@ -806,9 +793,9 @@ hace una clave nueva, lo dice en el registro y la biblioteca responde 503 hasta 
 Con una sola máquina (o para aprovechar la del maestro) el maestro también corre trabajos: es la opción **«El maestro
 también calcula»** de la ventana (`tisma-cloud config master_computes true|false`), activada salvo que se apague. El
 servicio registra en la base del maestro un nodo **«maestro»** con su token, escribe `master-node.toml` (conectado a
-`http://127.0.0.1:PUERTO`, con los programas de la carpeta `tisma-slicer` del paquete) y lo corre junto al maestro,
+`http://127.0.0.1:PUERTO`, con el motor de la carpeta `tisma-engine` del paquete) y lo corre junto al maestro,
 cada uno reiniciado aparte si falla. Qué hace se cambia como en cualquier nodo («Qué hace…»); los trabajos a la vez,
-en `master-node.toml`. Si faltan los programas (la carpeta `tisma-slicer` no quedó junto al programa), el maestro
+en `master-node.toml`. Si falta el motor (la carpeta `tisma-engine` no quedó junto al programa), el maestro
 atiende sin calcular y el Diagnóstico lo dice.
 
 ### IP pública que cambia: dirección automática y DNS dinámico
@@ -838,7 +825,7 @@ sirve) y Caddy delante del maestro (ver «Instalar el maestro»).
 ## Actualizar Tisma Cloud
 
 El maestro y cada nodo se actualizan igual: `tisma-cloud stop`, una copia de seguridad del maestro (`tisma-cloud
-backup`), poner el paquete nuevo en la misma carpeta encima del viejo (el `.exe`, `tisma-slicer\`, `tisma-engine\` y,
+backup`), poner el paquete nuevo en la misma carpeta encima del viejo (el `.exe`, `tisma-engine\` y,
 en un nodo de escaneo, `tisma-scan\`) y `tisma-cloud start`. La configuración (`tisma-cloud.toml`, `.env`,
 `node.toml`), la base de datos y `storage\data.key` no se tocan. Al arrancar, el maestro pone la base al día solo
 (tablas y columnas nuevas, `db.py`; nunca borra una). Conviene actualizar primero el maestro y después los nodos; un
@@ -884,17 +871,18 @@ token en el `node.toml` del nodo.
 En la máquina del nodo:
 
 - **Con el programa `tisma-cloud`** (Windows o Linux): ver «Programa tisma-cloud» y «Windows Server» arriba.
-- **Sin Docker** (Linux o Windows): instalar Tisma Slicer y Python 3.11+, `pip install .`, copiar
-  `deploy/node.example.toml` a `node.toml`, completar las rutas de `tisma-slicer` (en Windows
-  `tisma-slicer-console.exe`) y `tisma-fea`, y correr `TISMA_NODE_TOKEN=tn_... python -m tisma_cloud.node --config node.toml`.
-- **Con Docker** (Linux): copiar los programas de una compilación de Tisma para Linux a `deploy/tisma/`, crear
-  `deploy/node.toml` y correr `TISMA_NODE_TOKEN=tn_... docker compose -f deploy/compose.node.yaml up -d`.
+- **Sin Docker** (Linux o Windows): Python 3.11+, `pip install .`, el *nightly* de `tisma-engine` descomprimido,
+  copiar `deploy/node.example.toml` a `node.toml`, poner la ruta del motor en `tisma_engine` y correr
+  `TISMA_NODE_TOKEN=tn_... python -m tisma_cloud.node --config node.toml`.
+- **Con Docker** (Linux): copiar el *nightly* de `tisma-engine` para Linux a `deploy/tisma/`, crear `deploy/node.toml`
+  (`tisma_engine = "/opt/tisma/tisma-engine"`) y correr `TISMA_NODE_TOKEN=tn_... docker compose -f
+  deploy/compose.node.yaml up -d`.
 
-**Con el slicer nuevo (`tisma-engine`):** poner su ruta en `tisma_engine` del `node.toml` (o en la ventana, «Programa
-tisma-engine»). Con eso el nodo corre todos los trabajos con el motor y no necesita `tisma-slicer` ni `tisma-fea`; sin
-ella, sigue usando los programas de Tisma Slicer. El nodo le pasa el proyecto, la salida y un resumen JSON, con
-`--sandbox` (sin scripts de posproceso ni complementos), y lee el avance de las líneas `progress N`: el contrato está en
-`docs/spec/features/cloud.md` del motor (reglas 18 a 21). El resultado de un análisis del motor es un archivo `.tea`.
+**El motor (`tisma-engine`):** su ruta va en `tisma_engine` del `node.toml` (o en la ventana, «Programa
+tisma-engine»). Los ajustes `tisma_slicer` y `tisma_fea` de un `node.toml` anterior se leen y no se usan. El nodo le
+pasa el proyecto, la salida y un resumen JSON, con `--sandbox` (sin scripts de posproceso ni complementos), y lee el
+avance de las líneas `progress N`: el contrato está en `docs/spec/features/cloud.md` del motor (reglas 18 a 21). El
+resultado de un análisis del motor es un archivo `.tea`.
 
 Sugerencia para tus equipos:
 
@@ -905,7 +893,7 @@ Sugerencia para tus equipos:
 
 ## Capacidad: más usuarios con menos espera
 
-Medido con `tisma-slicer` en 4 núcleos (Xeon 2,1 GHz, 16 GB):
+Medido con Tisma Slicer, el laminador de los nodos antes del motor, en 4 núcleos (Xeon 2,1 GHz, 16 GB):
 
 - Un trabajo de laminado deja ocupados unos 3 de los 4 núcleos (partes del laminado no se reparten), y arrancar el
   programa cuesta 0,14 s: no hace falta dejarlo abierto entre trabajos. Placas de pocos miles de triángulos tardan
@@ -924,8 +912,8 @@ Por eso:
   estimada (por sus triángulos; los análisis, por su calidad). Uno corto pasa a uno largo que llegó un poco antes, y
   uno largo nunca espera más de `TISMA_QUEUE_SIZE_WAIT_MAX_S` (600 s) por encima del orden de llegada. La prioridad
   del plan sigue yendo primero.
-- **Cada nodo corre varios trabajos a la vez**: `slots = 0` (automático) es uno cada dos núcleos y 2 GB de memoria.
-  En un nodo con `tisma_engine` es uno por núcleo y 1 GB de memoria: cada laminado del motor ocupa hoy un núcleo, y
+- **Cada nodo corre varios trabajos a la vez**: `slots = 0` (automático) es uno por núcleo y 1 GB de memoria: cada
+  laminado del motor ocupa hoy un núcleo, y
   medido en 4 núcleos (Benchy de 225 000 triángulos), dos a la vez dan 1113 laminados por hora y cuatro a la vez,
   1737 (con `tisma-slicer` y sus capas por defecto, el mejor caso es 1462). El laminado más grande de la prueba usó
   0,3 GB.
@@ -1141,7 +1129,7 @@ mira. No hace falta abrir puertos en la casa: el puente siempre se conecta hacia
 pip install ".[master,test]"
 pytest                                                    # SQLite
 TISMA_TEST_DATABASE_URL=postgresql+psycopg://... pytest   # PostgreSQL (incluye la concurrencia de la cola)
-TISMA_SLICER_BIN=.../tisma-slicer TISMA_FEA_BIN=.../tisma-fea pytest   # con los programas reales
+TISMA_ENGINE_BIN=.../tisma-engine pytest                 # con el motor real
 ```
 
 ## Pendiente

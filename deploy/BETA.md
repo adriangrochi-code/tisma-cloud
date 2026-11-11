@@ -15,8 +15,8 @@ se prueba recién en la máquina real.
 ## 1. El paquete
 
 - [ ] Bajar el artefacto `tisma-cloud-windows` del último CI verde de `main` (pestaña *Actions* de `tisma-cloud`) y
-      descomprimirlo entero en `C:\TismaCloud\`. Queda `tisma-cloud.exe` con la carpeta `tisma-slicer\` al lado.
-      **(probado: el CI arranca el paquete y lamina y analiza un proyecto real con él)**
+      descomprimirlo entero en `C:\TismaCloud\`. Queda `tisma-cloud.exe` con la carpeta `tisma-engine\` al lado.
+      **(probado: el CI arranca el paquete y lamina con su tisma-engine un proyecto del Tisma nuevo)**
 - [ ] Si el i5 también va a hacer escaneos 3D: el artefacto `TismaScan-windows` del CI de `openscanner`, descomprimido
       en la misma carpeta, de modo que quede `C:\TismaCloud\tisma-scan\`. **(probado en Windows sin NVIDIA: un
       escaneo sintético completo)**. Los paquetes corren solo en las máquinas propias; no se le dan a nadie
@@ -83,7 +83,7 @@ Desde otra conexión (los datos del celular, compartidos a una notebook con Pyth
 ```
 pip install httpx
 python deploy/smoke.py --url https://tismaservidores.net
-python deploy/smoke.py --url https://tismaservidores.net --token tu_... --project tests/data/bar_project.3mf
+python deploy/smoke.py --url https://tismaservidores.net --token tu_... --project tests/data/box_project.3mf
 ```
 
 - [ ] Todo en `OK`. Revisa que la dirección responda con HTTPS válido, que se vean los planes, que la administración

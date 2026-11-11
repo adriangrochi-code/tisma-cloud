@@ -263,13 +263,13 @@ def test_check_of_a_scan_node(tmp_path, monkeypatch):
     script.write_text(READY_CHECK.format(ready="False"))
     m = Manager(tmp_path)
     m.set_role("node")
-    m.write_node({"tisma_scan": str(script), "tisma_slicer": "", "tisma_fea": "", "master_url": "http://127.0.0.1:9"})
+    m.write_node({"tisma_scan": str(script), "tisma_engine": "", "master_url": "http://127.0.0.1:9"})
     checks = {c.name: c for c in m.checks()}
     assert checks["Escaneos 3D"].ok is False and "COLMAP is missing" in checks["Escaneos 3D"].detail
     assert checks["Escaneos 3D"].fix == "scan_modules"
     assert checks["Escaneos 3D: aviso"].ok is None
-    # A node only for scans: no complaint about tisma-slicer.
-    assert "Programa tisma-slicer" not in checks
+    # A node only for scans: no complaint about tisma-engine.
+    assert "Programa tisma-engine" not in checks
     script.write_text(READY_CHECK.format(ready="True"))
     assert {c.name: c for c in m.checks()}["Escaneos 3D"].ok is True
     m.write_node({"tisma_scan": str(tmp_path / "missing.exe")})

@@ -415,7 +415,7 @@ class App:
             ("nodes", "Nodos en línea"), ("running", "Trabajos en curso"), ("today", "Terminados hoy"),
             ("hours", "Horas de cómputo este mes"), ("users", "Usuarios"), ("money", "Cobrado este mes"))}
         self.node_tiles = {key: Tile(self, self.tiles_frame, label) for key, label in (
-            ("master", "Maestro"), ("programs", "Programas de Tisma Slicer"), ("slots", "Trabajos a la vez"),
+            ("master", "Maestro"), ("programs", "Programa tisma-engine"), ("slots", "Trabajos a la vez"),
             ("gpu", "Placa de video"))}
         machine = self.section(self.tiles_frame, "Esta máquina")
         self.machine_box = machine
@@ -538,10 +538,10 @@ class App:
         master = checks.get("Maestro")
         self.node_tiles["master"].set("Responde" if master and master.ok else "No responde" if master else "…",
                                       str(node.get("master_url", "")))
-        programs = [checks.get(k) for k in ("Programa tisma-slicer", "Programa tisma-fea")]
-        found = sum(1 for c in programs if c and c.ok)
-        self.node_tiles["programs"].set(f"{found} de 2", "tisma-slicer y tisma-fea" if found == 2 else
-                                        "Configuración > Buscar Tisma Slicer")
+        engine = checks.get("Programa tisma-engine")
+        self.node_tiles["programs"].set("Listo" if engine and engine.ok else "Falta" if engine else "No usa",
+                                        "laminado y análisis" if engine and engine.ok else
+                                        "Configuración > Buscar programas" if engine else "nodo de escaneos")
         slots = int(node.get("slots", 0))
         self.node_tiles["slots"].set(number(slots) if slots > 0 else f"Auto ({number(auto_slots(os.cpu_count() or 1, memory_gb()))})",
                                      f"hasta {number(int(node.get('timeout_s', 0)))} s cada uno")
@@ -889,7 +889,7 @@ class App:
             else:
                 var = tk.StringVar(value=str(value))
                 ttk.Entry(form, textvariable=var, show="•" if secret else "").grid(row=r, column=1, sticky="ew")
-                if key in ("tisma_slicer", "tisma_fea"):
+                if key in ("tisma_engine", "tisma_scan"):
                     ttk.Button(form, text="Buscar…", command=lambda v=var: self.browse(v)).grid(row=r, column=2,
                                                                                                padx=(6, 0))
             self.fields[key] = var
@@ -897,18 +897,18 @@ class App:
         bottom.pack(fill="x", pady=(14, 0))
         ttk.Button(bottom, text="Guardar", style="Accent.TButton", command=self.save).pack(side="right")
         if role == "node":
-            ttk.Button(bottom, text="Buscar Tisma Slicer", command=self.find_programs).pack(side="right", padx=6)
+            ttk.Button(bottom, text="Buscar programas", command=self.find_programs).pack(side="right", padx=6)
 
     def find_programs(self) -> None:
-        """The programs of Tisma Slicer installed on this machine, for the node."""
+        """tisma-engine and tisma_scan of the package (its folders next to this program), for the node."""
         found = self.m.detect_programs(replace=True)
         if found:
             self.build_settings()
             messagebox.showinfo("Tisma Cloud", "Encontrados:\n" + "\n".join(found.values()), parent=self.root)
         else:
-            messagebox.showwarning("Tisma Cloud", "No se encontraron tisma-slicer y tisma-fea. Vienen en la carpeta "
-                                   "tisma-slicer del paquete de Tisma Cloud: dejala junto a tisma-cloud.exe, o indicá "
-                                   "los programas con «Buscar…».", parent=self.root)
+            messagebox.showwarning("Tisma Cloud", "No se encontró tisma-engine. Viene en la carpeta tisma-engine "
+                                   "del paquete de Tisma Cloud: dejala junto a tisma-cloud.exe, o indicá el programa "
+                                   "con «Buscar…».", parent=self.root)
         self.load_checks()
 
     def browse(self, var: tk.StringVar) -> None:

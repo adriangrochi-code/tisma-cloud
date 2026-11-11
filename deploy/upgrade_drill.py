@@ -140,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
     run(old, node_home, "role", "node")
     run(old, node_home, "config", "master_url", url)
     run(old, node_home, "config", "token", node_token)
-    # Its programs: any file that exists (this checks the settings file, not the programs).
+    # Its programs then, Tisma Slicer's: any file that exists (this checks the settings file, not the programs).
     for key in ("tisma_slicer", "tisma_fea"):
         run(old, node_home, "config", key, sys.executable)
     run(old, home, "start", env_extra=db_env)
@@ -190,7 +190,10 @@ def main(argv: list[str] | None = None) -> int:
         if httpx.get(f"{url}/v1/jobs/{r.json()['id']}", headers=auth).json().get("status") != "done":
             failed.append("the new job did not end done")
     run(a.new, home, "stop")
-    # The node: the old node.toml read by the current program.
+    # The node: the old node.toml read by the current program. Its Tisma Slicer settings are left unused; the new
+    # package brings tisma-engine/, which the service writes in node.toml when it starts (here run from Python, it is
+    # set by hand, as «Buscar programas» does).
+    run(a.new, node_home, "config", "tisma_engine", sys.executable)
     shown = run(a.new, node_home, "config", check=False)
     if node_token not in shown and "token" not in shown:
         failed.append(f"the old node.toml was not read: {shown[:300]}")

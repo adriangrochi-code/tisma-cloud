@@ -131,27 +131,30 @@ def test_processes_of_the_executable(tmp_path, monkeypatch):
 
 
 def test_programs_come_with_the_package(tmp_path, monkeypatch):
-    """tisma-slicer/ next to the executable: the Windows package of Tisma Slicer, or the AppImage extracted (usr/bin)."""
+    """tisma-engine/ and tisma-scan/ next to the executable: the programs of a node made with the package."""
     exe = tmp_path / "Tisma Cloud" / "tisma-cloud.exe"
-    bundled = exe.parent / system.BUNDLED_FOLDER
-    (bundled / "usr" / "bin").mkdir(parents=True)
+    exe.parent.mkdir(parents=True)
     exe.write_text("")
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(exe))
-    monkeypatch.setattr(system.shutil, "which", lambda _name: None)
-    folders = system.tisma_slicer_folders()
-    assert folders[:3] == [bundled.resolve(), (bundled / "usr" / "bin").resolve(), exe.parent.resolve()]
-    linux = bundled.resolve() / "usr" / "bin"
-    for name in (system.SLICER_NAMES[0], system.FEA_NAMES[0]):
-        (linux / name).write_text("")
-    assert system.find_tisma_programs() == (str(linux / system.SLICER_NAMES[0]), str(linux / system.FEA_NAMES[0]))
-    # A node made with the package finds them by itself, also after its folder moved.
     m = Manager(tmp_path / "home")
     m.set_role("node")
-    assert m.read_node()["tisma_slicer"] == str(linux / system.SLICER_NAMES[0])
-    m.write_node({"tisma_slicer": str(tmp_path / "old" / "tisma-slicer")})
+    assert system.find_engine_program() is None and not m.read_node().get("tisma_engine")
+    engine = exe.parent.resolve() / system.ENGINE_FOLDER / system.ENGINE_NAMES[0]
+    engine.parent.mkdir()
+    engine.write_text("")
+    assert system.find_engine_program() == str(engine)
+    assert m.detect_programs() == {"tisma_engine": str(engine)}
+    # Found again after its folder moved (the service looks when it starts).
+    m.write_node({"tisma_engine": str(tmp_path / "old" / "tisma-engine")})
     m.children()
-    assert m.read_node()["tisma_slicer"] == str(linux / system.SLICER_NAMES[0])
+    assert m.read_node()["tisma_engine"] == str(engine)
+    # A path typed by the user which exists is kept.
+    other = tmp_path / "other-engine"
+    other.write_text("")
+    m.set_setting("tisma_engine", str(other))
+    assert m.detect_programs() == {}
+    assert m.read_node()["tisma_engine"] == str(other)
     # Without the folder of the scans the node makes none; with it (TismaScan-windows unpacked next to the program), it
     # finds its tisma_scan.
     assert system.find_scan_program() is None and not m.read_node().get("tisma_scan")
@@ -161,44 +164,15 @@ def test_programs_come_with_the_package(tmp_path, monkeypatch):
     assert system.find_scan_program() == str(scan)
     assert m.detect_programs() == {"tisma_scan": str(scan)}
     assert m.read_node()["tisma_scan"] == str(scan)
-    # The engine of the package, next to the program, the same way.
-    assert system.find_engine_program() is None
-    engine = exe.parent.resolve() / system.ENGINE_FOLDER / system.ENGINE_NAMES[0]
-    engine.parent.mkdir()
-    engine.write_text("")
-    assert system.find_engine_program() == str(engine)
-    assert m.detect_programs() == {"tisma_engine": str(engine)}
-
-
-def test_node_programs_are_found(tmp_path, monkeypatch):
-    install = tmp_path / "Tisma Slicer"
-    install.mkdir()
-    slicer = install / system.SLICER_NAMES[0]
-    fea = install / system.FEA_NAMES[0]
-    slicer.write_text("")
-    fea.write_text("")
-    monkeypatch.setattr(system, "tisma_slicer_folders", lambda: [tmp_path / "nothing", install])
-    assert system.find_tisma_programs() == (str(slicer), str(fea))
-    m = Manager(tmp_path / "home")
-    m.set_role("node")  # the programs are looked for when the node is made
-    node = m.read_node()
-    assert node["tisma_slicer"] == str(slicer) and node["tisma_fea"] == str(fea)
-    # A path typed by the user which exists is kept.
-    other = tmp_path / "other-slicer"
-    other.write_text("")
-    m.set_setting("tisma_slicer", str(other))
-    assert m.detect_programs() == {}
-    assert m.read_node()["tisma_slicer"] == str(other)
 
 
 def test_diagnosis_of_a_node(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(system, "tisma_slicer_folders", lambda: [])
-    monkeypatch.setattr(system.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(system, "find_engine_program", lambda: None)
     m = Manager(tmp_path)
     m.set_role("node")
     m.set_setting("master_url", "http://127.0.0.1:9")  # nothing listens there
     checks = {c.name: c for c in m.checks()}
-    assert checks["Programa tisma-slicer"].ok is False and checks["Programa tisma-slicer"].fix == "programs"
+    assert checks["Programa tisma-engine"].ok is False and checks["Programa tisma-engine"].fix == "programs"
     assert checks["Maestro"].ok is False
     # Without a token the node asks the master to join: a warning, not a fault.
     assert checks["Token del nodo"].ok is None and "pide unirse" in checks["Token del nodo"].detail

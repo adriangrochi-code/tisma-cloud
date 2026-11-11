@@ -45,15 +45,17 @@ def test_node_settings_load_in_the_node(tmp_path):
     m.set_role("node")
     m.set_setting("master_url", "http://192.168.1.10:8000/")
     m.set_setting("token", "tn_abc")
-    m.set_setting("tisma_slicer", 'C:\\Program Files\\Tisma "x"\\tisma-slicer-console.exe')
-    m.set_setting("tisma_fea", "/opt/tisma/tisma-fea")
+    m.set_setting("tisma_engine", 'C:\\Program Files\\Tisma "x"\\tisma-engine.exe')
     m.set_setting("slots", "2")
     m.set_setting("gpu", "no")
     with pytest.raises(ValueError):
         m.set_setting("unknown", "1")
     cfg = NodeConfig.load(m.node_path)
     assert cfg.master_url == "http://192.168.1.10:8000" and cfg.token == "tn_abc" and cfg.slots == 2
-    assert cfg.tisma_slicer == 'C:\\Program Files\\Tisma "x"\\tisma-slicer-console.exe' and cfg.gpu is False
+    assert cfg.tisma_engine == 'C:\\Program Files\\Tisma "x"\\tisma-engine.exe' and cfg.gpu is False
+    # The settings of Tisma Slicer are not settings of a node any more.
+    with pytest.raises(ValueError):
+        m.set_setting("tisma_slicer", "s")
 
 
 def test_start_and_stop_the_master(tmp_path, monkeypatch):
@@ -116,7 +118,7 @@ def test_admin_from_the_home(tmp_path, monkeypatch):
 def test_console(tmp_path, monkeypatch, capsys):
     m = Manager(tmp_path)
     # Role node, then change its slots in the settings, then leave.
-    monkeypatch.setattr(sys, "stdin", io.StringIO("5\n2\n6\n6\n3\n0\n"))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("5\n2\n6\n4\n3\n0\n"))
     assert cli.console(m) == 0
     assert m.role() == "node" and m.read_node()["slots"] == 3
     assert "Guardado" in capsys.readouterr().out
@@ -271,16 +273,15 @@ def test_the_master_computes_too(tmp_path, monkeypatch):
     m.set_port(8123)
     m.write_env({"TISMA_DATABASE_URL": f"sqlite:///{tmp_path / 'db.sqlite'}"})
     assert m.master_computes()
-    # Without Tisma Slicer on the machine the master serves without computing.
-    monkeypatch.setattr(system, "find_tisma_programs", lambda: (None, None))
+    # Without tisma-engine on the machine the master serves without computing.
+    monkeypatch.setattr(system, "find_engine_program", lambda: None)
     assert m.prepare_master_node() is None and list(m.children()) == ["main"]
-    slicer, fea = tmp_path / "tisma-slicer", tmp_path / "tisma-fea"
-    slicer.write_text("x")
-    fea.write_text("x")
-    monkeypatch.setattr(system, "find_tisma_programs", lambda: (str(slicer), str(fea)))
+    engine = tmp_path / "tisma-engine"
+    engine.write_text("x")
+    monkeypatch.setattr(system, "find_engine_program", lambda: str(engine))
     path = m.prepare_master_node()
     cfg = NodeConfig.load(path)
-    assert cfg.master_url == "http://127.0.0.1:8123" and cfg.tisma_slicer == str(slicer)
+    assert cfg.master_url == "http://127.0.0.1:8123" and cfg.tisma_engine == str(engine)
     db, _settings = m._database()
     with db.session() as s:
         node = s.execute(select(Node).where(Node.name == MASTER_NODE)).scalar_one()

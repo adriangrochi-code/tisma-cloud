@@ -98,10 +98,7 @@ jobs:
             exe: tisma-cloud
     runs-on: ${{ matrix.os }}
     permissions:
-      # write: the copy of the Tisma Slicer package kept in the release tisma-slicer-cache of this repository.
-      contents: write
-      # The package of Tisma Slicer of the last build of main (an artifact of ci.yml).
-      actions: read
+      contents: read
     defaults:
       run:
         shell: bash
@@ -114,71 +111,8 @@ jobs:
         run: pip install ".[master,exe]"
       - name: Build
         run: pyinstaller --noconfirm --clean tisma-cloud.spec
-      # The programs a node runs come with the package, in tisma-slicer/ next to the executable, so that no machine
-      # needs Tisma Slicer installed: the Windows package of Tisma Slicer of the last successful build of main, or its
-      # AppImage extracted on Linux (usr/bin; GTK 3 and WebKitGTK 4.1 come from the system, as for the AppImage).
-      # Tisma Slicer is AGPL-3.0: its license and where its source is go with it. It lives in its own (public)
-      # repository; reading its artifacts from here needs a token with read access to it in the secret
-      # TISMA_SLICER_TOKEN (a fine-grained token: Actions read on that repository).
-      - name: Tisma Slicer programs (last build of main)
-        env:
-          GH_TOKEN: ${{ secrets.TISMA_SLICER_TOKEN || github.token }}
-          CLOUD_TOKEN: ${{ github.token }}
-          SLICER_REPO: adriangrochi-code/Nuevo-slicer-basado-en-prusa-
-        run: |
-          set -e
-          # The newest build whose package of this system was made (its other systems may have failed), main first,
-          # then dev, where the slicer is developed between releases. Artifacts expire, and the slicer can go weeks
-          # without a build of main or dev: the last package found is kept in the release tisma-slicer-cache of this
-          # repository (private, as the package runs only on the owner's machines) and used when there is none.
-          pkg="TismaSlicer-${{ matrix.name }}"
-          cache=tisma-slicer-cache
-          run_id=""
-          for branch in main dev; do
-            while read -r id head; do
-              rm -rf tisma-download
-              if gh run download "$id" -R "$SLICER_REPO" -n "$pkg" -D tisma-download 2>/dev/null; then
-                run_id=$id; sha=$head; break 2
-              fi
-            done < <(gh run list -R "$SLICER_REPO" --workflow ci.yml --branch "$branch" --limit 20 \
-                       --json databaseId,headSha,status -q '.[] | select(.status == "completed") | "\(.databaseId) \(.headSha)"')
-          done
-          kept=$(GH_TOKEN=$CLOUD_TOKEN gh release download "$cache" -R "$GITHUB_REPOSITORY" -p "$pkg.txt" -O - 2>/dev/null || true)
-          if [ -n "$run_id" ]; then
-            if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && [ "$kept" != "$run_id $branch $sha" ]; then
-              python -m zipfile -c "$pkg.zip" tisma-download
-              echo "$run_id $branch $sha" > "$pkg.txt"
-              GH_TOKEN=$CLOUD_TOKEN gh release create "$cache" -R "$GITHUB_REPOSITORY" --prerelease --title "Tisma Slicer (copy for the CI)" \
-                --notes "The last package of Tisma Slicer the CI found, used when its artifacts have expired." 2>/dev/null || true
-              GH_TOKEN=$CLOUD_TOKEN gh release upload "$cache" -R "$GITHUB_REPOSITORY" "$pkg.zip" "$pkg.txt" --clobber
-              rm -f "$pkg.zip" "$pkg.txt"
-            fi
-          elif [ -n "$kept" ]; then
-            read -r run_id branch sha <<< "$kept"
-            echo "::warning::No build of Tisma Slicer with its package: the copy kept from run $run_id of $branch"
-            rm -rf tisma-download
-            GH_TOKEN=$CLOUD_TOKEN gh release download "$cache" -R "$GITHUB_REPOSITORY" -p "$pkg.zip"
-            python -m zipfile -e "$pkg.zip" .
-            rm -f "$pkg.zip"
-          else
-            echo "no build of Tisma Slicer with its package, and no copy kept"; exit 1
-          fi
-          echo "Tisma Slicer of the CI run $run_id of $branch ($sha)"
-          rm -rf dist/tisma-slicer
-          if [ "${{ matrix.name }}" = windows ]; then
-            mv tisma-download dist/tisma-slicer
-          else
-            chmod +x tisma-download/*.AppImage
-            (cd tisma-download && ./*.AppImage --appimage-extract > /dev/null)
-            mv tisma-download/squashfs-root dist/tisma-slicer
-            rm -rf tisma-download
-          fi
-          curl -sfL "https://raw.githubusercontent.com/$SLICER_REPO/$sha/LICENSE" -o dist/tisma-slicer/LICENSE-AGPL-3.0.txt
-          printf 'Tisma Slicer (tisma-slicer, tisma-fea): GNU Affero General Public License 3.0, LICENSE-AGPL-3.0.txt.\nSource of this build: https://github.com/%s/tree/%s\n' \
-            "$SLICER_REPO" "$sha" > dist/tisma-slicer/SOURCE.txt
-          du -sh dist/tisma-slicer
-      # tisma-engine, the engine that replaces Tisma Slicer (F6), next to it in tisma-engine/: the last nightly of its
-      # public repository (a rolling pre-release, tag nightly). PolyForm Noncommercial 1.0.0 with commercial use
+      # tisma-engine, the only program a node computes with (Tisma Slicer was left, the owner, 2026-11-11), comes with
+      # the package in tisma-engine/ next to the executable: the last nightly of its public repository (a rolling pre-release, tag nightly). PolyForm Noncommercial 1.0.0 with commercial use
       # reserved to its owner, who is the owner of Tisma Cloud; the package runs only on the owner's machines.
       - name: tisma-engine (its nightly)
         env:
@@ -266,44 +200,30 @@ jobs:
           tc logs 15
           if (-not $back) { throw "the master was not started again" }
           tc stop
-      # The node of the package finds its programs by itself and slices and analyses a real project with them, on a
-      # machine without Tisma Slicer installed.
+      # The node of the package finds tisma-engine by itself and slices projects of the new Tisma with it.
       - name: Programs of the package
         run: |
           set -e
-          if [ "${{ matrix.name }}" = windows ]; then
-            slicer=dist/tisma-slicer/tisma-slicer-console.exe
-            fea=dist/tisma-slicer/tisma-fea.exe
-          else
-            sudo apt-get update -q > /dev/null
-            sudo apt-get install -y -q libgtk-3-0t64 libwebkit2gtk-4.1-0 libhidapi-hidraw0 libgl1 libegl1 libglu1-mesa > /dev/null
-            slicer=dist/tisma-slicer/usr/bin/tisma-slicer
-            fea=dist/tisma-slicer/usr/bin/tisma-fea
-          fi
-          "$slicer" --help | head -n 2
-          "$fea" --help | head -n 1
-          export TISMA_HOME="$PWD/package-home"
-          dist/${{ matrix.exe }} role node
-          dist/${{ matrix.exe }} config | grep -E '^tisma_slicer = .*tisma-slicer[/\\]'
-          dist/${{ matrix.exe }} config | grep -E '^tisma_fea = .*tisma-slicer[/\\]'
-          unset TISMA_HOME
-          pip install ".[master,test]" > /dev/null
           if [ "${{ matrix.name }}" = windows ]; then engine=dist/tisma-engine/tisma-engine.exe; else
             engine=dist/tisma-engine/tisma-engine; fi
-          TISMA_SLICER_BIN="$PWD/$slicer" TISMA_FEA_BIN="$PWD/$fea" TISMA_ENGINE_BIN="$PWD/$engine" \
-            pytest -q -s tests/test_node.py -k "real_programs or real_engine_slices" -rs | tee real.log
-          grep -q "2 passed" real.log
-      # orient, aero and analyze of the engine's nightly against cloud.md (rules 19 to 19c): reported, not blocking the
-      # package (a nightly that strays is told to the engine).
-      - name: tisma-engine contract of orient, aero and analyze (its nightly)
+          export TISMA_HOME="$PWD/package-home"
+          dist/${{ matrix.exe }} role node
+          dist/${{ matrix.exe }} config | grep -E '^tisma_engine = .*tisma-engine[/\\]'
+          unset TISMA_HOME
+          pip install ".[master,test]" > /dev/null
+          TISMA_ENGINE_BIN="$PWD/$engine" pytest -q -s tests/test_node.py -k real_engine_slices_the_new -rs | tee real.log
+          grep -q "1 passed" real.log
+      # orient, aero and analyze of the engine's nightly against cloud.md (rules 19 to 19c), and a bare model sliced:
+      # reported, not blocking the package (a nightly that strays is told to the engine).
+      - name: tisma-engine contract of orient, aero and analyze, and a bare model (its nightly)
         continue-on-error: true
         shell: bash
         run: |
           if [ "${{ matrix.name }}" = windows ]; then engine=dist/tisma-engine/tisma-engine.exe; else
             engine=dist/tisma-engine/tisma-engine; fi
-          TISMA_ENGINE_BIN="$PWD/$engine" pytest -q -s tests/test_node.py -k real_engine_keeps_the_contract -rs
+          TISMA_ENGINE_BIN="$PWD/$engine" pytest -q -s tests/test_node.py -k "real_engine_keeps_the_contract or real_engine_slices_a_bare_model" -rs
       # The beta as it will run (deploy/BETA.md): the packaged master as a service, computing with its own node and the
-      # Tisma Slicer of the package, and deploy/smoke.py from outside the process: health, public plans, the account and
+      # tisma-engine of the package, and deploy/smoke.py from outside the process: health, public plans, the account and
       # a real project sliced by that node, its G-code back.
       - name: Packaged master and its node, smoke test with a real job
         run: |
@@ -319,7 +239,7 @@ jobs:
           "$exe" start
           for _ in $(seq 1 40); do curl -sf http://127.0.0.1:18994/v1/health > /dev/null 2>&1 && break; sleep 1; done
           if ! python deploy/smoke.py --url http://127.0.0.1:18994 --local --token "$token" \
-               --project tests/data/bar_project.3mf --timeout 900; then
+               --project tests/data/box_project.3mf --timeout 900; then
             "$exe" logs 120
             "$exe" stop || true
             exit 1
@@ -379,7 +299,6 @@ jobs:
           name: tisma-cloud-${{ matrix.name }}
           path: |
             dist/${{ matrix.exe }}
-            dist/tisma-slicer
             dist/tisma-engine
             .env.example
             deploy/node.example.toml

@@ -137,8 +137,9 @@ MAX_SCANNED_BYTES = 4 << 30
 ESTIMATE_MAX_TRIANGLES = 2_000_000
 
 # Rough duration of a job, only to order its queue (the shortest first, see scheduler.claim()). Measured with
-# tisma-slicer on 4 cores (Xeon 2.1 GHz): plates of a few thousand triangles in under a second, of 225 000 triangles
-# in 6 to 13 s depending on their size (README, Capacity). The analyses by quality, relative to each other.
+# Tisma Slicer, the slicer of the nodes before tisma-engine, on 4 cores (Xeon 2.1 GHz): plates of a few thousand
+# triangles in under a second, of 225 000 triangles in 6 to 13 s depending on their size (README, Capacity). The
+# analyses by quality, relative to each other.
 SLICE_BASE_S = 0.5
 SLICE_PER_TRIANGLE_S = 3.5e-5
 FEA_QUALITY_S = {"fast": 5., "normal": 15., "high": 60., "extreme": 240., "ultra": 240.}

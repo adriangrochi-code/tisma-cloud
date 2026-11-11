@@ -58,8 +58,6 @@ MASTER_FIELDS = [
 NODE_FIELDS = [
     ("master_url", "Dirección del maestro (http://IP:8000)", str, False),
     ("token", "Token del nodo (vacío: pide unirse al maestro)", str, True),
-    ("tisma_slicer", "Programa tisma-slicer (consola)", str, False),
-    ("tisma_fea", "Programa tisma-fea", str, False),
     ("work_dir", "Carpeta de trabajo", str, False),
     ("slots", "Trabajos a la vez (0 = automático)", int, False),
     ("fea_slots", "Análisis estructurales a la vez", int, False),
@@ -68,7 +66,7 @@ NODE_FIELDS = [
     ("cuda_cores", "Núcleos CUDA de la placa (los que publica NVIDIA; 0 = no contar)", int, False),
     ("verify_tls", "Verificar el certificado HTTPS", bool, False),
     ("name", "Nombre con el que pide unirse (vacío: el de la máquina)", str, False),
-    ("tisma_engine", "Programa tisma-engine (el slicer nuevo; vacío: usa tisma-slicer y tisma-fea)", str, False),
+    ("tisma_engine", "Programa tisma-engine (laminado y análisis; vacío: solo escaneos)", str, False),
     ("tisma_scan", "Programa tisma_scan de Tisma Scanner (escaneos 3D; vacío: no hace escaneos)", str, False),
     ("scan_timeout_s", "Duración máxima de un escaneo 3D [s]", int, False),
 ]
@@ -105,8 +103,7 @@ def spanish():
         raise
 
 
-NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_engine": "", "tisma_slicer": "",
-                 "tisma_fea": "", "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,
+NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_engine": "", "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,
                  "cuda_cores": 0, "verify_tls": True}
 # The node of the master when it computes too (registered in its database by the service).
 MASTER_NODE = "maestro"
@@ -253,15 +250,15 @@ class Manager:
 
     def prepare_master_node(self) -> Path | None:
         """The node of the master: registered in its database (a new token when it has none that works) and its
-        master-node.toml, connected to the master of this machine. None when Tisma Slicer is not on this machine."""
+        master-node.toml, connected to the master of this machine. None when tisma-engine is not on this machine."""
         from sqlalchemy import select
 
         from .jobs import DEFAULT_NODE_CLASSES
         from .models import Node
         from .security import hash_token, new_token
 
-        slicer, fea = system.find_tisma_programs()
-        if not slicer or not fea:
+        engine = system.find_engine_program()
+        if not engine:
             return None
         current = {}
         if self.master_node_path.is_file():
@@ -277,12 +274,8 @@ class Manager:
             elif not token or hash_token(token) != node.token_hash:
                 token = new_token("tn")
                 node.token_hash = hash_token(token)
-        data = dict(NODE_DEFAULTS, master_url=f"http://127.0.0.1:{self.port()}", token=token, tisma_slicer=slicer,
-                    tisma_fea=fea, work_dir="master-work")
-        engine = system.find_engine_program()
-        if engine:
-            # The engine slices the new Tisma's projects and the bare models; Tisma Slicer stays for its own projects.
-            data["tisma_engine"] = engine
+        data = dict(NODE_DEFAULTS, master_url=f"http://127.0.0.1:{self.port()}", token=token, tisma_engine=engine,
+                    work_dir="master-work")
         scan = system.find_scan_program()
         if scan:
             # It takes scans when "scan" is among its priorities (admin node-set maestro --priorities scan,...).
@@ -824,14 +817,11 @@ class Manager:
 
     # ---- the programs of a node
     def detect_programs(self, replace: bool = False) -> dict[str, str]:
-        """Fills tisma_slicer and tisma_fea of node.toml with the programs of Tisma Slicer found on this machine, and
-        tisma_scan with the one of the package's tisma-scan folder (only the empty or wrong ones, unless replace).
-        Returns what was set."""
+        """Fills tisma_engine and tisma_scan of node.toml with the programs of the package's tisma-engine and tisma-scan
+        folders (only the empty or wrong ones, unless replace). Returns what was set."""
         node = self.read_node()
-        slicer, fea = system.find_tisma_programs()
         found = {}
-        for key, path in (("tisma_slicer", slicer), ("tisma_fea", fea), ("tisma_scan", system.find_scan_program()),
-                          ("tisma_engine", system.find_engine_program())):
+        for key, path in (("tisma_engine", system.find_engine_program()), ("tisma_scan", system.find_scan_program())):
             current = str(node.get(key) or "")
             if path and (replace or not current or not Path(current).is_file()):
                 found[key] = path
@@ -1011,27 +1001,24 @@ class Manager:
                                  f"{env['TISMA_DDNS_HOST']} → {found['ddns_ip']}" if found.get("ddns_ip") else
                                  f"{env['TISMA_DDNS_HOST']}: todavía sin actualizar"))
             if self.master_computes():
-                slicer, fea = system.find_tisma_programs()
-                out.append(Check("El maestro calcula", bool(slicer and fea),
-                                 f"Nodo «{MASTER_NODE}» con {slicer}" if slicer and fea else
-                                 "Faltan tisma-slicer y tisma-fea: vienen en la carpeta tisma-slicer del paquete de "
-                                 "Tisma Cloud, junto al programa"))
+                engine = system.find_engine_program()
+                out.append(Check("El maestro calcula", bool(engine),
+                                 f"Nodo «{MASTER_NODE}» con {engine}" if engine else
+                                 "Falta tisma-engine: viene en la carpeta tisma-engine del paquete de Tisma Cloud, "
+                                 "junto al programa"))
         else:
             node = self.read_node()
-            scan_only = bool(node.get("tisma_scan")) and not (node.get("tisma_engine") or node.get("tisma_slicer")
-                                                              or node.get("tisma_fea"))
-            # Every program the node has; with none of them, Tisma Slicer's are the ones it needs.
-            labels = (("tisma_engine", "Programa tisma-engine"), ("tisma_slicer", "Programa tisma-slicer"),
-                      ("tisma_fea", "Programa tisma-fea"))
-            programs = tuple(p for p in labels if node.get(p[0])) or (() if scan_only else labels[1:])
+            # A scan node may go without tisma-engine; every other node needs it.
+            scan_only = bool(node.get("tisma_scan")) and not node.get("tisma_engine")
+            programs = () if scan_only else (("tisma_engine", "Programa tisma-engine"),)
             if node.get("tisma_scan"):
                 out += self._scan_checks(str(node["tisma_scan"]))
             for key, label in programs:
                 path = str(node.get(key) or "")
                 ok = bool(path) and Path(path).is_file()
                 out.append(Check(label, ok, path if ok else (f"No existe: {path}" if path else
-                                                             "No configurado: «Buscar Tisma Slicer» (vienen en la "
-                                                             "carpeta tisma-slicer del paquete)"),
+                                                             "No configurado: «Buscar programas» (viene en la "
+                                                             "carpeta tisma-engine del paquete)"),
                                  None if ok else "programs"))
             asked = self.node_path.with_name(self.node_path.name + ".join").is_file()
             out.append(Check("Token del nodo", True if node.get("token") else None, "Configurado" if node.get("token")
@@ -1074,8 +1061,8 @@ class Manager:
         if key == "programs":
             found = self.detect_programs(replace=True)
             if not found:
-                raise RuntimeError("No se encontraron tisma-slicer y tisma-fea: copiá la carpeta tisma-slicer del "
-                                   "paquete de Tisma Cloud junto al programa, o indicá los programas")
+                raise RuntimeError("No se encontró tisma-engine: copiá la carpeta tisma-engine del paquete de "
+                                   "Tisma Cloud junto al programa, o indicá el programa")
             return "Programas encontrados: " + ", ".join(found.values())
         if key == "scan_modules":
             return self._fix_scan_modules()
@@ -1149,7 +1136,7 @@ class Manager:
             if ready:
                 out["node"] = run_command(self.home, "--child", "--local-node")
             else:
-                print("[tisma-cloud] el maestro no calcula: falta Tisma Slicer en esta máquina", flush=True)
+                print("[tisma-cloud] el maestro no calcula: falta tisma-engine en esta máquina", flush=True)
         return out
 
     def _supervise(self) -> int:

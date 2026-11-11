@@ -123,7 +123,7 @@ def test_removing_a_node_requeues_its_jobs(client, f):
 
 def node_config(tmp_path, token: str = "") -> tuple[NodeConfig, object]:
     path = tmp_path / "node.toml"
-    path.write_text(f'master_url = "http://testserver"\ntoken = "{token}"\ntisma_slicer = "s"\ntisma_fea = "f"\n'
+    path.write_text(f'master_url = "http://testserver"\ntoken = "{token}"\ntisma_engine = "e"\n'
                     f'name = "Taller PC"\nslots = 1\nwork_dir = "{(tmp_path / "work").as_posix()}"\n', encoding="utf-8")
     return NodeConfig.load(path), path
 

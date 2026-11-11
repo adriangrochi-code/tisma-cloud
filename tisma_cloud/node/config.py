@@ -20,18 +20,18 @@ def memory_gb() -> float | None:
     return None
 
 
-def auto_slots(cpus: int, memory: float | None, engine: bool = False) -> int:
-    """Jobs at a time for a machine: one per two cores (measured on 4 cores: two at a time gave the shortest average
-    wait of a mixed queue, README), and 2 GB of memory for each (a plate of 225 000 triangles took 0.7 GB).
-
-    With tisma-engine, one per core and 1 GB for each: a slicing job of the engine keeps about one core busy, so on 4
-    cores four at a time sliced 1737 Benchys per hour against 1113 with two (README, Capacity); its largest test plate
-    took 0.3 GB."""
-    per_job = 1 if engine else 2
-    slots = max(1, cpus if engine else cpus // 2)
+def auto_slots(cpus: int, memory: float | None) -> int:
+    """Jobs at a time for a machine: one per core and 1 GB for each. A slicing job of tisma-engine keeps about one core
+    busy, so on 4 cores four at a time sliced 1737 Benchys per hour against 1113 with two (README, Capacity); its
+    largest test plate took 0.3 GB."""
+    slots = max(1, cpus)
     if memory is not None:
-        slots = min(slots, max(1, int(memory // per_job)))
+        slots = min(slots, max(1, int(memory)))
     return slots
+
+
+# Settings of the nodes made before Tisma Slicer was left (the owner, 2026-11-11): still read, not used.
+OBSOLETE = ("tisma_slicer", "tisma_fea")
 
 
 @dataclass
@@ -39,11 +39,8 @@ class NodeConfig:
     master_url: str
     # Empty: the node asks the master to join (join.py) and writes the token it gets here.
     token: str
-    # The programs of Tisma Slicer (tisma-slicer, tisma-fea), used when tisma_engine is empty.
-    tisma_slicer: str = ""
-    tisma_fea: str = ""
-    # The new slicer, tisma-engine: when set, it runs both the slicing and the analyses (its command line contract is
-    # docs/spec/features/cloud.md of the engine, rules 18 to 21) and tisma_slicer and tisma_fea are not needed.
+    # tisma-engine: it runs the slicing and the analyses (its command line contract is docs/spec/features/cloud.md of
+    # the engine, rules 18 to 21). The only slicer since Tisma Slicer was left (the owner, 2026-11-11).
     tisma_engine: str = ""
     # The 3D scans of Tisma Scanner (jobs of kind "scan"): the program that rebuilds a part from its photos (tisma_scan
     # of the openscanner repository: COLMAP, OpenMVS and a graphics card): the program, or its tools/tisma_scan.py,
@@ -54,9 +51,8 @@ class NodeConfig:
     # The name it asks to join with (the name of the machine when empty).
     name: str = ""
     work_dir: Path = Path("./node-work")
-    # Jobs run at the same time; 0: automatic (auto_slots()). A slicing job of tisma-slicer keeps only about 3 of 4
-    # cores busy, so two at a time finish a mixed queue sooner; one of tisma-engine keeps about one, so one per core
-    # (README, Capacity).
+    # Jobs run at the same time; 0: automatic (auto_slots()): a slicing job of tisma-engine keeps about one core busy,
+    # so one per core (README, Capacity).
     slots: int = 0
     # Structural analyses run at the same time (they take much memory and the graphics card).
     fea_slots: int = 1
@@ -76,17 +72,17 @@ class NodeConfig:
             data = tomllib.load(f)
         # The token may come from the environment instead of the file.
         data.setdefault("token", os.environ.get("TISMA_NODE_TOKEN", ""))
+        for old in OBSOLETE:
+            data.pop(old, None)
         known = set(NodeConfig.__dataclass_fields__)
         unknown = set(data) - known
         if unknown:
             raise ValueError(f"Unknown settings in {path}: {', '.join(sorted(unknown))}")
-        if data.get("tisma_engine"):
-            required: tuple[str, ...] = ("master_url", "tisma_engine")
-        elif data.get("tisma_scan") and not (data.get("tisma_slicer") or data.get("tisma_fea")):
+        if data.get("tisma_scan") and not data.get("tisma_engine"):
             # A node only for 3D scans.
-            required = ("master_url", "tisma_scan")
+            required: tuple[str, ...] = ("master_url", "tisma_scan")
         else:
-            required = ("master_url", "tisma_slicer", "tisma_fea")
+            required = ("master_url", "tisma_engine")
         for key in required:
             if not data.get(key):
                 raise ValueError(f"'{key}' is missing in {path}")
@@ -99,8 +95,7 @@ class NodeConfig:
         # A relative folder is the one next to node.toml: the programs run inside the folder of each job, so the paths
         # given to them must not depend on the current folder.
         cfg.work_dir = (Path(path).parent / cfg.work_dir).resolve()
-        cfg.slots = int(cfg.slots) if int(cfg.slots) > 0 else auto_slots(os.cpu_count() or 1, memory_gb(),
-                                                                         engine=bool(cfg.tisma_engine))
+        cfg.slots = int(cfg.slots) if int(cfg.slots) > 0 else auto_slots(os.cpu_count() or 1, memory_gb())
         cfg.fea_slots = max(1, int(cfg.fea_slots))
         cfg.master_url = cfg.master_url.rstrip("/")
         return cfg

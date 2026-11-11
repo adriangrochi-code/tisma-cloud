@@ -2,7 +2,7 @@
 """Smoke test of a running master, as a person on internet sees it: run it from outside the local network (a phone's
 connection, another place) after installing or changing the master.
 
-    python deploy/smoke.py --url https://tismaservidores.net [--token tu_...] [--project tests/data/bar_project.3mf]
+    python deploy/smoke.py --url https://tismaservidores.net [--token tu_...] [--project tests/data/box_project.3mf]
 
 It checks, one line each (OK / FAIL / WARN):
 - the address answers /v1/health over HTTPS with a valid certificate;
@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--url", required=True, help="the public address of the master")
     ap.add_argument("--token", default="", help="a user's token (tu_...), for the account and the job checks")
-    ap.add_argument("--project", type=Path, help="a .3mf project to slice (needs --token and a node with Tisma Slicer)")
+    ap.add_argument("--project", type=Path, help="a .3mf project to slice (needs --token and a node with tisma-engine)")
     ap.add_argument("--timeout", type=float, default=600., help="seconds to wait for the job")
     ap.add_argument("--local", action="store_true", help="run from the local network: /admin may answer")
     a = ap.parse_args(argv)

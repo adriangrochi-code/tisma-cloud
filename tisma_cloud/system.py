@@ -1,6 +1,6 @@
 """What the service needs from the operating system of the machine, mostly Windows (Windows Server): the scheduled task
 that starts it with the machine, the rule of the Windows firewall for the port of the master, the browser engine of
-the panel window (WebView2) and the programs of Tisma Slicer a computing node runs.
+the panel window (WebView2) and the programs a computing node runs (tisma-engine, tisma_scan).
 
 Sources:
 - Task Scheduler schema: https://learn.microsoft.com/windows/win32/taskschd/task-scheduler-schema
@@ -25,20 +25,12 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 FIREWALL_RULE = "Tisma Cloud"
-# AppId of the installer of Tisma Slicer (packaging/windows/TismaSlicer.iss).
-TISMA_SLICER_APP_ID = "{EF9BF87F-A56B-4EBB-B89B-4C957B7E3899}"
 WEBVIEW2_CLIENT = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-# Programs a node runs: the console slicer and the structural analysis.
-# They come with the package of Tisma Cloud, in this folder next to the executable (ci.yml, job executable): the Windows package of
-# Tisma Slicer, or its AppImage extracted on Linux (usr/bin).
-BUNDLED_FOLDER = "tisma-slicer"
-SLICER_NAMES = ("tisma-slicer-console.exe", "tisma-slicer.exe") if os.name == "nt" else ("tisma-slicer",)
-FEA_NAMES = ("tisma-fea.exe",) if os.name == "nt" else ("tisma-fea",)
 # The 3D scans: the package of a scan node of Tisma Scanner (its artifact TismaScan-windows), the folder tisma-scan
 # unpacked next to the executable, with tisma_scan and the COLMAP and OpenMVS it finds by itself.
 SCAN_FOLDER = "tisma-scan"
 SCAN_NAMES = ("tisma_scan.exe",) if os.name == "nt" else ("tisma_scan",)
-# tisma-engine, the engine that replaces Tisma Slicer (its nightly package, in this folder next to the executable).
+# tisma-engine, the slicer and analyses of a node (its nightly package, in this folder next to the executable).
 ENGINE_FOLDER = "tisma-engine"
 ENGINE_NAMES = ("tisma-engine.exe",) if os.name == "nt" else ("tisma-engine",)
 
@@ -265,61 +257,7 @@ def webview2_version() -> str | None:
     return None
 
 
-# ---- the programs of Tisma Slicer (computing nodes)
-def tisma_slicer_folders() -> list[Path]:
-    """Folders where the programs of Tisma Slicer may be, most likely first: the ones that come with this program
-    (tisma-slicer/ next to it), next to it, where the installer of Tisma Slicer put it (for all users or for one), the
-    default folders."""
-    folders: list[Path] = []
-    if getattr(sys, "frozen", False):
-        here = Path(sys.executable).resolve().parent
-        folders += [here / BUNDLED_FOLDER, here / BUNDLED_FOLDER / "usr" / "bin", here]
-    if os.name == "nt":
-        import winreg
-
-        for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-            for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
-                try:
-                    with winreg.OpenKey(root, rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{TISMA_SLICER_APP_ID}_is1",
-                                        0, winreg.KEY_READ | view) as key:
-                        location, _ = winreg.QueryValueEx(key, "InstallLocation")
-                        folders.append(Path(location))
-                except OSError:
-                    pass
-        for env in ("ProgramFiles", "ProgramW6432", "LOCALAPPDATA"):
-            base = os.environ.get(env)
-            if base:
-                folders.append(Path(base) / ("Programs" if env == "LOCALAPPDATA" else "") / "Tisma Slicer")
-    else:
-        folders += [Path("/opt/tisma-slicer"), Path("/usr/local/bin"), Path("/usr/bin")]
-    seen, out = set(), []
-    for f in folders:
-        key = str(f).lower()
-        if key not in seen:
-            seen.add(key)
-            out.append(f)
-    return out
-
-
-def find_program(names: tuple[str, ...]) -> str | None:
-    for folder in tisma_slicer_folders():
-        for name in names:
-            path = folder / name
-            if path.is_file():
-                if os.name != "nt" and not os.access(path, os.X_OK):
-                    # Unpacked from a ZIP (the package made by the CI keeps no permissions).
-                    try:
-                        path.chmod(path.stat().st_mode | 0o111)
-                    except OSError:
-                        pass
-                return str(path)
-    for name in names:
-        found = shutil.which(name)
-        if found:
-            return found
-    return None
-
-
+# ---- the programs of a computing node
 def find_engine_program() -> str | None:
     """tisma-engine of the package (tisma-engine/ next to this program), or None."""
     if not getattr(sys, "frozen", False):
@@ -347,11 +285,6 @@ def find_scan_program() -> str | None:
         if (folder / name).is_file():
             return str(folder / name)
     return None
-
-
-def find_tisma_programs() -> tuple[str | None, str | None]:
-    """(tisma-slicer, tisma-fea) of this machine, or None for the ones not found."""
-    return find_program(SLICER_NAMES), find_program(FEA_NAMES)
 
 
 def resources(folder: Path) -> dict:
