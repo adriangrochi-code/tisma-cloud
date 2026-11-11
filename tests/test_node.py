@@ -723,3 +723,39 @@ def test_a_master_address_without_its_scheme_is_refused_at_start(tmp_path):
         m.set_setting("master_url", "192.168.1.10:8000")
     m.set_setting("master_url", " http://192.168.1.10:8000 ")
     assert m.read_node()["master_url"] == "http://192.168.1.10:8000"
+
+
+# The stable codes of a failed calculation (cloud.md, rule 19a).
+ENGINE_CODES = {"bad_mode", "bad_quality", "not_in_cloud", "needs_conditions", "no_valid_result", "usage", "error"}
+
+
+@pytest.mark.skipif(not ENGINE, reason="set TISMA_ENGINE_BIN")
+def test_real_engine_keeps_the_contract_of_its_other_commands(client, f, tmp_path):
+    """orient, aero and analyze of the real engine, as a black box (cloud.md, rules 19 to 19c): each one either ends
+    with its result and the summary its rule lists, or fails with a stable code and a text for the person."""
+    cfg = NodeConfig(master_url="http://testserver", token="", tisma_engine=ENGINE, tisma_slicer="", tisma_fea="",
+                     work_dir=tmp_path / "work", gpu=False, timeout_s=600)
+    user = f.user(plan=f.plan("big", concurrent=10))
+    agent = agent_for(client, f.node("n", "fea_optimize,fea,aero,orient"), cfg)
+    project = box_project({"layers": {"height": 0.2}})
+    expected = {"orient": ({"cost", "cost_before", "candidates"}, ".json"),
+                "aero": ({"drag_n", "cd", "reynolds"}, ".taero"),
+                "fea": (set(), ".tea")}
+    problems: list[str] = []
+    for kind, params in (("orient", {}), ("aero", {"quality": "fast", "speed": 10, "direction": "x"}),
+                         ("fea", {"mode": "analyze", "quality": "fast"})):
+        job = f.submit(user, kind=kind, data=project, params=json.dumps(params))
+        agent.run_once()
+        view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+        keys, suffix = expected[kind]
+        summary = view.get("summary") or {}
+        print(f"{kind}: {view['status']} {view.get('error')} {summary}")
+        if view["status"] == "done":
+            if not view["result_filename"].endswith(suffix) or not keys <= set(summary):
+                problems.append(f"{kind}: done without its result or summary: {view['result_filename']} {summary}")
+        elif view["status"] == "failed":
+            if summary.get("code") not in ENGINE_CODES or not view.get("error"):
+                problems.append(f"{kind}: failed without a stable code: {view.get('error')} {summary}")
+        else:
+            problems.append(f"{kind}: {view['status']}")
+    assert not problems, problems
