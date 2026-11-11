@@ -105,3 +105,16 @@ def test_the_alert_email_links_to_the_panel_on_the_local_network(client, f, monk
     # Without a network the e-mail still says how to open it.
     monkeypatch.setattr(alerts, "local_address", lambda: None)
     assert alerts.panel_link(client.app.state.services.settings) == f"http://<IP del maestro>:{port}/admin"
+
+
+def test_the_alerts_are_checked_even_when_forgetting_old_data_fails(client, monkeypatch):
+    """The alerts tell the administrators that something is wrong: an error in the hourly forgetting of old data (a
+    broken row, a full disk) went out of the sweep before them, every hour."""
+    services = client.app.state.services
+    checked = []
+    monkeypatch.setattr(services, "forget_old_data", lambda: (_ for _ in ()).throw(RuntimeError("broken row")))
+    monkeypatch.setattr(services, "check_alerts", lambda *a, **k: checked.append(1))
+    services._forgot_at = None
+    services._alerts_checked = None
+    services.sweep()
+    assert checked

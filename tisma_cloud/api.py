@@ -258,7 +258,10 @@ class Services:
                 job.files_removed = True
         if self._forgot_at is None or time.monotonic() - self._forgot_at >= 3600:
             self._forgot_at = time.monotonic()
-            self.forget_old_data()
+            try:
+                self.forget_old_data()
+            except Exception:  # noqa: BLE001 (the alerts below must still run)
+                log.exception("Forgetting old data failed")
         # The Microsoft Store subscriptions, looked at every 10 minutes (each account once a day).
         if self.microsoft is not None and (self._microsoft_checked is None
                                            or time.monotonic() - self._microsoft_checked >= 600):
