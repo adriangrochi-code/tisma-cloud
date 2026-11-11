@@ -21,6 +21,7 @@ import time
 from collections.abc import Callable
 
 from .ratelimit import RateLimiter
+from .reports import LOG_MAX, TEXT_MAX, TITLE_MAX
 
 Scope = dict
 Receive = Callable
@@ -39,7 +40,10 @@ UPLOADS = (
 # Pages that need no account (limited per address).
 ANONYMOUS = re.compile(r"^/(v1/(health|plans|auth/.*|billing/webhook/.*|billing/play/notify|billing/test/.*|reports)|cuenta.*|admin)?$")
 # Small bodies that need no account: (path, largest body [KB]).
-SMALL = ((re.compile(r"^/v1/reports$"), 512), (re.compile(r"^/v1/node/join$"), 16))
+# A report: its log and texts at their longest (reports.py), every character written as a JSON escape (\u00e9, 6
+# bytes), with room for the rest.
+_REPORT_KB = ((LOG_MAX + 4 * TEXT_MAX + TITLE_MAX) * 6 >> 10) + 64
+SMALL = ((re.compile(r"^/v1/reports$"), _REPORT_KB), (re.compile(r"^/v1/node/join$"), 16))
 # Answers that count against the address that caused them.
 REFUSED = {400, 401, 403, 404, 405, 411, 413, 422, 429}
 

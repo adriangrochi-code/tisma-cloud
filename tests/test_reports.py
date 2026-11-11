@@ -78,7 +78,7 @@ def test_reports_are_limited(settings):
     with TestClient(new_app(settings), client=("200.40.10.8", 1)) as c:
         assert [c.post("/v1/reports", json=report()).status_code for _ in range(3)] == [201, 201, 429]
         # A body larger than the limit is refused before it is read.
-        big = json.dumps(report(log="x" * 600_000))
+        big = json.dumps(report(log="x" * 1_600_000))
         r = c.post("/v1/reports", content=big, headers={"Content-Type": "application/json"})
         assert r.status_code == 413
 
@@ -399,3 +399,19 @@ def test_names_with_accents_and_spaces_are_hidden_too():
     assert "C:/Users/<user>/Documents/pieza.3mf" in text and "/home/<user>/tisma.log ok" in text
     # A time, a version and a plain path stay as they were.
     assert reports.redact("18:24:53 v2.9.6 C:\\Program Files\\Tisma") == "18:24:53 v2.9.6 C:\\Program Files\\Tisma"
+
+
+def test_the_longest_report_allowed_fits_in_a_request(client):
+    """A report may bring a log of LOG_MAX characters and four texts of TEXT_MAX, but the request of a report was cut
+    at 512 KB: a log with accents or another script, sent as JSON escapes (\\u00e9, as Python and many libraries write
+    it), passed 512 KB (1.4 MB at most) and was refused (413) although the report itself was valid."""
+    import json
+
+    body = report(log=("Error al laminar «pieza» ñ é 打印 " * 10000)[:reports.LOG_MAX],
+                  description="á" * reports.TEXT_MAX, steps="é" * reports.TEXT_MAX,
+                  expected="í" * reports.TEXT_MAX, actual="ó" * reports.TEXT_MAX)
+    for log in (body["log"], "打" * reports.LOG_MAX):        # a real one, and the worst: every character escaped
+        data = json.dumps({**body, "log": log}).encode()       # ensure_ascii: up to 6 bytes a character
+        assert len(data) > 512 << 10
+        r = client.post("/v1/reports", content=data, headers={"Content-Type": "application/json"})
+        assert r.status_code == 201, (len(data), r.text[:200])
