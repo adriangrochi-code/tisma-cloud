@@ -1549,6 +1549,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             library.bump(s, "index")
         return {"ok": True}
 
+    @app.post("/v1/library/models/{model_id}/check")
+    def library_check(user: UserDep, model_id: str, body: dict = Body(...)) -> dict:
+        """The seeder of Tisma (an internal account; p2p_library.md 3 octies) downloaded a revision's files and ran
+        ClamAV and the checks: a clean one is «checked» in the index; one that fails becomes a report for a person to
+        review in the panel (nothing is blocked by itself)."""
+        if not user.is_unlimited:
+            raise HTTPException(403, "Only Tisma's seeder (an internal account) checks the library")
+        revision, clean = body.get("revision"), body.get("clean")
+        detail = str(body.get("detail", ""))[:2000]
+        if not isinstance(revision, int) or isinstance(revision, bool) or not isinstance(clean, bool):
+            raise HTTPException(422, "'revision' (a number) and 'clean' (true or false)")
+        with db.session() as s:
+            row = s.execute(select(LibraryModel).where(LibraryModel.model_id == model_id,
+                                                       LibraryModel.revision == revision)).scalar_one_or_none()
+            if row is None:
+                raise HTTPException(404, "No such revision")
+            if clean:
+                if not row.checked:
+                    row.checked = True
+                    library.bump(s, "index")
+            else:
+                if row.checked:
+                    row.checked = False
+                    library.bump(s, "index")
+                s.add(LibraryReport(user_id=user.id, model_id=model_id,
+                                    reason=f"Sembrador (revisión {revision}): {detail or 'no pasó las comprobaciones'}"))
+        return {"model": model_id, "revision": revision, "checked": clean}
+
     @app.post("/v1/library/reports", status_code=201)
     def library_report(user: UserDep, body: dict = Body(...)) -> dict:
         model_id, sha256 = str(body.get("model", "")).strip(), str(body.get("sha256", "")).strip().lower()

@@ -801,3 +801,40 @@ def test_an_ipv6_address_is_blocked_by_its_64(client, f):
     listed = {a["sha256"] for a in client.get("/v1/library/blocklist.json").json()["addresses"]}
     assert hashlib.sha256(salt + b"2800:a4:1234:5600::/64").hexdigest() in listed
     assert hashlib.sha256(salt + b"200.40.10.7").hexdigest() in listed
+
+
+def test_the_seeder_marks_a_revision_checked_or_reports_it(client, f):
+    """p2p_library.md 3 octies: the seeder of Tisma (an internal account) downloads the files, runs ClamAV and the
+    checks, and tells the master: a clean revision shows «checked» in the index; one that fails goes to the panel as a
+    report for a person to review, nothing is blocked by itself."""
+    from sqlalchemy import select
+
+    from tisma_cloud.models import LibraryReport, User
+
+    author = App(client, f.user("lucia@x.com"))
+    author.bind()
+    first = author.publish()
+    seeder = f.user("sembrador@tisma.com.uy")
+    with f.db.session() as s:
+        u = s.execute(select(User).where(User.email_index == __import__("tisma_cloud").crypto.index(
+            "sembrador@tisma.com.uy"))).scalar_one()
+        u.unlimited = True
+    url = f"/v1/library/models/{first['id']}/check"
+    # Only an internal account of Tisma.
+    assert client.post(url, headers=author.headers, json={"revision": 1, "clean": True}).status_code == 403
+    assert client.post(url, headers=seeder, json={"revision": 1, "clean": True}).status_code == 200
+    assert signed(client, "index")["models"][0]["checked"] is True
+    # A revision that is not there; a bad body.
+    assert client.post(url, headers=seeder, json={"revision": 9, "clean": True}).status_code == 404
+    assert client.post(url, headers=seeder, json={"clean": "yes"}).status_code == 422
+    # Infected: a report for the panel, the revision not checked.
+    second = author.publish()
+    url2 = f"/v1/library/models/{second['id']}/check"
+    r = client.post(url2, headers=seeder, json={"revision": 1, "clean": False,
+                                                "detail": "pieza.3mf: Win.Test.EICAR_HDB-1 FOUND"})
+    assert r.status_code == 200
+    models = {m["id"]: m for m in signed(client, "index")["models"]}
+    assert models[second["id"]]["checked"] is False
+    with f.db.session() as s:
+        report = s.execute(select(LibraryReport).where(LibraryReport.model_id == second["id"])).scalar_one()
+        assert "EICAR" in report.reason and report.user_id is not None
