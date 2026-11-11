@@ -144,3 +144,41 @@ def test_a_result_sent_twice_at_once_is_kept_and_charged_once(client, f):
     assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
     assert client.get(f"/v1/jobs/{job['id']}/result", headers=user).content == gcode
     assert round(f.me(user)["hours_used"], 2) == 0.5, f.me(user)
+
+
+def test_a_report_rewarded_twice_at_once_is_rewarded_once(client, f, postgres):
+    """Two administrators (or a double click) reward the same report: the second saw it not rewarded before the first
+    committed, waited for the account's lock and gave the days again."""
+    import time
+
+    from test_reports import report as report_body
+
+    services = client.app.state.services
+    admin = f.user("admin@x.com", admin=True)
+    ana = f.user("ana@x.com", paid_days=None)
+    rid = client.post("/v1/reports", json=report_body(), headers=ana).json()["id"]
+    sending = threading.Event()
+
+    def slow_send(to, subject, text):  # noqa: ANN001, ANN202
+        sending.set()
+        time.sleep(1)
+
+    services.mailer.send = slow_send
+    codes: list[int] = []
+
+    def reward() -> None:
+        codes.append(client.post(f"/v1/admin/reports/{rid}/reward", json={}, headers=admin).status_code)
+
+    first = threading.Thread(target=reward)
+    first.start()
+    assert sending.wait(10)
+    second = threading.Thread(target=reward)
+    second.start()
+    first.join(30)
+    second.join(30)
+    assert sorted(codes) == [200, 409]
+    me = client.get("/v1/me", headers=ana).json()
+    from datetime import datetime, timezone
+
+    left = datetime.fromisoformat(me["paid_until"].replace("Z", "+00:00")) - datetime.now(timezone.utc)
+    assert left.days < 8

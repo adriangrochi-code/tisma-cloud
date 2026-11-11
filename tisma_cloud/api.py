@@ -3324,6 +3324,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         (the limit keeps the reports from being a way to get the plan free)."""
         if r.user_id is None:
             raise HTTPException(409, "The report was sent without an account: there is nobody to reward")
+        # The report locked and read again: another reward of it may have committed since it was loaded.
+        s.execute(select(BugReport.id).where(BugReport.id == r.id).with_for_update())
+        s.refresh(r)
         if r.rewarded_at is not None:
             raise HTTPException(409, "The report was rewarded already")
         now = utcnow()
