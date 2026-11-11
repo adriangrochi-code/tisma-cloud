@@ -692,6 +692,25 @@ primera vez: no cambia su PeerId), `TISMA_RELAY_ANNOUNCE` (sus direcciones públ
 escribe las direcciones para `TISMA_LIBRARY_RELAYS` del central (`…/p2p/<su PeerId>`). Probado con pares de go-libp2p;
 contra las apps, cuando el motor tenga libp2p.
 
+**El sembrador, `tisma-relay seed`** (p2p_library.md reglas 3, 3 octies y 8 septies): mantiene los modelos del índice
+firmado para que estén siempre, los sirve con `/tisma/library/1.0.0` como las apps (`have`, `pieces`, `get`; solo lo
+que está en el índice y no en la lista de bloqueo: `blocked`; con su tope de subida: `busy`) y se anuncia directo al
+central. Lo que baja lo comprueba pedazo por pedazo (la lista contra `piece_roots`, cada pedazo y el archivo entero
+contra sus huellas; un par que miente se deja) y después lo revisa: el tipo por su contenido, un 3MF sin rutas fuera de
+su carpeta, sin programas ni G-code adentro y sin descomprimir a más de 10 veces su tamaño, y ClamAV
+(`clamdscan`/`clamscan` llamado como programa aparte: es GPL). Le avisa al central
+(`POST /v1/library/models/<id>/check`): limpio, el modelo sale «checked» en el índice; si no, va al panel como denuncia
+para que lo vea una persona, y el sembrador deja de servirlo. Lo que sale del índice o se bloquea, lo borra.
+
+```
+TISMA_MASTER_URL=… TISMA_LIBRARY_PROJECT_KEY=<64 hex> TISMA_SEED_TOKEN=<sesión de una cuenta interna> \
+TISMA_SEED_ANNOUNCE=/ip4/<IP pública>/tcp/4002 ./tisma-relay seed
+```
+
+Ajustes: `TISMA_SEED_DIR` (`./library`), `TISMA_SEED_GB` (50, los modelos más nuevos primero),
+`TISMA_SEED_MB_PER_HOUR` (0: sin tope), `TISMA_CLAMAV` (`clamdscan`), `TISMA_SEED_KEY`. La cuenta del sembrador es
+interna (`tisma-cloud admin user-set … --unlimited`): solo una cuenta interna puede marcar «checked».
+
 **Piezas escaneadas en la cuenta** (regla 7 bis): «Imprimir» en la app del escáner guarda la pieza de un escaneo
 terminado en la cuenta, privada (`POST /v1/files` con el trabajo; se toma del resultado, que dura `TISMA_RETENTION_H`).
 Tisma la lista en «Mi biblioteca» (`GET /v1/files`) y la baja para laminar; «Publicar» la manda a la biblioteca con

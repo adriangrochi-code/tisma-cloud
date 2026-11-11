@@ -5,6 +5,16 @@
 //	TISMA_RELAY_LISTEN         addresses, comma separated (default /ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1)
 //	TISMA_RELAY_KEY            the relay's own key (made the first time; its PeerId goes in TISMA_LIBRARY_RELAYS)
 //	TISMA_RELAY_ANNOUNCE       public addresses to announce, comma separated (behind NAT or a forwarded port)
+//
+// tisma-relay seed: the seeder of the library (p2p_library.md rule 3) instead of the relay, with also
+//
+//	TISMA_SEED_TOKEN           a session of the seeder's account (an internal account of Tisma)
+//	TISMA_SEED_DIR             where the files are kept (default ./library)
+//	TISMA_SEED_GB              the space for them (default 50)
+//	TISMA_SEED_MB_PER_HOUR     upload per hour (default 0: no cap)
+//	TISMA_SEED_ANNOUNCE        its public addresses, announced to the master (it shares directly)
+//	TISMA_SEED_KEY             its own key (default seed.key)
+//	TISMA_CLAMAV               clamdscan or clamscan (default clamdscan; ClamAV is called, never linked: it is GPL)
 package main
 
 import (
@@ -155,6 +165,10 @@ func newHost(key crypto.PrivKey, listen, announce []string, gate *Gate, counter 
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "seed" {
+		seedMain()
+		return
+	}
 	master := strings.TrimRight(env("TISMA_MASTER_URL", ""), "/")
 	project := env("TISMA_LIBRARY_PROJECT_KEY", "")
 	if master == "" || project == "" {
@@ -198,4 +212,65 @@ func main() {
 		}
 	}()
 	<-ctx.Done()
+}
+
+func seedMain() {
+	master := strings.TrimRight(env("TISMA_MASTER_URL", ""), "/")
+	project, token := env("TISMA_LIBRARY_PROJECT_KEY", ""), env("TISMA_SEED_TOKEN", "")
+	if master == "" || project == "" || token == "" {
+		log.Fatal("TISMA_MASTER_URL, TISMA_LIBRARY_PROJECT_KEY and TISMA_SEED_TOKEN are needed")
+	}
+	libraryKey, err := fetchKey(master, project)
+	if err != nil {
+		log.Fatalf("the library key: %v", err)
+	}
+	key, err := identity(env("TISMA_SEED_KEY", "seed.key"))
+	if err != nil {
+		log.Fatalf("the seeder's key: %v", err)
+	}
+	h, err := libp2p.New(libp2p.Identity(key),
+		libp2p.ListenAddrStrings(split(env("TISMA_RELAY_LISTEN", "/ip4/0.0.0.0/tcp/4002,/ip4/0.0.0.0/udp/4002/quic-v1"))...))
+	if err != nil {
+		log.Fatalf("starting: %v", err)
+	}
+	defer h.Close()
+	dir := env("TISMA_SEED_DIR", "library")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Fatal(err)
+	}
+	peerKey, err := peerKeyOf(key)
+	if err != nil {
+		log.Fatal(err)
+	}
+	gb, mb := envInt("TISMA_SEED_GB", 50), envInt("TISMA_SEED_MB_PER_HOUR", 0)
+	s := &Seeder{Master: &Master{URL: master, Token: token, Key: libraryKey, HTTP: httpClient}, Host: h, PeerKey: peerKey,
+		Sign: key.Sign, Store: &Store{Dir: dir}, ClamAV: env("TISMA_CLAMAV", "clamdscan"),
+		Announce: split(env("TISMA_SEED_ANNOUNCE", "")), MaxBytes: gb << 30, CapBytes: mb << 20}
+	ServeLibrary(h, s.Store, s)
+	if err := s.Bind(); err != nil {
+		log.Fatalf("binding the seeder's key to its account: %v", err)
+	}
+	log.Printf("tisma-relay seed %s in %s", h.ID(), dir)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	for {
+		if whole, err := s.Cycle(ctx); err != nil {
+			log.Printf("seeding: %v", err)
+		} else {
+			log.Printf("seeding %d models", len(whole))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Minute):
+		}
+	}
+}
+
+func envInt(name string, fallback int64) int64 {
+	var v int64
+	if _, err := fmt.Sscan(env(name, fmt.Sprint(fallback)), &v); err != nil || v < 0 {
+		log.Fatalf("%s is a number", name)
+	}
+	return v
 }

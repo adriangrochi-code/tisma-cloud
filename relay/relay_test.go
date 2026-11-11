@@ -275,3 +275,22 @@ func TestTheSignedBlocklistStopsAnAccountAndAPeer(t *testing.T) {
 		t.Fatalf("a blocked account got a ticket in: %v", answer)
 	}
 }
+
+// A ticket made by the master's own code (tisma_cloud.peers.ticket, Python) with fixed keys: the relay reads it.
+func TestATicketOfTheMastersCode(t *testing.T) {
+	lib, _ := hex.DecodeString("03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8")
+	from, err := peer.Decode("12D3KooWCd3eX8r5ihRvzK7P1yPq5aakaBJhG5GNj18YTztPhoCa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket := "eyJhY2NvdW50IjoidWFfdGVzdCIsImNhcF9tYl9wZXJfaG91ciI6MjAwLCJleHBpcmVzIjo0MTAyNDQ0ODAwLCJwZWVyX2lkIjoiMTJE" +
+		"M0tvb1dDZDNlWDhyNWloUnZ6SzdQMXlQcTVhYWthQkpoRzVHTmoxOFlUenRQaG9DYSJ9.EfquZVBT2FiE-EG8c7ihRq-Yo_dku8vd2q8rK6NC6" +
+		"n1DpU7C81m055dYeAMpWaAvBdnvvp151z8epJjVgMI0Ag"
+	got, err := ParseTicket(ticket, lib, from, time.Unix(4102444800-60, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Account != "ua_test" || got.CapMBPerHour != 200 {
+		t.Fatalf("read %+v", got)
+	}
+}
