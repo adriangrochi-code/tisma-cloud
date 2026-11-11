@@ -403,13 +403,17 @@ def add_block(session: Session, kind: str, value: str, reason: str = "", hours: 
         import ipaddress
 
         try:
-            # One address, also written as a network of one (203.0.113.5/32, 2001:db8::1/128); never a range.
-            network = ipaddress.ip_network(value, strict=True)
+            # One address, also written as a network of one (203.0.113.5/32, 2001:db8::1/128), or an IPv6 /64.
+            network = ipaddress.ip_network(value, strict=False)
         except ValueError:
             raise LibraryError(f"Not an address: {value}") from None
-        if network.num_addresses != 1:
-            raise LibraryError(f"One address only, not a range: {value}")
-        value = str(network.network_address)
+        if network.num_addresses != 1 and not (network.version == 6 and network.prefixlen == 64):
+            raise LibraryError(f"One address (or an IPv6 /64) only, not a wider range: {value}")
+        # 8 quinquies (spec ef94ea3): an IPv6 address by its /64, written «<network>/64» as RFC 5952 compresses it,
+        # which is what its hash in the blocklist is over; IPv4, also written ::ffff:a.b.c.d, by the address.
+        from .guard import limit_key
+
+        value = limit_key(str(network.network_address))
         hours = hours or 24.
     block = LibraryBlock(kind=kind, value=value[:100], reason=reason[:300],
                          until=utcnow() + timedelta(hours=hours) if hours else None)

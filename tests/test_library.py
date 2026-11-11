@@ -777,3 +777,27 @@ def test_hidden_characters_that_slipped_through_are_refused():
     assert library.plain_text("línea 1\nlínea 2\tcon tab", "description", lines=True)
     # And in the names of the published files («gpj.\u061cexe» would read as another type).
     assert library.hidden("pieza\u061c.3mf") and not library.hidden("pieza ñandú.3mf")
+
+
+def test_an_ipv6_address_is_blocked_by_its_64(client, f):
+    """p2p_library.md 8 quinquies (spec ef94ea3): an IPv6 address is blocked by its /64 and its hash is over the /64
+    written «<network>/64» (RFC 5952); IPv4, also as ::ffff:a.b.c.d, by the address."""
+    import hashlib
+
+    import pytest
+
+    from tisma_cloud import library
+
+    with f.db.session() as s:
+        b6 = library.add_block(s, "address", "2800:A4:1234:5600:abcd::9", "abuso", 24)
+        b4 = library.add_block(s, "address", "::ffff:200.40.10.7", "abuso", 24)
+        net = library.add_block(s, "address", "2800:a4:1234:5601::/64", "abuso", 24)
+        assert (b6.value, b4.value, net.value) == ("2800:a4:1234:5600::/64", "200.40.10.7", "2800:a4:1234:5601::/64")
+        for wide in ("2800:a4::/48", "200.40.10.0/24"):
+            with pytest.raises(library.LibraryError):
+                library.add_block(s, "address", wide, "", 24)
+        key = client.app.state.services.library.key
+        salt = key.address_salt(utcnow().strftime("%Y-%m-%d"))
+    listed = {a["sha256"] for a in client.get("/v1/library/blocklist.json").json()["addresses"]}
+    assert hashlib.sha256(salt + b"2800:a4:1234:5600::/64").hexdigest() in listed
+    assert hashlib.sha256(salt + b"200.40.10.7").hexdigest() in listed

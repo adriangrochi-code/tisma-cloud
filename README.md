@@ -627,7 +627,8 @@ Los modelos que la gente publica viajan de una app a otra; el central **no guard
   su equipo o en la nube;
 - **la lista de bloqueo**: huellas retiradas, cuentas suspendidas, claves de apps, claves de biblioteca revocadas
   (`TISMA_LIBRARY_REVOKED_KEYS`) y, por 24 h como mucho, direcciones IP. Una IP sale en la lista solo como huella
-  (SHA-256 con una sal que cambia cada día) y al vencer se borra de la base.
+  (SHA-256 con una sal que cambia cada día) y al vencer se borra de la base. Una IPv6 se bloquea por su red /64 (la
+  huella es sobre `<red>/64`, por ejemplo `2800:a4:1234:5600::/64`); IPv4, por dirección.
 
 Las dos se bajan sin sesión con su firma Ed25519 aparte (64 bytes): `GET /v1/library/index.json` y `.sig`,
 `GET /v1/library/blocklist.json` y `.sig`. Las firma la **clave de la biblioteca**, `storage\library.key`, que el central
