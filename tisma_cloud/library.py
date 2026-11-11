@@ -252,11 +252,22 @@ class Publication:
 
 # Control characters and the marks that change the direction of text (a name that shows «gpj.exe» reversed, colours of
 # a terminal): never in what others read. A description keeps its line breaks.
-_HIDDEN = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+def hidden(text: str, lines: bool = False) -> bool:
+    """Whether the text has a character a person does not see as written: controls, format characters (direction
+    marks and overrides, zero-width ones, the Unicode tags, the soft hyphen...), line and paragraph separators, and
+    surrogates, as Unicode classes them. With lines, new lines and tabs are allowed."""
+    import unicodedata
+
+    for ch in text:
+        if lines and ch in "\n\t":
+            continue
+        if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp", "Cs"):
+            return True
+    return False
 
 
 def plain_text(value: str, key: str, lines: bool = False) -> str:
-    if _HIDDEN.search(value) or (not lines and ("\n" in value or "\t" in value)):
+    if hidden(value, lines):
         raise LibraryError(f"'{key}' has control or direction characters")
     return value
 
@@ -294,7 +305,7 @@ def parse_publication(body: dict) -> Publication:
         if not isinstance(f, dict):
             raise LibraryError("Each file is an object")
         path, role, size, sha = f.get("path"), f.get("role"), f.get("size"), f.get("sha256")
-        if not isinstance(path, str) or not _PATH.match(path) or path.strip(" .") != path or _HIDDEN.search(path):
+        if not isinstance(path, str) or not _PATH.match(path) or path.strip(" .") != path or hidden(path):
             raise LibraryError(f"Bad file name: {path!r}")
         if role not in ROLES:
             raise LibraryError(f"'role' is one of {', '.join(ROLES)}")

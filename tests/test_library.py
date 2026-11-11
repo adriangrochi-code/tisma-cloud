@@ -758,3 +758,22 @@ def test_renaming_the_author_is_limited(client, f):
     user = f.user("sofia@x.com")
     codes = [client.put("/v1/me/library-name", headers=user, json={"name": f"Nombre {i}"}).status_code for i in range(8)]
     assert codes[:5] == [200] * 5 and codes[5:] == [429] * 3
+
+
+def test_hidden_characters_that_slipped_through_are_refused():
+    """The list of refused characters missed the Arabic letter mark (it turns text around too), the line and
+    paragraph separators (they cut a title in two), the invisible operators and the Unicode tags (text no one sees but
+    a program reads): every format and control character is refused now, as Unicode classes them."""
+    import pytest
+
+    from tisma_cloud import library
+
+    for bad in ("؜", " ", " ", "⁡", "\U000e0041\U000e0042", "­", "᠎", "￹"):
+        with pytest.raises(library.LibraryError, match="control or direction"):
+            library.plain_text(f"Soporte{bad}de cámara", "name")
+    # What a person writes stays: accents, ñ, other scripts, emoji with their variation selector.
+    for good in ("Soporte de cámara ñandú", "支架", "Подставка", "Soporte ⚙️ 🔧", "Ʃ 3/4\" Ø20"):
+        assert library.plain_text(good, "name") == good
+    assert library.plain_text("línea 1\nlínea 2\tcon tab", "description", lines=True)
+    # And in the names of the published files («gpj.\u061cexe» would read as another type).
+    assert library.hidden("pieza\u061c.3mf") and not library.hidden("pieza ñandú.3mf")
