@@ -313,3 +313,37 @@ def test_node_takes_scans_only_when_ready(tmp_path):
     assert agent.check_scans(force=True)
     agent.claim_for_slot(wait=0)
     assert "scan" not in claims[-1]["exclude"]
+
+
+def test_pieces_lost_in_a_power_cut_are_asked_again(c):
+    """The database said a piece had arrived, but its bytes never reached the disk (the master lost power before
+    writing them out), or the file of the scan is gone: the master says what it really has, the phone sends again from
+    there and the scan is whole."""
+    from tisma_cloud import scans as scan_files
+
+    f = Factory(c)
+    user = f.user("ana@x.com", plan=scan_plan(f))
+    data = make_scan(extra={"scan_demo/big.bin": bytes(range(256)) * 9000})
+    up = c.post("/v1/scans", headers=user, json={"size": len(data), "name": "a.zip"}).json()
+    piece = up["chunk_size"]
+    for offset in (0, piece):
+        assert c.put(f"/v1/scans/{up['id']}/data", params={"offset": offset}, headers=user,
+                     content=data[offset:offset + piece]).status_code == 200
+    path = scan_files.upload_path(c.app.state.services.storage.root, up["id"])
+    # The second piece was lost.
+    with open(path, "r+b") as fh:
+        fh.truncate(piece)
+    assert c.get(f"/v1/scans/{up['id']}", headers=user).json()["received"] == piece
+    r = c.put(f"/v1/scans/{up['id']}/data", params={"offset": 2 * piece}, headers=user, content=data[2 * piece:])
+    assert r.status_code == 409 and r.json()["received"] == piece
+    # The whole file lost: from the start again, not a 500.
+    path.unlink()
+    r = c.put(f"/v1/scans/{up['id']}/data", params={"offset": piece}, headers=user, content=data[piece:2 * piece])
+    assert r.status_code == 409 and r.json()["received"] == 0
+    for offset in range(0, len(data), piece):
+        r = c.put(f"/v1/scans/{up['id']}/data", params={"offset": offset}, headers=user,
+                  content=data[offset:offset + piece])
+        assert r.status_code == 200, (offset, r.text)
+    job = c.post(f"/v1/scans/{up['id']}/complete", headers=user)
+    assert job.status_code == 201, job.text
+    assert c.app.state.services.storage.input_path(job.json()["id"]).read_bytes() == data

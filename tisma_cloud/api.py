@@ -31,6 +31,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import object_session
 
 from . import (__version__, alerts, apple, backup, billing, capacity, codes, crypto, google_play, library, microsoft,
                pairing, peers, remote, reports, scans, scheduler, stores, triage)
@@ -2350,7 +2351,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         up = s.get(ScanUpload, upload_id)
         if up is None or up.user_id != user.id:
             raise HTTPException(404, "No such scan")
+        if up.job_id is None:
+            on_disk(up)
         return up
+
+    def on_disk(up: ScanUpload) -> None:
+        """What arrived is what is on the disk: after a power cut the database may count a piece whose bytes were
+        never written, or the file may be gone. The phone then sends again from there (409 with "received")."""
+        path = scans.upload_path(services.storage.root, up.id)
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+            size = 0
+        if size < up.received:
+            log.warning("Scan %s: %d bytes counted, %d on the disk; asked again from there", up.id, up.received, size)
+            up.received = size
+            # Written now: a caller may take the row out of its session before the commit.
+            object_session(up).flush()
 
     @app.post("/v1/scans", status_code=201)
     def scan_start(user: UserDep, body: ScanStartBody) -> dict:
@@ -2401,23 +2420,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not data:
             raise HTTPException(422, "The piece is empty")
 
-        def write() -> int:
+        def write() -> tuple[bool, int]:
+            """(written, received): whether this piece was written, and what has arrived."""
             with db.session() as s:
                 row = s.get(ScanUpload, up.id, with_for_update=True)
                 if row is None or row.received != offset:
-                    return -1 if row is None else row.received
+                    return False, -1 if row is None else row.received
                 with open(path, "r+b") as f:
                     f.seek(offset)
                     f.write(data)
                     f.truncate()
+                    # On the disk before the database counts it (a power cut would lose it otherwise).
+                    f.flush()
+                    os.fsync(f.fileno())
                 row.received = offset + len(data)
                 row.updated_at = utcnow()
-                return row.received
+                return True, row.received
 
-        received = await run_in_threadpool(write)
+        written, received = await run_in_threadpool(write)
         if received < 0:
             raise HTTPException(404, "No such scan")
-        if received != offset + len(data):
+        # Not written (another request moved it meanwhile): even when what arrived happens to end where this piece
+        # would have, this piece is not there.
+        if not written:
             return JSONResponse({"detail": "The piece does not go there", "received": received}, status_code=409)
         return {"received": received}
 
