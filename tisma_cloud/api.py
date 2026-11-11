@@ -145,7 +145,8 @@ class Services:
         self.clamd = Clamd(settings.clamd) if settings.clamd else None
         self.refused = ThreatLog()
         self.twins = Twins()
-        self.updates = UpdateMirror(settings.updates_url, Path(settings.storage_dir) / "updates")
+        self.updates = UpdateMirror(settings.updates_url, Path(settings.storage_dir) / "updates",
+                                    project_key=settings.library_project_key)
         # The library shared between users (library.py): its own signing key and the signed index and blocklist.
         # Who shares which model, in memory only (peers.py).
         self.peers = peers.Announcements()

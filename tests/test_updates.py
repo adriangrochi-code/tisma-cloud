@@ -64,3 +64,34 @@ def test_new_list_replaces_both(tmp_path):
 def test_off_without_an_address(tmp_path):
     mirror = UpdateMirror("", tmp_path, files())
     assert not mirror.needed and not mirror.refresh() and mirror.current() is None
+
+
+def test_a_list_and_a_signature_of_two_publications_are_not_kept(tmp_path):
+    """The list and its signature are two downloads: a new list published between them gave the old list with the new
+    signature, and the mirror replaced a good pair with one no program accepts (an hour, until the next check). With
+    the project's key (TISMA_LIBRARY_PROJECT_KEY) the pair is checked; a mismatched one is asked again, else the
+    previous pair stays."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from tisma_cloud import library
+
+    project = Ed25519PrivateKey.generate()
+    key = library.public_bytes(project.public_key()).hex()
+    old = b'{"format": "tisma-updates", "versions": [{"version": "1.0.1"}]}'
+    new = b'{"format": "tisma-updates", "versions": [{"version": "1.0.2"}]}'
+    pairs = {"old": (old, project.sign(old)), "new": (new, project.sign(new))}
+    mirror = UpdateMirror(URL, tmp_path, files(*pairs["old"]), project_key=key)
+    assert mirror.refresh() and mirror.current() == pairs["old"]
+    # Published between the two downloads, both times: the old pair stays.
+    mirror.fetch = files(old, pairs["new"][1])
+    assert not mirror.refresh() and mirror.current() == pairs["old"]
+    assert "signature" in mirror.error
+    # Published between the two downloads once: asked again, the new pair is kept.
+    answers = iter([old, pairs["new"][1], new, pairs["new"][1]])
+    mirror.fetch = lambda url: next(answers)
+    assert mirror.refresh() and mirror.current() == pairs["new"]
+    # A pair that does not match on the disk (cut between its two files) is not served after a restart.
+    (tmp_path / "updates.json").write_bytes(old)
+    assert UpdateMirror(URL, tmp_path, files(), project_key=key).current() is None
+    # Without the project's key the shape is all that is checked, as before.
+    assert UpdateMirror(URL, tmp_path, files()).current() == (old, pairs["new"][1])

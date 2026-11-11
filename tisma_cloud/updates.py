@@ -3,8 +3,10 @@
 The list is updates.json plus updates.json.sig (64 bytes, Ed25519 over the exact bytes of the JSON), files of the fixed
 `updates` release of the engine on GitHub. The master downloads both every hour and serves them byte for byte at
 GET /v1/updates and GET /v1/updates.sig, without a session. It never parses and writes the JSON again: the signature is
-over its exact bytes. It does not check the signature either (the programs do, with the project's key); it only keeps
-a pair that looks whole (a JSON object, a signature of 64 bytes), so a cut download never replaces a good one."""
+over its exact bytes. It keeps only a pair that looks whole (a JSON object, a signature of 64 bytes), so a cut download
+never replaces a good one; and, when it knows the project's public key (TISMA_LIBRARY_PROJECT_KEY, set when the library
+is certified), only a pair whose signature is good: the two files are two downloads, and a list published between them
+would pair the old list with the new signature (asked again once; otherwise the previous pair stays)."""
 
 from __future__ import annotations
 
@@ -42,8 +44,9 @@ def fetch_url(url: str) -> bytes:
 
 
 class UpdateMirror:
-    def __init__(self, url: str, folder: Path, fetch: Fetch = fetch_url) -> None:
+    def __init__(self, url: str, folder: Path, fetch: Fetch = fetch_url, project_key: str = "") -> None:
         self.url = url.strip()
+        self.project_key = self._key(project_key)
         self.folder = Path(folder)
         self.fetch = fetch
         self._lock = threading.Lock()
@@ -68,13 +71,31 @@ class UpdateMirror:
             self._pair = pair
 
     @staticmethod
-    def _whole(listing: bytes, signature: bytes) -> bool:
+    def _key(text: str) -> bytes | None:
+        from .library import LibraryError, project_key_bytes
+
+        try:
+            return project_key_bytes(text) if text.strip() else None
+        except LibraryError:
+            log.warning("TISMA_LIBRARY_PROJECT_KEY is not a key: the list of versions is kept without checking it")
+            return None
+
+    def _whole(self, listing: bytes, signature: bytes) -> bool:
         if len(signature) != SIGNATURE_BYTES or not listing or len(listing) > MAX_LIST_BYTES:
             return False
         try:
-            return isinstance(json.loads(listing), dict)
+            if not isinstance(json.loads(listing), dict):
+                return False
         except ValueError:
             return False
+        return self._signed(listing, signature)
+
+    def _signed(self, listing: bytes, signature: bytes) -> bool:
+        if self.project_key is None:
+            return True
+        from .library import verify
+
+        return verify(self.project_key, signature, listing)
 
     def current(self) -> tuple[bytes, bytes] | None:
         """The list and its signature, always from the same download."""
@@ -91,15 +112,21 @@ class UpdateMirror:
         """Downloads the list and its signature; keeps them when they look whole. Returns whether they changed."""
         if not self.url:
             return False
-        try:
-            listing = self.fetch(self.url)
-            signature = self.fetch(self.url + ".sig")
-        except (httpx.HTTPError, OSError, ValueError) as ex:
-            self._failed(f"The list of versions could not be downloaded: {ex}")
-            return False
-        if not self._whole(listing, signature):
-            self._failed(f"The list of versions or its signature is not whole ({len(listing)} and {len(signature)} "
-                         f"bytes): the previous one is kept")
+        for attempt in range(2):
+            try:
+                listing = self.fetch(self.url)
+                signature = self.fetch(self.url + ".sig")
+            except (httpx.HTTPError, OSError, ValueError) as ex:
+                self._failed(f"The list of versions could not be downloaded: {ex}")
+                return False
+            if self._whole(listing, signature):
+                break
+            if attempt == 0 and self.project_key is not None:
+                continue            # published between the two downloads: once more
+            what = "is not signed by the project's key (or its signature is of another list)" \
+                if self.project_key is not None else "is not whole"
+            self._failed(f"The list of versions or its signature {what} ({len(listing)} and {len(signature)} bytes): "
+                         f"the previous one is kept")
             return False
         self.error = ""
         with self._lock:
