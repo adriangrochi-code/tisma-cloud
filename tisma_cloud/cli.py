@@ -413,9 +413,24 @@ def open_gui(manager) -> int:
     return gui_main(manager)
 
 
+def utf8_output() -> None:
+    """Output sent to a file or a pipe in UTF-8. Windows writes it in its ANSI code page (cp1252), which has no ✔ or ✖:
+    «tisma-cloud check > file» stopped with an encoding error. The console is left as it is (it already writes
+    Unicode)."""
+    from . import system
+
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure") and not system.is_terminal(stream):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
     from .manager import Manager
 
+    utf8_output()
     args = list(sys.argv[1:] if argv is None else argv)
     # The folder of the service, before the command (the scheduled task and the supervisor pass it).
     if len(args) >= 2 and args[0] == "--home":

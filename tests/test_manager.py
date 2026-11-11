@@ -450,3 +450,17 @@ def test_the_library_relay_and_seeder_run_with_the_master(tmp_path, monkeypatch)
     monkeypatch.setattr(system, "find_relay_program", lambda: None)
     assert list(m.children()) == ["main"]
     assert "falta tisma-relay" in {c.name: c for c in m.checks()}["Intermediario de la biblioteca"].detail
+
+
+def test_check_writes_utf8_to_a_file(tmp_path):
+    """«tisma-cloud check > file» on Windows wrote the marks (✔ ✖) in cp1252 and stopped with an encoding error."""
+    import subprocess
+
+    out = tmp_path / "check.txt"
+    with open(out, "wb") as f:
+        subprocess.run([sys.executable, "-c", "import sys; from tisma_cloud.cli import main; sys.exit(main())",
+                        "--home", str(tmp_path / "home"), "check"], stdout=f, stderr=subprocess.STDOUT,
+                       env={**__import__("os").environ, "PYTHONIOENCODING": "cp1252", "PYTHONPATH": str(SERVER_DIR)},
+                       timeout=120)
+    text = out.read_bytes().decode("utf-8")
+    assert "Error" not in text and ("✖" in text or "!" in text or "✔" in text), text
