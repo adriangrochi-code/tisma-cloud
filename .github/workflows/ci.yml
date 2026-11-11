@@ -68,6 +68,22 @@ jobs:
           if grep -i "traceback" load-master.log; then exit 1; fi
 
   # The server as one program, tisma-cloud (.exe on Windows): master, node and administration (tisma-cloud.spec).
+  # tisma-relay, the relay of the library (relay/, Go and go-libp2p): its tests with real libp2p peers.
+  relay:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: relay/go.mod
+          cache-dependency-path: relay/go.sum
+      - name: Build and test
+        working-directory: relay
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+          go build -o tisma-relay .
+
   executable:
     needs: tests
     strategy:

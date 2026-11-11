@@ -31,6 +31,10 @@ installed with pip.
 | pywebview | 6.2.1 | BSD-3-Clause | the window of the control panel in `tisma-cloud.exe` (Windows only) |
 | pythonnet / clr_loader / bottle / proxy_tools | 3.2.1 / 0.3.1 / 0.13.4 / 0.1.0 | MIT | dependencies of pywebview on Windows |
 | Microsoft WebView2 SDK (`Microsoft.Web.WebView2.Core.dll`, `.WinForms.dll`, `WebView2Loader.dll`, in pywebview) | — | Microsoft redistributable SDK terms | the Edge engine of Windows; the runtime is part of Windows 10/11 |
+| go-libp2p | 0.51.0 | MIT OR Apache-2.0 | `relay/` (tisma-relay: circuit relay v2, Noise, the ticket protocol; added 2026-11-11) |
+| go-yamux | 5.1.0 | MPL-2.0 | dependency of go-libp2p (stream multiplexing); used unchanged; tisma-relay runs only on the owner's machines |
+| other Go modules of `relay/go.sum` (go-multiaddr, go-libp2p-asn-util, quic-go, webtransport-go, pion, protobuf, golang.org/x/*, flynn/noise, goupnp, ...) | as in `relay/go.sum` | MIT, Apache-2.0, BSD-2/3-Clause, ISC (checked one by one on 2026-11-11: none GPL) | dependencies of go-libp2p |
+| Go | 1.26.0 | BSD-3-Clause | builds `relay/` |
 | PyInstaller | 6.22.3 | GPL-2.0-or-later with the PyInstaller bootloader exception (allows building and distributing non-free programs) | builds the `tisma-cloud` executable (CI); not part of the service |
 | pyinstaller-hooks-contrib / altgraph | 2026.9 / 0.17.5 | GPL-2.0-or-later or Apache-2.0 (hooks) / MIT | dependencies of PyInstaller |
 

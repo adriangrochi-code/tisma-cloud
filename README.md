@@ -671,6 +671,27 @@ en «Directo»; si no, la dirección a través de un intermediario de Tisma (`TI
 intermediario acepta solo con un permiso del central (`POST /v1/library/relay-ticket`, firmado con la clave de la
 biblioteca, 1 h) que trae la cuenta y el tope por hora del panel. Una IP bloqueada no anuncia ni recibe permisos.
 
+**El intermediario, `tisma-relay`** (`relay/`, en Go con go-libp2p; p2p_library.md 8 ter, 8 quater y 8 sexies): un
+programa aparte, en una máquina del dueño con un puerto abierto a internet. Pasa los pedazos cifrados entre dos apps
+con circuit relay v2, sin leerlos:
+
+- la app le presenta el permiso por `/tisma/relay-ticket/1.0.0` (el permiso y un salto de línea; contesta una línea
+  JSON `{"ok":true,"expires":…}` o `{"ok":false,"error":…}`). Se comprueba la firma con la clave de la biblioteca (que
+  baja del central y acepta solo con el certificado de la clave del proyecto), que sea del par que lo presenta, que no
+  haya vencido y que la cuenta o el par no estén en la lista de bloqueo firmada (la baja cada 10 min);
+- sin permiso no hay reserva ni circuito. Cuenta los bytes de cada cuenta por hora: al pasar su tope, corta sus
+  circuitos y no acepta nuevos hasta la hora siguiente.
+
+```
+cd relay && go build -o tisma-relay .                 # Go 1.26
+TISMA_MASTER_URL=https://tismaservidores.net TISMA_LIBRARY_PROJECT_KEY=<64 hex> ./tisma-relay
+```
+
+Ajustes: `TISMA_RELAY_LISTEN` (por defecto TCP y QUIC en el puerto 4001), `TISMA_RELAY_KEY` (su clave, hecha la
+primera vez: no cambia su PeerId), `TISMA_RELAY_ANNOUNCE` (sus direcciones públicas, detrás de un router). Al arrancar
+escribe las direcciones para `TISMA_LIBRARY_RELAYS` del central (`…/p2p/<su PeerId>`). Probado con pares de go-libp2p;
+contra las apps, cuando el motor tenga libp2p.
+
 **Piezas escaneadas en la cuenta** (regla 7 bis): «Imprimir» en la app del escáner guarda la pieza de un escaneo
 terminado en la cuenta, privada (`POST /v1/files` con el trabajo; se toma del resultado, que dura `TISMA_RETENTION_H`).
 Tisma la lista en «Mi biblioteca» (`GET /v1/files`) y la baja para laminar; «Publicar» la manda a la biblioteca con

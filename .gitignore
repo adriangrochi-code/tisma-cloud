@@ -12,3 +12,5 @@ deploy/backups/
 build/
 dist/
 *.egg-info/
+relay/tisma-relay
+relay/relay.key
