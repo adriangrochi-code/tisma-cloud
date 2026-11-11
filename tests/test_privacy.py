@@ -273,3 +273,17 @@ def test_reviewed_library_reports_are_forgotten_like_problem_reports(client, f):
     services.forget_old_data()
     with f.db.session() as s:
         assert sorted(s.execute(select(LibraryReport.reason)).scalars()) == ["recent", "waiting"]
+
+
+def test_hiding_personal_data_takes_linear_time():
+    """The pattern of e-mail addresses tried again from every letter of a long run without «@»: a report with a log of
+    200 000 letters (anyone may send one, without an account) kept the master busy for minutes."""
+    import time
+
+    from tisma_cloud import reports
+
+    for log in ("x" * 200_000, "打" * 200_000, "a@" + "x" * 200_000, "a." * 100_000):
+        start = time.monotonic()
+        reports.redact(log)
+        assert time.monotonic() - start < 2, log[:10]
+    assert reports.redact("ana@correo.com.uy y josé.pérez@gmail.com") == "<email> y <email>"

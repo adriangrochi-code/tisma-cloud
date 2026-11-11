@@ -28,7 +28,9 @@ KINDS = ("bug", "crash", "suggestion")
 STATUSES = ("new", "confirmed", "fixed", "wontfix", "duplicate")
 
 # Letters of any language (josé.pérez@..., ñandú@..., a domain with ñ).
-_EMAIL = re.compile(r"[\w.%+-]+@[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
+# Linear on any text: an address starts only where a word starts and each part is no longer than in a real one (a long
+# run of letters made it quadratic: 200 000 characters took minutes, from anyone sending a report).
+_EMAIL = re.compile(r"(?<![\w.%+-])[\w.%+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){0,8}\.[^\W\d_]{2,24}(?![\w-])")
 _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 # IPv6 candidates (checked with ipaddress: a time as 18:24:53 is not one).
 _IPV6 = re.compile(r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])")
