@@ -219,6 +219,8 @@ class Services:
             except microsoft.MicrosoftUnavailable as ex:
                 log.warning("Microsoft Store not reachable: %s", ex)
                 break
+            except Exception:  # noqa: BLE001 (one account must not stop the others; asked again next time)
+                log.exception("Microsoft Store check of account %s failed", user_id)
         return len(due)
 
     def sweep(self) -> None:
@@ -261,7 +263,10 @@ class Services:
         if self.microsoft is not None and (self._microsoft_checked is None
                                            or time.monotonic() - self._microsoft_checked >= 600):
             self._microsoft_checked = time.monotonic()
-            self.refresh_microsoft()
+            try:
+                self.refresh_microsoft()
+            except Exception:  # noqa: BLE001 (the rest of the sweep, the alerts too, goes on)
+                log.exception("Checking the Microsoft Store subscriptions failed")
         # The alerts of the administrators, once a minute.
         if self._alerts_checked is None or time.monotonic() - self._alerts_checked >= 60:
             self._alerts_checked = time.monotonic()

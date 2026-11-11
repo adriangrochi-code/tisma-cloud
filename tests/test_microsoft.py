@@ -270,3 +270,35 @@ def test_microsoft_times():
     assert microsoft.parse_time("2017-06-11T03:07:49Z") == datetime(2017, 6, 11, 3, 7, 49)
     assert microsoft.parse_time("2017-06-11T00:07:49.1-03:00") == datetime(2017, 6, 11, 3, 7, 49, 100000)
     assert microsoft.parse_time("") is None and microsoft.parse_time("nope") is None
+
+
+def test_one_account_that_fails_does_not_stop_the_others_nor_the_sweep(ms, monkeypatch):
+    """An unexpected error with one account (a broken row, a bug) went out of the daily check and out of the sweep:
+    the accounts after it were never asked, and the sweep's later work (the administrators' alerts) did not run."""
+    f = Factory(ms)
+    users = [f.user(f"u{i}@x.com", plan="basico", paid_days=None) for i in range(3)]
+    fake, services = ms.fake, ms.app.state.services
+    for i, user in enumerate(users):
+        fake.subscribe(f"msa-{i}", PRO)
+        assert purchase(ms, user, fake.key(f"msa-{i}", ticket(ms, user)["publisher_user_id"])).status_code == 200
+    real = services.microsoft.refresh
+    asked = []
+
+    def refresh(session, user, now=None):  # noqa: ANN001, ANN202
+        asked.append(user.id)
+        if len(asked) == 1:
+            raise RuntimeError("a broken row")
+        return real(session, user, now)
+
+    monkeypatch.setattr(services.microsoft, "refresh", refresh)
+    later = utcnow() + timedelta(days=1, minutes=1)
+    assert services.refresh_microsoft(later) == 3
+    assert len(asked) == 3
+    # And the sweep goes on to its alerts with it.
+    alerts = []
+    monkeypatch.setattr(services, "refresh_microsoft", lambda now=None: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(services, "check_alerts", lambda *a, **k: alerts.append(1), raising=False)
+    services._microsoft_checked = None
+    services._alerts_checked = None
+    services.sweep()
+    assert alerts
