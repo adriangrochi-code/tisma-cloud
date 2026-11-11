@@ -356,6 +356,9 @@ corre en su propia carpeta y no recibe entrada estándar. Con Docker el nodo cor
 
 ## Instalar el maestro (i5)
 
+**Lo de todos los días** (levantar, mirar, respaldar, restaurar, actualizar, apagar) está en una página:
+`deploy/OPERACION.md`.
+
 **Para la beta en el i5 con Windows y el túnel de Cloudflare:** la lista en orden está en `deploy/BETA.md`, y
 `deploy/smoke.py` prueba el maestro desde internet (HTTPS, planes, administración oculta y un trabajo de punta a punta).
 Lo de abajo es la instalación con Docker en Linux.
@@ -843,8 +846,8 @@ sirve) y Caddy delante del maestro (ver «Instalar el maestro»).
 ## Actualizar Tisma Cloud
 
 El maestro y cada nodo se actualizan igual: `tisma-cloud stop`, una copia de seguridad del maestro (`tisma-cloud
-backup`), poner el paquete nuevo en la misma carpeta encima del viejo (el `.exe`, `tisma-engine\` y,
-en un nodo de escaneo, `tisma-scan\`) y `tisma-cloud start`. La configuración (`tisma-cloud.toml`, `.env`,
+backup`), poner el paquete nuevo en la misma carpeta encima del viejo (el `.exe`, `tisma-engine\`, `tisma-profiles\`,
+`tisma-relay\` y, en un nodo de escaneo, `tisma-scan\`) y `tisma-cloud start`. La configuración (`tisma-cloud.toml`, `.env`,
 `node.toml`), la base de datos y `storage\data.key` no se tocan. Al arrancar, el maestro pone la base al día solo
 (tablas y columnas nuevas, `db.py`; nunca borra una). Conviene actualizar primero el maestro y después los nodos; un
 nodo viejo sigue trabajando con un maestro nuevo mientras tanto.
