@@ -273,7 +273,7 @@ func TestTheSeederKeepsChecksAndAnnouncesTheLibrary(t *testing.T) {
 	noise := make([]byte, 600000) // more than a piece once zipped, and not a zip bomb
 	_, _ = rand.Read(noise)
 	clean := zipOf(t, map[string]string{"3D/3dmodel.model": hex.EncodeToString(noise)})
-	infected := zipOf(t, map[string]string{"3D/3dmodel.model": "<model/>", "EICAR.txt": "X5O!P%@AP"})
+	infected := zipOf(t, map[string]string{"3D/3dmodel.model": "<model/>", "EICAR.txt": eicar})
 	shaClean, rootClean := put(t, authorStore, clean)
 	shaBad, rootBad := put(t, authorStore, infected)
 	model := func(id string, sha, root string, size int, published string) map[string]any {
@@ -290,9 +290,13 @@ func TestTheSeederKeepsChecksAndAnnouncesTheLibrary(t *testing.T) {
 	m.block, _ = json.Marshal(map[string]any{"files": []any{}, "models": []any{}, "accounts": []any{}, "peers": []any{}})
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	// ClamAV, as a program: exit 1 and «FOUND» for the file with EICAR.
-	clam := filepath.Join(t.TempDir(), "clamscan")
-	_ = os.WriteFile(clam, []byte("#!/bin/sh\nfor f; do :; done\nif unzip -l \"$f\" 2>/dev/null | grep -q EICAR || grep -q EICAR \"$f\"; then echo \"$f: Eicar-Signature FOUND\"; exit 1; fi\nexit 0\n"), 0o755)
+	// ClamAV, as a program: the real one with TISMA_CLAMSCAN (the CI), else a stand-in that exits 1 and says «FOUND»
+	// for the file with EICAR.
+	clam := os.Getenv("TISMA_CLAMSCAN")
+	if clam == "" {
+		clam = filepath.Join(t.TempDir(), "clamscan")
+		_ = os.WriteFile(clam, []byte("#!/bin/sh\nfor f; do :; done\nif unzip -l \"$f\" 2>/dev/null | grep -q EICAR || grep -q EICAR \"$f\"; then echo \"$f: Eicar-Signature FOUND\"; exit 1; fi\nexit 0\n"), 0o755)
+	}
 
 	key := mustKey(t)
 	seed, err := libp2p.New(libp2p.Identity(key), libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))

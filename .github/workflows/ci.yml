@@ -67,7 +67,6 @@ jobs:
           kill $master || true
           if grep -i "traceback" load-master.log; then exit 1; fi
 
-  # The server as one program, tisma-cloud (.exe on Windows): master, node and administration (tisma-cloud.spec).
   # tisma-relay, the relay of the library (relay/, Go and go-libp2p): its tests with real libp2p peers.
   relay:
     runs-on: ubuntu-24.04
@@ -83,7 +82,29 @@ jobs:
           go vet ./...
           go test -count=1 ./...
           go build -o tisma-relay .
+      # The seeder's virus check with the real ClamAV (a program apart, GPL: called, never linked) and its signatures:
+      # the EICAR test file alone and inside a 3MF, a clean 3MF, and the whole seeder with an infected model. When
+      # freshclam cannot download the official signatures (database.clamav.net limits the downloads), a signature of
+      # EICAR in ClamAV's own format (.ndb) stands in, with a warning: the program is still the real one.
+      - name: Real ClamAV
+        working-directory: relay
+        run: |
+          set -e
+          sudo apt-get update -q > /dev/null
+          sudo apt-get install -y -q clamav > /dev/null
+          clamscan --version
+          sudo systemctl stop clamav-freshclam || true
+          if ! sudo freshclam --stdout; then
+            echo "::warning::freshclam could not download the signatures: a test signature of EICAR instead"
+            echo 'TismaTest.EICAR:0:*:58354f2150254041505b345c505a58353428505e2937434329377d2445494341522d5354414e444152442d414e544956495255532d544553542d46494c452124482b482a' \
+              | sudo tee /var/lib/clamav/tisma-test.ndb > /dev/null
+          fi
+          ls -la /var/lib/clamav
+          TISMA_CLAMSCAN=clamscan go test -count=1 -v -run 'TestTheRealClamAV|TestTheSeederKeepsChecksAndAnnouncesTheLibrary' . | tee clam.log
+          grep -q -- "--- PASS: TestTheRealClamAV" clam.log
+          grep -q -- "--- PASS: TestTheSeederKeepsChecksAndAnnouncesTheLibrary" clam.log
 
+  # The server as one program, tisma-cloud (.exe on Windows): master, node and administration (tisma-cloud.spec).
   executable:
     needs: tests
     strategy:
