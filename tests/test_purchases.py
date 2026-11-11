@@ -10,6 +10,8 @@ from test_apple import account_of as apple_account, store  # noqa: F401 (fixture
 from test_billing import register
 from test_microsoft import PRO as MS_PRO, ms, ticket  # noqa: F401 (fixture)
 from test_play import account_id, notification, notify, play, rfc3339  # noqa: F401 (fixture)
+from sqlalchemy import select
+
 from tisma_cloud.models import utcnow
 
 
@@ -143,3 +145,27 @@ def test_the_purchase_account_token_works_with_play_and_the_app_store(play, stor
     eva = f.user("eva@x.com", plan="basico", paid_days=None)
     tx = store.fake.transaction(store.get("/v1/me", headers=eva).json()["purchase_account_token"], "tisma_pro")
     assert buy(store, eva, store="app_store", product_id="tisma_pro", signed_transaction=tx).status_code == 200
+
+
+def test_two_devices_asking_the_token_at_once_get_the_same_one(play):
+    """The purchase_account_token is made the first time GET /v1/me asks for it (accounts made before have none). Two
+    devices of one account asking at once each made one and the second overwrote the first: a purchase made with the
+    first one was then of no account. The same for the ids of Play and the Microsoft Store."""
+    from tisma_cloud import apple, google_play, microsoft
+    from tisma_cloud.models import User
+
+    register(play, "ana@correo.com")
+    db = play.app.state.services.db
+    for make, column in ((apple.apple_account, "apple_account"), (google_play.play_account, "play_account"),
+                         (microsoft.microsoft_account, "microsoft_account")):
+        with db.session() as first:
+            u1 = first.execute(select(User)).scalars().first()
+            assert getattr(u1, column) is None
+            # The other device makes it meanwhile.
+            with db.session() as second:
+                u2 = second.get(User, u1.id)
+                theirs = make(second, u2)
+            mine = make(first, u1)
+        assert mine == theirs, column
+        with db.session() as s:
+            assert getattr(s.get(User, u1.id), column) == theirs

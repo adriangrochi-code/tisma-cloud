@@ -36,10 +36,9 @@ class AppleOtherAccount(AppleError):
 
 def apple_account(session: Session, user: User) -> str:
     """The appAccountToken of the account (a random UUID), made the first time."""
-    if not user.apple_account:
-        user.apple_account = str(uuid.uuid4())
-        session.flush()
-    return user.apple_account
+    from .stores import account_id
+
+    return account_id(session, user, "apple_account", lambda: str(uuid.uuid4()))
 
 
 def parse_products(text: str) -> dict[str, str]:

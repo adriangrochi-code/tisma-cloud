@@ -12,6 +12,23 @@ from sqlalchemy.orm import Session
 from .models import AppleSubscription, MicrosoftSubscription, Plan, PlaySubscription, User, utcnow
 
 
+def account_id(session: Session, user: User, column: str, make) -> str:  # noqa: ANN001
+    """An id of the account kept in one of its columns (apple_account, play_account, microsoft_account), made the
+    first time. Made with a conditional UPDATE: two devices asking at once both get the one written first (the second
+    overwrote it before, and a purchase made with the first one was then of no account)."""
+    from sqlalchemy import update
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    value = getattr(user, column)
+    if value:
+        return value
+    session.execute(update(User).where(User.id == user.id, getattr(User, column).is_(None))
+                    .values({column: make()}).execution_options(synchronize_session=False))
+    value = session.execute(select(getattr(User, column)).where(User.id == user.id)).scalar_one()
+    set_committed_value(user, column, value)
+    return value
+
+
 class OtherAccount(Exception):
     """The purchase belongs to another account of Tisma Cloud (a purchase is worth one account only)."""
 

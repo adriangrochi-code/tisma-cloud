@@ -166,10 +166,9 @@ class PushVerifier:
 
 def play_account(session: Session, user: User) -> str:
     """The id of the account for obfuscatedAccountId (random, so that Google never sees who the user is)."""
-    if not user.play_account:
-        user.play_account = secrets.token_hex(16)
-        session.flush()
-    return user.play_account
+    from .stores import account_id
+
+    return account_id(session, user, "play_account", lambda: secrets.token_hex(16))
 
 
 @dataclass

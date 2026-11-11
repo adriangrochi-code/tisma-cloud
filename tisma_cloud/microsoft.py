@@ -104,10 +104,9 @@ def key_claims(key: str) -> dict:
 
 def microsoft_account(session: Session, user: User) -> str:
     """The publisherUserId of the account (random: Microsoft never learns who it is), made the first time."""
-    if not user.microsoft_account:
-        user.microsoft_account = secrets.token_hex(16)
-        session.flush()
-    return user.microsoft_account
+    from .stores import account_id
+
+    return account_id(session, user, "microsoft_account", lambda: secrets.token_hex(16))
 
 
 class Tokens:
