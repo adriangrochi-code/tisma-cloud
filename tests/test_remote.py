@@ -287,3 +287,16 @@ def test_a_command_is_handed_to_one_wait_of_the_bridge_only(client, f):
         for t in threads:
             t.join()
         assert got.count(cid) == 1, got
+
+
+def test_a_printer_sent_twice_by_its_bridge_is_kept_once():
+    """The same printer found twice by the bridge (on the network and by USB) came to the phone twice under one id, and
+    an order to that id named two printers."""
+    from tisma_cloud import remote
+
+    printers = remote.clean_printers([
+        {"id": "mk4", "name": "MK4 (red)", "kind": "prusalink", "actions": ["print"], "state": {"state": "idle"}},
+        {"id": "mk4", "name": "MK4 (USB)", "kind": "serial", "actions": ["print", "stop"]},
+        {"id": "x1c", "name": "X1C", "kind": "bambu"},
+    ])
+    assert [p["id"] for p in printers] == ["mk4", "x1c"] and printers[0]["name"] == "MK4 (red)"

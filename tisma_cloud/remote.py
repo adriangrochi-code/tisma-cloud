@@ -51,9 +51,14 @@ def clean_printers(printers: object) -> list[dict]:
     out: list[dict] = []
     if not isinstance(printers, list):
         return out
+    seen: set[str] = set()
     for p in printers[:MAX_PRINTERS]:
         if not isinstance(p, dict) or not isinstance(p.get("id"), str) or not ID.match(p["id"]):
             continue
+        # One printer found twice (on the network and by USB): the first one only, so an order names one printer.
+        if p["id"] in seen:
+            continue
+        seen.add(p["id"])
         state_in = p.get("state") if isinstance(p.get("state"), dict) else {}
         state: dict = {}
         for key, size in _STATE_TEXT.items():
