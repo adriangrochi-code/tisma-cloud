@@ -717,3 +717,24 @@ def test_a_job_cancelled_by_its_user_ends_cancelled_even_if_the_node_fails_meanw
         assert client.post(f"/v1/node/jobs/{job['id']}/fail", headers=node, json=body).status_code == 200
         view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
         assert view["status"] == "cancelled", (body, view)
+
+
+def test_a_node_running_more_than_64_jobs(client, f):
+    """With the engine a node runs one job per core: a machine with more than 64 cores. Its heartbeat was read for the
+    first 64 jobs only, and the others were told to stop as if they were not its own; nor were its lost jobs found."""
+    from tisma_cloud.api import ORPHAN_GRACE_S
+    from tisma_cloud.models import Job
+
+    user = f.user(plan=f.plan("big", concurrent=200))
+    node = f.node("epyc", "slice")
+    ids = []
+    for _ in range(70):
+        f.submit(user)
+        ids.append(f.claim(node)["id"])
+    with f.db.session() as s:
+        for job_id in ids:
+            s.get(Job, job_id).started_at = utcnow() - timedelta(seconds=ORPHAN_GRACE_S + 5)
+    hb = client.post("/v1/node/heartbeat", headers=node, json={"running": ids, "instance": "a"})
+    assert hb.status_code == 200 and hb.json()["cancel"] == []
+    with f.db.session() as s:
+        assert all(s.get(Job, i).status == "running" for i in ids)

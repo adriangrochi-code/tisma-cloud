@@ -598,8 +598,12 @@ class ScanStartBody(BaseModel):
     name: str = Field(default="", max_length=200)
 
 
+# The jobs a node may say it runs in one heartbeat (with the engine, one per core).
+MAX_RUNNING = 1024
+
+
 class HeartbeatBody(BaseModel):
-    running: list[str] = Field(default_factory=list)
+    running: list[str] = Field(default_factory=list, max_length=MAX_RUNNING)
     # A random id of this run of the node program (twins.py); empty from an older node.
     instance: str = Field(default="", max_length=64)
     info: dict[str, Any] = Field(default_factory=dict)
@@ -2592,7 +2596,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 n.info = json.dumps(body.info)[:4000]
             cancel = []
             if body.running:
-                jobs = s.execute(select(Job).where(Job.id.in_(body.running[:64]), Job.node_id == node.id)).scalars().all()
+                # All of them (a node of more than 64 cores runs more than 64), in parts for SQLite's parameters.
+                jobs = [j for i in range(0, len(body.running), 500) for j in s.execute(
+                    select(Job).where(Job.id.in_(body.running[i:i + 500]), Job.node_id == node.id)).scalars()]
                 # Jobs to stop: cancelled by the user, or no longer this node's (requeued after a timeout).
                 known = {j.id for j in jobs if j.status == "running"}
                 cancel = [j.id for j in jobs if j.cancel_requested] + [i for i in body.running if i not in known]
@@ -2606,7 +2612,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if twins:
                 log.warning("Node %s: two programs answer with its token (a copied node.toml or an old process)",
                             node.name)
-            elif settled and "running" in body.model_fields_set and len(body.running) <= 64:
+            elif settled and "running" in body.model_fields_set:
                 requeued = scheduler.requeue_orphans(s, node.id, body.running, cfg.max_attempts, ORPHAN_GRACE_S)
         if requeued:
             services.wakeup.notify(JOBS)
