@@ -121,3 +121,25 @@ def test_a_manual_payment_and_a_store_subscription_together(play):
     me = play.get("/v1/me", headers=ana).json()
     assert me["plan"] == "basico" and me["paid"] is True and me["subscription"] is None
     assert user_row(play, "ana@correo.com").store_until is None
+
+
+def test_the_purchase_account_token_works_with_play_and_the_app_store(play, store):  # noqa: F811
+    import uuid
+
+    ana, bob = register(play, "ana@correo.com"), register(play, "bob@correo.com")
+    token = play.get("/v1/me", headers=ana).json()["purchase_account_token"]
+    assert uuid.UUID(token) and play.get("/v1/me", headers=ana).json()["purchase_account_token"] == token
+    play.google.buy("tok-1", token, "tisma_pro")
+    # Bought by Ana's app with her token: Bob cannot claim it (409); Ana can.
+    assert buy(play, bob, store="google_play", product_id="tisma_pro", purchase_token="tok-1").status_code == 409
+    r = buy(play, ana, store="google_play", product_id="tisma_pro", purchase_token="tok-1")
+    assert r.status_code == 200 and r.json()["plan"] == "pro"
+    # Google's notice of a purchase the app never reported finds the account by that token too.
+    play.google.buy("tok-2", play.get("/v1/me", headers=bob).json()["purchase_account_token"], "tisma_basico")
+    assert notify(play, notification("tok-2", 4)).status_code == 200
+    assert play.get("/v1/me", headers=bob).json()["plan"] == "basico"
+    # The App Store: the same token is the appAccountToken.
+    f = Factory(store)
+    eva = f.user("eva@x.com", plan="basico", paid_days=None)
+    tx = store.fake.transaction(store.get("/v1/me", headers=eva).json()["purchase_account_token"], "tisma_pro")
+    assert buy(store, eva, store="app_store", product_id="tisma_pro", signed_transaction=tx).status_code == 200

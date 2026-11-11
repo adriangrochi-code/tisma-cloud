@@ -183,7 +183,12 @@ class Store:
         """A purchase the app of this user reports: verified, acknowledged and applied."""
         data = self.client.subscription(token)
         owner = (data.get("externalAccountIdentifiers") or {}).get("obfuscatedExternalAccountId")
-        if not owner or owner != play_account(session, user):
+        # The account's purchase_account_token (cloud.md 5c, the same UUID as the App Store's) or its older Play id. Only
+        # the ones it has: making one here would write the account's row in the middle of the purchase (the app and
+        # Google's notice of one purchase at once then deadlock on PostgreSQL), and a purchase made with an id the
+        # account does not have yet is not its own anyway.
+        ids = {i for i in (user.play_account, user.apple_account) if i}
+        if not owner or owner not in ids and owner.lower() not in ids:
             raise PlayOtherAccount("The purchase is not of this account")
         sub = session.execute(select(PlaySubscription).where(PlaySubscription.token_hash == hash_token(token))
                               ).scalar_one_or_none()
@@ -210,7 +215,8 @@ class Store:
                     (data.get("outOfAppPurchaseContext") or {}).get("expiredExternalAccountIdentifiers")):
             account = (ids or {}).get("obfuscatedExternalAccountId")
             if account:
-                user = session.execute(select(User).where(User.play_account == account)).scalar_one_or_none()
+                user = session.execute(select(User).where(
+                    (User.play_account == account) | (User.apple_account == account.lower()))).scalar_one_or_none()
                 if user is not None:
                     return user
         for old in (data.get("linkedPurchaseToken"),
