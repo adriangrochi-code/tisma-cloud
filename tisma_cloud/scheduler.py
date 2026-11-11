@@ -203,6 +203,17 @@ def cancel(session: Session, job: Job) -> None:
         job.cancel_requested = True
 
 
+def stop_user_jobs(session: Session, user_id: int) -> list[str]:
+    """A disabled account: its queued jobs are cancelled (no node takes them any more) and its running ones are
+    stopped by their nodes. Returns the jobs ended now (their inputs can be removed)."""
+    session.flush()
+    ended = list(session.execute(update(Job).where(Job.user_id == user_id, Job.status == "queued")
+                                 .values(status="cancelled", finished_at=utcnow()).returning(Job.id)).scalars())
+    session.execute(update(Job).where(Job.user_id == user_id, Job.status == "running").values(cancel_requested=True))
+    session.expire_all()
+    return ended
+
+
 def stopped_by_node(session: Session, job: Job) -> None:
     """The node stopped a job whose cancellation was requested."""
     job.status = "cancelled"

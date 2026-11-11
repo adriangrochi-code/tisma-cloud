@@ -63,3 +63,23 @@ def test_admin_lists_and_edits_plans(client, f):
     public = {p["name"] for p in client.get("/v1/plans").json()["plans"]}
     assert "maker" in public and "hidden" not in public
     assert client.get("/v1/admin/plans", headers=f.user("eq@x.com")).status_code == 403
+
+
+def test_the_jobs_of_a_disabled_account_are_not_computed(client, f):
+    """«Deshabilitar» refused the account's sessions, but its queued jobs were still taken by the nodes."""
+    admin = f.user("root@x.com", admin=True)
+    user = f.user("eq@x.com", plan=f.plan("big", concurrent=5))
+    node = f.node()
+    running = f.submit(user)["id"]
+    assert f.claim(node)["id"] == running
+    queued = [f.submit(user)["id"] for _ in range(2)]
+    assert client.put("/v1/admin/users/eq@x.com/enabled", headers=admin, json={"enabled": False}).status_code == 200
+    assert f.claim(node) is None
+    services = client.app.state.services
+    with services.db.session() as s:
+        from tisma_cloud.models import Job
+
+        for job_id in queued:
+            assert s.get(Job, job_id).status == "cancelled"
+            assert not services.storage.input_path(job_id).exists()
+        assert s.get(Job, running).cancel_requested is True

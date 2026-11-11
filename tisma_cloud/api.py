@@ -3018,6 +3018,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not body.enabled:
                 # Its bridges' tokens are kept a minute in memory (TokenCache): refused from now on.
                 services.tokens.drop_user(user.id)
+                # And its jobs are not computed any more.
+                for job_id in scheduler.stop_user_jobs(s, user.id):
+                    services.storage.remove_input(job_id)
             s.flush()
             return {"user": user_view(user), "account": scheduler.account(s, user, cfg.grace_days).as_dict()}
 
@@ -3122,8 +3125,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 user.paid_until = paid.astimezone(timezone.utc).replace(tzinfo=None) if paid.tzinfo else paid
             if body.enabled is not None:
                 user.enabled = body.enabled
-                if not body.enabled:
+                if not body.enabled and user.id is not None:
                     services.tokens.drop_user(user.id)
+                    for job_id in scheduler.stop_user_jobs(s, user.id):
+                        services.storage.remove_input(job_id)
             s.flush()
             s.refresh(user)
             return {"user": user_view(user), "account": scheduler.account(s, user, cfg.grace_days).as_dict()}

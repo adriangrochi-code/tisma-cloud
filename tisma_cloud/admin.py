@@ -242,6 +242,11 @@ def main(argv: list[str] | None = None) -> int:
                 user.password_hash = hash_password(ask_password())
             if getattr(args, "enable", False) or getattr(args, "disable", False):
                 user.enabled = args.enable
+                if not args.enable and user.id is not None:
+                    from . import scheduler
+
+                    # Its queued jobs are cancelled (their inputs go with the daily cleanup); running ones stopped.
+                    scheduler.stop_user_jobs(s, user.id)
             if args.unlimited or args.limited:
                 user.unlimited = args.unlimited
             s.flush()
