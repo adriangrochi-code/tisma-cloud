@@ -224,7 +224,18 @@ class Services:
         return len(due)
 
     def sweep(self) -> None:
-        """Requeues the jobs of lost nodes, removes the files of old jobs and fails the remote commands not taken."""
+        """Requeues the jobs of lost nodes, removes the files of old jobs and fails the remote commands not taken. Each
+        step runs apart: an error in one (a broken row, a full disk) is logged and the others still run, the requeueing
+        of lost jobs and the administrators' alerts among them."""
+        for name, step in (("remote commands", self._sweep_remote), ("lost nodes and given-up scans", self._sweep_jobs),
+                           ("files of old jobs", self._sweep_old_files), ("old data", self._sweep_forget),
+                           ("Microsoft Store", self._sweep_microsoft), ("alerts", self._sweep_alerts)):
+            try:
+                step()
+            except Exception:  # noqa: BLE001 (the other steps still run)
+                log.exception("Sweep: %s failed", name)
+
+    def _sweep_remote(self) -> None:
         with self.db.session() as s:
             remote.expire(s, self.remote_files, self.settings.remote_command_minutes)
             # The bridges with commands waiting (after a restart, or made by another process).
@@ -232,6 +243,8 @@ class Services:
                 select(RemoteCommand.bridge_id).where(RemoteCommand.status == "queued").distinct()).scalars()))
         self.images.drop_old()
         self.presence.drop_old_looks()
+
+    def _sweep_jobs(self) -> None:
         with self.db.session() as s:
             requeued = scheduler.requeue_stale(s, self.settings.node_timeout_s, self.settings.max_attempts)
             pairing.drop_old(s)
@@ -248,6 +261,8 @@ class Services:
                 self.storage.remove_input(job_id)
         if requeued:
             self.wakeup.notify(JOBS)
+
+    def _sweep_old_files(self) -> None:
         limit = utcnow() - timedelta(hours=self.settings.retention_h)
         with self.db.session() as s:
             old = s.execute(
@@ -256,20 +271,20 @@ class Services:
             for job in old:
                 self.storage.remove_job(job.id)
                 job.files_removed = True
+
+    def _sweep_forget(self) -> None:
         if self._forgot_at is None or time.monotonic() - self._forgot_at >= 3600:
             self._forgot_at = time.monotonic()
-            try:
-                self.forget_old_data()
-            except Exception:  # noqa: BLE001 (the alerts below must still run)
-                log.exception("Forgetting old data failed")
+            self.forget_old_data()
+
+    def _sweep_microsoft(self) -> None:
         # The Microsoft Store subscriptions, looked at every 10 minutes (each account once a day).
         if self.microsoft is not None and (self._microsoft_checked is None
                                            or time.monotonic() - self._microsoft_checked >= 600):
             self._microsoft_checked = time.monotonic()
-            try:
-                self.refresh_microsoft()
-            except Exception:  # noqa: BLE001 (the rest of the sweep, the alerts too, goes on)
-                log.exception("Checking the Microsoft Store subscriptions failed")
+            self.refresh_microsoft()
+
+    def _sweep_alerts(self) -> None:
         # The alerts of the administrators, once a minute.
         if self._alerts_checked is None or time.monotonic() - self._alerts_checked >= 60:
             self._alerts_checked = time.monotonic()

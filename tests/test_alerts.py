@@ -118,3 +118,30 @@ def test_the_alerts_are_checked_even_when_forgetting_old_data_fails(client, monk
     services._alerts_checked = None
     services.sweep()
     assert checked
+
+
+def test_one_step_of_the_sweep_failing_does_not_stop_the_others(client, f, settings, monkeypatch):
+    """A broken remote command (its files gone, a bad row) made the first step of the sweep fail every time: the jobs
+    of lost nodes were never put back in the queue and the alerts never checked."""
+    from datetime import timedelta
+
+    from tisma_cloud import remote
+    from tisma_cloud.models import utcnow
+
+    services = client.app.state.services
+    user = f.user()
+    node = f.node("lost", "slice")
+    job = f.submit(user)
+    assert f.claim(node)["id"] == job["id"]
+    with f.db.session() as s:
+        from tisma_cloud.models import Node
+
+        for n in s.query(Node).all():
+            n.last_seen = utcnow() - timedelta(seconds=settings.node_timeout_s + 60)
+    monkeypatch.setattr(remote, "expire", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("broken command")))
+    checked = []
+    monkeypatch.setattr(services, "check_alerts", lambda *a, **k: checked.append(1))
+    services._alerts_checked = None
+    services.sweep()
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "queued"
+    assert checked
