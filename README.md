@@ -139,6 +139,17 @@ Ajustes: `TISMA_APPLE_BUNDLE_ID`, `TISMA_APPLE_APP_ID` (el Apple ID de la app, u
 Production), `TISMA_APPLE_ENVIRONMENT` (`Production` o `Sandbox`) y `TISMA_APPLE_PRODUCTS`
 (`producto:plan, ...`). Sin bundle o sin productos, el App Store está apagado (404).
 
+### La compra, para cualquier tienda (cloud.md 5c)
+
+- `GET /v1/plans`: cada plan trae `store_products` (`google_play`, `app_store`, `microsoft_store`: el producto de cada
+  tienda que lo vende, de `TISMA_PLAY_PRODUCTS`, `TISMA_APPLE_PRODUCTS` y `TISMA_MICROSOFT_PRODUCTS`).
+- `POST /v1/me/purchases` con `store`, `product_id` y la prueba de esa tienda (`purchase_token`, `signed_transaction`
+  o `store_id_key`): 200 con la cuenta como `GET /v1/me`; 402 «The store did not confirm this purchase»; 409 «This
+  purchase belongs to another account»; 422 si falta un campo; 404 si esa tienda no está configurada; 503 si la
+  tienda no responde. La misma compra dos veces da lo mismo. Las rutas de cada tienda (`/v1/billing/...`) siguen.
+- `GET /v1/me` trae `subscription`: `store`, `product_id`, `expires` y `auto_renew` (o `null`). Cuando termina la
+  suscripción de la tienda y no hay otro pago, la cuenta vuelve al plan gratuito (el público de precio 0, o `trial`).
+
 ## Suscripciones de la Microsoft Store (Windows)
 
 El plan es un complemento de suscripción de la app en la Microsoft Store. Microsoft no avisa al central: el central

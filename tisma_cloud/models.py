@@ -159,6 +159,8 @@ class PlaySubscription(Base):
     entitled_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     order_id: Mapped[str] = mapped_column(Encrypted, default="")
     acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Whether the store renews it at its end (None: the store did not say).
+    auto_renew: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -575,6 +577,7 @@ class AppleSubscription(Base):
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     # The time of the transaction applied last: an older one arriving late does not undo a newer one.
     signed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    auto_renew: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -599,4 +602,5 @@ class MicrosoftSubscription(Base):
     state: Mapped[str] = mapped_column(String(20), default="")
     # expirationTimeWithGrace (or expirationTime) while Active or InDunning, none otherwise.
     entitled_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    auto_renew: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

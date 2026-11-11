@@ -48,6 +48,10 @@ class PlayError(Exception):
     """A purchase the master refuses (not ours, not of this account...)."""
 
 
+class PlayOtherAccount(PlayError):
+    """The purchase is of another account."""
+
+
 class PlayUnavailable(Exception):
     """Google could not be asked now (network, credentials): try again later."""
 
@@ -180,11 +184,11 @@ class Store:
         data = self.client.subscription(token)
         owner = (data.get("externalAccountIdentifiers") or {}).get("obfuscatedExternalAccountId")
         if not owner or owner != play_account(session, user):
-            raise PlayError("The purchase is not of this account")
+            raise PlayOtherAccount("The purchase is not of this account")
         sub = session.execute(select(PlaySubscription).where(PlaySubscription.token_hash == hash_token(token))
                               ).scalar_one_or_none()
         if sub is not None and sub.user_id != user.id:
-            raise PlayError("The purchase is of another account")
+            raise PlayOtherAccount("The purchase is of another account")
         return self._apply(session, user, token, data, sub)
 
     def refresh(self, session: Session, token: str) -> PlaySubscription | None:
@@ -236,6 +240,8 @@ class Store:
         if sub.state != "REPLACED":
             sub.state = state
         sub.order_id = item.get("latestSuccessfulOrderId", "") or sub.order_id or ""
+        renewing = (item.get("autoRenewingPlan") or {}).get("autoRenewEnabled")
+        sub.auto_renew = bool(renewing) if renewing is not None else None
         sub.entitled_until = expiry if state in ENTITLED and sub.state != "REPLACED" and expiry else None
         sub.updated_at = utcnow()
         # An upgrade, downgrade or resubscription replaces the previous token (it gives no access any more).

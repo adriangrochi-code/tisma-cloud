@@ -49,6 +49,10 @@ class MicrosoftError(Exception):
     """A key or a purchase the master refuses (the message says why)."""
 
 
+class MicrosoftOtherAccount(MicrosoftError):
+    """The key is of another account."""
+
+
 class MicrosoftUnavailable(Exception):
     """Microsoft could not be asked now (network, credentials): try again later."""
 
@@ -159,7 +163,7 @@ class Store:
         if str(claims.get(CLAIM + "clientId", "")).replace("-", "").lower() != self.client_id.replace("-", "").lower():
             raise MicrosoftError("The key is not of our application")
         if not user.microsoft_account or claims.get(CLAIM + "userId") != user.microsoft_account:
-            raise MicrosoftError("The key is not of this account")
+            raise MicrosoftOtherAccount("The key is not of this account")
         exp = claims.get("exp")
         return datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None) if isinstance(exp, (int, float)) \
             else None
@@ -249,6 +253,7 @@ class Store:
             until = parse_time(item.get("expirationTimeWithGrace")) or parse_time(item.get("expirationTime"))
             sub.product_id, sub.plan_name, sub.state = product, plan_name, state[:20]
             sub.entitled_until = until if state in ENTITLED else None
+            sub.auto_renew = bool(item["autoRenew"]) if isinstance(item.get("autoRenew"), bool) else None
             sub.updated_at = utcnow()
             applied.append(sub)
         session.flush()

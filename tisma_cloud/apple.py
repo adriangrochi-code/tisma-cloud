@@ -30,6 +30,10 @@ class AppleError(Exception):
     """Not a purchase this master accepts (the message says why)."""
 
 
+class AppleOtherAccount(AppleError):
+    """The purchase is of another account."""
+
+
 def apple_account(session: Session, user: User) -> str:
     """The appAccountToken of the account (a random UUID), made the first time."""
     if not user.apple_account:
@@ -79,7 +83,7 @@ class Store:
         """A purchase the app of this user reports: Apple's signed transaction, of this account."""
         tx = self._decode_transaction(signed_transaction)
         if not tx.appAccountToken or str(tx.appAccountToken).lower() != apple_account(session, user).lower():
-            raise AppleError("The purchase is not of this account")
+            raise AppleOtherAccount("The purchase is not of this account")
         return self._apply(session, user, tx)
 
     def notify(self, session: Session, signed_payload: str) -> AppleSubscription | None:
@@ -106,7 +110,18 @@ class Store:
             user = None
         if user is None:
             return None
-        return self._apply(session, user, tx)
+        sub = self._apply(session, user, tx)
+        renewal = getattr(note.data, "signedRenewalInfo", None)
+        if renewal:
+            try:
+                info = self.verifier.verify_and_decode_renewal_info(renewal)
+            except VerificationException:
+                info = None
+            status = getattr(info, "autoRenewStatus", None) if info is not None else None
+            if status is not None:
+                # AutoRenewStatus: 1 on, 0 off (App Store Server API, JWSRenewalInfoDecodedPayload).
+                sub.auto_renew = _value(status) == "1"
+        return sub
 
     def _apply(self, session: Session, user: User, tx) -> AppleSubscription:  # noqa: ANN001
         product = tx.productId or ""
@@ -119,7 +134,7 @@ class Store:
         sub = session.execute(select(AppleSubscription).where(
             AppleSubscription.original_transaction_id == original)).scalar_one_or_none()
         if sub is not None and sub.user_id != user.id:
-            raise AppleError("The purchase is of another account")
+            raise AppleOtherAccount("The purchase is of another account")
         signed_at = _time(tx.signedDate)
         if sub is None:
             sub = AppleSubscription(user_id=user.id, original_transaction_id=original, product_id=product,

@@ -33,8 +33,7 @@ from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from . import (__version__, alerts, apple, backup, billing, capacity, codes, crypto, google_play, library, microsoft,
-               pairing, peers,
-               remote, reports, scans, scheduler, triage)
+               pairing, peers, remote, reports, scans, scheduler, stores, triage)
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
@@ -1694,7 +1693,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             acc = scheduler.account(s, u, cfg.grace_days)
             return {"email": u.email, **acc.as_dict(), "remote_printers": remote.printer_allowance(u, acc.paid),
                     "extra_printers": u.extra_printers, "extra_printer_cents": u.plan.extra_printer_cents,
-                    "has_password": bool(u.password_hash), "library_name": u.library_name}
+                    "has_password": bool(u.password_hash), "library_name": u.library_name,
+                    "subscription": stores.subscription_view(s, u)}
 
     @app.put("/v1/me/library-name")
     def set_library_name(user: UserDep, body: dict = Body(...)) -> dict:
@@ -1746,9 +1746,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The plans users can choose (the account page)."""
         with db.session() as s:
             rows = s.execute(select(Plan).where(Plan.public.is_(True)).order_by(Plan.price_cents)).scalars().all()
-            # The product of Google Play of each plan, for the phone app.
-            products = {plan: product for product, plan in services.play.products.items()} if services.play else {}
-            return {"plans": [{**plan_view(p), "play_product": products.get(p.name)} for p in rows],
+            # The product of each store that sells the plan (cloud.md 5c); play_product stays for the older apps.
+            sellers = {"google_play": services.play, "app_store": services.apple, "microsoft_store": services.microsoft}
+            by_plan: dict[str, dict[str, str]] = {}
+            for name, store in sellers.items():
+                for product, plan in (store.products.items() if store else ()):
+                    by_plan.setdefault(plan, {}).setdefault(name, product)
+            return {"plans": [{**plan_view(p), "store_products": by_plan.get(p.name, {}),
+                               "play_product": by_plan.get(p.name, {}).get("google_play")} for p in rows],
                     "classes": JOB_CLASS_DESCRIPTIONS}
 
     # ---- accounts and payments on the master
@@ -2065,6 +2070,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except microsoft.MicrosoftUnavailable as ex:
             log.warning("Microsoft Store: %s", ex)
             raise HTTPException(503, "The Microsoft Store cannot be reached now", headers={"Retry-After": "60"}) from None
+
+    # ---- the purchase of any store (cloud.md 5c)
+    class PurchaseBody(BaseModel):
+        store: str = Field(pattern="^(google_play|app_store|microsoft_store)$")
+        product_id: str = Field(min_length=1, max_length=200)
+        purchase_token: str | None = Field(default=None, min_length=1, max_length=2000)
+        signed_transaction: str | None = Field(default=None, min_length=10, max_length=20000)
+        store_id_key: str | None = Field(default=None, min_length=20, max_length=20000)
+
+    NOT_CONFIRMED = "The store did not confirm this purchase"
+
+    @app.post("/v1/me/purchases")
+    def purchase(user: UserDep, body: PurchaseBody) -> dict:
+        """A purchase made in the app with its store: verified with the store, then the account as GET /v1/me. The
+        same purchase sent again gives the same answer; one of another account is refused (409)."""
+        proof = {"google_play": body.purchase_token, "app_store": body.signed_transaction,
+                 "microsoft_store": body.store_id_key}[body.store]
+        if not proof:
+            field_name = {"google_play": "purchase_token", "app_store": "signed_transaction",
+                          "microsoft_store": "store_id_key"}[body.store]
+            raise HTTPException(422, f"'{field_name}' is needed for {body.store}")
+        store = {"google_play": services.play, "app_store": services.apple,
+                 "microsoft_store": services.microsoft}[body.store]
+        if store is None:
+            raise HTTPException(404, f"{body.store} is not set up on this server")
+
+        def link() -> None:
+            with db.session() as s:
+                u = s.get(User, user.id)
+                if body.store == "microsoft_store":
+                    products = {x.product_id for x in store.link(s, u, proof)}
+                else:
+                    products = {store.link(s, u, proof).product_id}
+                if body.product_id not in products:
+                    # Verified, but not the product the app says it bought: nothing is confirmed of that one.
+                    raise HTTPException(402, NOT_CONFIRMED)
+
+        try:
+            play_once_more(link)
+        except (google_play.PlayOtherAccount, apple.AppleOtherAccount, microsoft.MicrosoftOtherAccount):
+            raise HTTPException(409, "This purchase belongs to another account") from None
+        except (google_play.PlayError, apple.AppleError, microsoft.MicrosoftError) as ex:
+            log.info("Purchase not confirmed by %s: %s", body.store, ex)
+            raise HTTPException(402, NOT_CONFIRMED) from None
+        except (google_play.PlayUnavailable, microsoft.MicrosoftUnavailable) as ex:
+            log.warning("%s: %s", body.store, ex)
+            raise HTTPException(503, "The store cannot be reached now", headers={"Retry-After": "60"}) from None
+        return me(user)
 
     @app.post("/v1/billing/apple/notify")
     async def apple_notify(request: Request) -> dict:
