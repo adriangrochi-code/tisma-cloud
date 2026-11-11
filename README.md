@@ -165,9 +165,10 @@ renew-a-windows-store-id-key):
   Microsoft guarda sin saber quién es), llama a `StoreContext.GetCustomerPurchaseIdAsync(service_ticket,
   publisher_user_id)` y manda la clave a `POST /v1/billing/microsoft/purchase` (`{"purchase_key": ...}`), al comprar y
   al arrancar;
-- el central guarda la clave **cifrada**, comprueba que sea de nuestra aplicación y de esa cuenta, y pregunta las
-  suscripciones de esa cuenta de Microsoft; después una vez por día, renovando la clave antes de que venza (dura 30
-  días). Si Microsoft la rechaza, se borra y la app manda una nueva;
+- el central comprueba que la clave sea de nuestra aplicación y de esa cuenta y pregunta las suscripciones de esa
+  cuenta de Microsoft. La guarda **cifrada** solo mientras una suscripción nuestra da acceso (es una credencial de la
+  cuenta de Microsoft de la persona), y mientras tanto pregunta una vez por día, renovando la clave antes de que venza
+  (dura 30 días). Sin suscripción que dé acceso, o si Microsoft la rechaza, se borra; la app la manda al arrancar;
 - `Active` e `InDunning` dan acceso hasta `expirationTimeWithGrace` (o `expirationTime`); `Inactive`, `Canceled` y
   `Failed` no. La cuenta tiene el acceso más largo de todas sus tiendas.
 

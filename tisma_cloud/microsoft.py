@@ -208,7 +208,18 @@ class Store:
             session.add(row)
         row.key, row.expires_at, row.checked_at = key, expires, utcnow()
         session.flush()
-        return self._apply(session, user, self.subscriptions(key))
+        applied = self._apply(session, user, self.subscriptions(key))
+        self._keep_while_needed(session, row, applied)
+        return applied
+
+    @staticmethod
+    def _keep_while_needed(session: Session, row: MicrosoftKey, applied: list[MicrosoftSubscription]) -> None:
+        """The key is a credential of the person's Microsoft account: kept only while a subscription of ours gives
+        access (to follow its renewal); the app sends it again at its next start."""
+        now = utcnow()
+        if not any(sub.entitled_until is not None and sub.entitled_until > now for sub in applied):
+            session.delete(row)
+            session.flush()
 
     def refresh(self, session: Session, user: User, now: datetime | None = None) -> list[MicrosoftSubscription] | None:
         """Asks Microsoft again with the kept key (renewed first when it ends within RENEW_BEFORE). A key Microsoft
@@ -231,7 +242,9 @@ class Store:
             session.flush()
             return None
         row.checked_at = now
-        return self._apply(session, user, items)
+        applied = self._apply(session, user, items)
+        self._keep_while_needed(session, row, applied)
+        return applied
 
     def _apply(self, session: Session, user: User, items: list[dict]) -> list[MicrosoftSubscription]:
         applied = []

@@ -302,3 +302,27 @@ def test_one_account_that_fails_does_not_stop_the_others_nor_the_sweep(ms, monke
     services._alerts_checked = None
     services.sweep()
     assert alerts
+
+
+def test_a_key_is_kept_only_while_it_gives_access(ms):
+    """The app sends its key at every start, also when the person bought nothing: the master kept every Windows
+    user's key (a credential of their Microsoft account) and asked Microsoft about them every day, forever. A key is
+    kept only while a subscription of ours gives access; the app sends it again at its next start."""
+    f = Factory(ms)
+    fake, services = ms.fake, ms.app.state.services
+    nobody = f.user("nadie@x.com", plan="basico", paid_days=None)
+    r = purchase(ms, nobody, fake.key("msa-nadie", ticket(ms, nobody)["publisher_user_id"]))
+    assert r.status_code == 200 and r.json()["subscriptions"] == []
+    with services.db.session() as s:
+        assert s.execute(select(func.count()).select_from(MicrosoftKey)).scalar_one() == 0
+    ana = f.user("ana@x.com", plan="basico", paid_days=None)
+    fake.subscribe("msa-ana", PRO, days=2)
+    assert purchase(ms, ana, fake.key("msa-ana", ticket(ms, ana)["publisher_user_id"])).status_code == 200
+    with services.db.session() as s:
+        assert s.execute(select(func.count()).select_from(MicrosoftKey)).scalar_one() == 1
+    # Cancelled: no access any more, the key goes.
+    fake.subscribe("msa-ana", PRO, state="Canceled", days=1)
+    services.refresh_microsoft(utcnow() + timedelta(days=1, minutes=1))
+    with services.db.session() as s:
+        assert s.execute(select(func.count()).select_from(MicrosoftKey)).scalar_one() == 0
+    assert ms.get("/v1/me", headers=ana).json()["paid"] is False
