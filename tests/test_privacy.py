@@ -249,3 +249,27 @@ def test_the_export_has_everything_kept_about_the_account(client, f):
     assert data["library"]["peer_keys"][0]["public_key"] == "k" * 44
     assert data["library"]["reports"][0]["reason"] == "copia"
     assert data["library"]["publications"] == []
+
+
+def test_reviewed_library_reports_are_forgotten_like_problem_reports(client, f):
+    """The reports of the library («Denunciar»: the reason the person wrote, and their account) were kept forever after
+    the review; the problem reports go after report_days. The reviewed ones go then too; one not reviewed yet stays."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from tisma_cloud.models import LibraryReport, User, utcnow
+
+    f.user("ana@x.com")
+    services = client.app.state.services
+    old = utcnow() - timedelta(days=services.settings.report_days + 1)
+    with f.db.session() as s:
+        uid = s.execute(select(User.id)).scalars().first()
+        s.add(LibraryReport(user_id=uid, model_id="lm_" + "1" * 32, reason="reviewed", created_at=old,
+                            handled_at=old, outcome="dismissed"))
+        s.add(LibraryReport(user_id=uid, model_id="lm_" + "2" * 32, reason="waiting", created_at=old))
+        s.add(LibraryReport(user_id=uid, model_id="lm_" + "3" * 32, reason="recent", handled_at=utcnow(),
+                            outcome="removed"))
+    services.forget_old_data()
+    with f.db.session() as s:
+        assert sorted(s.execute(select(LibraryReport.reason)).scalars()) == ["recent", "waiting"]

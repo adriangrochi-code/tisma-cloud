@@ -337,8 +337,8 @@ class Services:
     def forget_old_data(self, now: datetime | None = None) -> None:
         """Keeps only what the service needs (privacy): the jobs ended long ago (their files went before; the hours used
         stay in the monthly usage), the remote commands ended, the e-mail codes expired, the sessions not used for
-        session_days, the bridges not seen for remote.FORGET_BRIDGE_DAYS and the problem reports older than
-        report_days."""
+        session_days, the bridges not seen for remote.FORGET_BRIDGE_DAYS, and the problem reports and the reviewed reports
+        of the library older than report_days."""
         now = now or utcnow()
         sessions = now - timedelta(days=self.settings.session_days)
         with self.db.session() as s:
@@ -349,6 +349,9 @@ class Services:
             s.execute(delete(EmailCode).where(EmailCode.expires_at < now))
             s.execute(delete(ApiToken).where(func.coalesce(ApiToken.last_used, ApiToken.created_at) < sessions))
             s.execute(delete(BugReport).where(BugReport.created_at < now - timedelta(days=self.settings.report_days)))
+            # The reports of the library already reviewed, as long as the problem reports (one waiting stays).
+            s.execute(delete(LibraryReport).where(LibraryReport.handled_at.is_not(None),
+                                                  LibraryReport.created_at < now - timedelta(days=self.settings.report_days)))
             stale = s.execute(select(Bridge.id).where(
                 func.coalesce(Bridge.last_seen, Bridge.created_at) < now - timedelta(days=remote.FORGET_BRIDGE_DAYS))
             ).scalars().all()

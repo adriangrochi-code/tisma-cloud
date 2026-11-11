@@ -286,6 +286,7 @@ El objetivo es guardar lo mínimo para dar el servicio, y que lo guardado sirva 
 | Imágenes de las cámaras | verlas en vivo | solo en memoria, 30 s; nunca en disco |
 | Direcciones IP | frenar ataques | solo en memoria (límites y bloqueos); no hay registro de accesos (`TISMA_ACCESS_LOG=1` lo prende) |
 | Problemas informados (textos y parte del registro, sin datos personales) | arreglar Tisma | 365 días (`TISMA_REPORT_DAYS`); se borran con la cuenta |
+| Denuncias de la biblioteca (modelo, motivo y cuenta) | revisarlas | hasta revisarlas y después 365 días desde la denuncia (`TISMA_REPORT_DAYS`); al borrar la cuenta quedan sin ella |
 
 **Datos personales cifrados en la base** (`crypto.py`): el correo, los nombres de las sesiones, de los puentes, de las
 impresoras y de los archivos, las notas de los pagos y los datos de las compras de Google Play se guardan cifrados con
