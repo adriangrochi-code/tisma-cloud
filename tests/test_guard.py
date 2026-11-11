@@ -159,3 +159,27 @@ def test_every_answer_says_nosniff(client, f):
     for r in (client.get("/v1/health"), client.get("/v1/me", headers=user), client.get("/v1/me"),
               client.get("/v1/no-such-thing")):
         assert r.headers.get("x-content-type-options") == "nosniff", (r.request.url, r.status_code)
+
+
+def test_the_addresses_of_one_ipv6_network_count_as_one(settings):
+    """A home connection with IPv6 gets a /64 (18 trillion addresses) and may change address for every request: the
+    blocks and the limits per address counted each address apart, so they were not limits for IPv6. One /64 counts
+    as one address now; IPv4 and the local network as before."""
+    settings.ban_threshold = 5
+    settings.anonymous_reports_per_hour = 2
+    app = create_app(settings)
+
+    def at(address: str) -> TestClient:
+        return TestClient(app, client=(address, 1))
+
+    for i in range(5):
+        assert at(f"2800:a4:1234:5600::{i + 1}").get("/v1/me", headers={"Authorization": "Bearer nope"}).status_code \
+            == 401
+    assert at("2800:a4:1234:5600:ffff::9").get("/v1/health").status_code == 403
+    # Another /64 (a neighbour of the same provider) and IPv4 are not touched.
+    assert at("2800:a4:1234:5601::1").get("/v1/health").status_code == 200
+    assert at("200.40.10.9").get("/v1/health").status_code == 200
+    # The limits of the application too: anonymous problem reports per hour.
+    report = {"app": "pc", "title": "No anda", "description": "x"}
+    codes = [at(f"2800:a4:9999:1::{i + 1}").post("/v1/reports", json=report).status_code for i in range(3)]
+    assert codes == [201, 201, 429]

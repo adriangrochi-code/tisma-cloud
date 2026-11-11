@@ -43,7 +43,7 @@ from .jobs import (ESTIMATE_MAX_TRIANGLES, JOB_CLASS_DESCRIPTIONS, JOB_CLASSES, 
 from .models import (AccountFile, AccountFileTaken, Alert, ApiToken, AppleSubscription, Bridge, BugReport, EmailCode,
                      HourAdjustment, Job, LibraryBlock, LibraryModel, LibraryPeerKey, LibraryReport, MicrosoftKey,
                      MicrosoftSubscription, Node, Payment, Plan, PlaySubscription, RemoteCommand, ScanUpload, Usage, User, month_of, utcnow)
-from .guard import Guard
+from .guard import Guard, limit_key
 from .presence import Presence
 from .publicip import CHECK_S as PUBLIC_ADDRESS_CHECK_S, PublicAddress
 from .ratelimit import RateLimiter
@@ -1578,7 +1578,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/auth/login")
     def login(request: Request, body: LoginBody) -> dict:
         email = body.email.strip().lower()
-        if not (limiter.allow(f"login-ip:{client_key(request)}", cfg.login_per_minute)
+        if not (limiter.allow(f"login-ip:{limit_key(client_key(request))}", cfg.login_per_minute)
                 and limiter.allow(f"login-email:{email}", cfg.login_per_minute)):
             raise HTTPException(429, "Too many login attempts: wait a minute", headers={"Retry-After": "60"})
         # Guessing a password from many network addresses: at most LOGIN_FAILURES_PER_HOUR wrong passwords an hour
@@ -1785,7 +1785,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if user is not None:
             allowed = report_limiter.allow(f"user:{user.id}", cfg.reports_per_hour)
         else:
-            allowed = report_limiter.allow(f"ip:{client_key(request)}", cfg.anonymous_reports_per_hour)
+            allowed = report_limiter.allow(f"ip:{limit_key(client_key(request))}", cfg.anonymous_reports_per_hour)
         if not allowed:
             raise HTTPException(429, "Too many reports: try again in an hour", headers={"Retry-After": "3600"})
         fields = reports.clean(**body.model_dump())
@@ -1829,7 +1829,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The same answer whether the address has an account or not (the page must not tell who is a user): a new
         account gets its code, an existing one an e-mail saying so."""
         email = body.email.strip().lower()
-        if not limiter.allow(f"register-ip:{client_key(request)}", cfg.login_per_minute):
+        if not limiter.allow(f"register-ip:{limit_key(client_key(request))}", cfg.login_per_minute):
             raise HTTPException(429, "Too many attempts: wait a minute", headers={"Retry-After": "60"})
         if not EMAIL.match(email):
             raise HTTPException(422, "Not an e-mail address")
@@ -1883,10 +1883,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         network address. With 5 attempts per code, at most 50 guesses of a 6-digit code a day."""
         return (limiter.allow(f"mail-min:{email}", 1) and services.hourly.allow(f"mail-hour:{email}", 5)
                 and services.daily.allow(f"mail-day:{email}", CODES_PER_DAY)
-                and services.hourly.allow(f"mail-ip:{client_key(request)}", 20))
+                and services.hourly.allow(f"mail-ip:{limit_key(client_key(request))}", 20))
 
     def code_attempt_allowed(request: Request, email: str) -> bool:
-        return (limiter.allow(f"code-ip:{client_key(request)}", cfg.login_per_minute)
+        return (limiter.allow(f"code-ip:{limit_key(client_key(request))}", cfg.login_per_minute)
                 and limiter.allow(f"code-email:{email}", cfg.login_per_minute))
 
     @app.post("/v1/auth/verify")
@@ -1952,7 +1952,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/auth/google")
     def google_login(request: Request, body: GoogleBody) -> dict:
-        if not limiter.allow(f"google-ip:{client_key(request)}", cfg.login_per_minute):
+        if not limiter.allow(f"google-ip:{limit_key(client_key(request))}", cfg.login_per_minute):
             raise HTTPException(429, "Too many attempts: wait a minute", headers={"Retry-After": "60"})
         try:
             who = services.google.verify(body.id_token)
@@ -2399,7 +2399,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---- machines of the local network that ask to be computing nodes (pairing.py)
     def join_allowed(request: Request) -> None:
-        if not limiter.allow(f"join-ip:{client_key(request)}", JOIN_PER_MINUTE):
+        if not limiter.allow(f"join-ip:{limit_key(client_key(request))}", JOIN_PER_MINUTE):
             raise HTTPException(429, "Too many requests", headers={"Retry-After": "10"})
 
     # ---- 3D scans of Tisma Scanner, sent in pieces (scans.py)

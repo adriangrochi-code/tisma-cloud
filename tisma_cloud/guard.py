@@ -103,6 +103,22 @@ class Uploads:
                 self._by.pop(who, None)
 
 
+def limit_key(ip: str) -> str:
+    """The address a limit or a block counts: an IPv6 address by its /64 (one home connection gets a whole /64 and may
+    change address for every request), an IPv4 one as it is (also when written as ::ffff:a.b.c.d)."""
+    import ipaddress
+
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if address.version == 6:
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
 async def _answer(send: Send, status: int, text: str, headers: list[tuple[bytes, bytes]] | None = None) -> None:
     body = ('{"detail":"' + text + '"}').encode()
     await send({"type": "http.response.start", "status": status,
@@ -179,8 +195,9 @@ class Guard:
             await self.app(scope, receive, send)
             return
         send = _nosniff(send)
-        ip = self.client_ip(scope)
-        local = self.is_local(ip)
+        address = self.client_ip(scope)
+        local = self.is_local(address)
+        ip = limit_key(address)
         if not local and self.bans.banned(ip):
             await _answer(send, 403, "Blocked for a while: too many refused requests")
             return
