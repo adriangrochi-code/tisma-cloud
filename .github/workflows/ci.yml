@@ -151,6 +151,15 @@ jobs:
           "$engine" --help | head -n 3
           gh release view nightly -R "$ENGINE_REPO" --json name,body -q '.name + "\n" + .body' > dist/tisma-engine/SOURCE.txt
           du -sh dist/tisma-engine
+      # The translation tables of the profile pack (the public repository Tisma-profiles-, AGPL-3.0-or-later data), in
+      # tisma-profiles/: the engine reads the settings of other slicers' projects with them (--translation-dir). The
+      # archive of the latest release is checked against the size and SHA-256 of its index.json; its LICENSE and the
+      # exact release go with it (SOURCE.txt).
+      - name: Translation tables of the profile pack (its latest release)
+        run: |
+          pip install httpx > /dev/null
+          python deploy/fetch_translation.py --out dist/tisma-profiles
+          cat dist/tisma-profiles/SOURCE.txt
       - name: Try it
         env:
           TISMA_DATABASE_URL: sqlite:///./try.db
@@ -230,6 +239,7 @@ jobs:
           export TISMA_HOME="$PWD/package-home"
           dist/${{ matrix.exe }} role node
           dist/${{ matrix.exe }} config | grep -E '^tisma_engine = .*tisma-engine[/\\]'
+          dist/${{ matrix.exe }} config | grep -E '^translation_dir = .*tisma-profiles[/\\]translation'
           unset TISMA_HOME
           pip install ".[master,test]" > /dev/null
           TISMA_ENGINE_BIN="$PWD/$engine" pytest -q -s tests/test_node.py -k real_engine_slices_the_new -rs | tee real.log
@@ -321,6 +331,7 @@ jobs:
           path: |
             dist/${{ matrix.exe }}
             dist/tisma-engine
+            dist/tisma-profiles
             .env.example
             deploy/node.example.toml
           retention-days: 7

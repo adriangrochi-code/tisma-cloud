@@ -33,6 +33,9 @@ SCAN_NAMES = ("tisma_scan.exe",) if os.name == "nt" else ("tisma_scan",)
 # tisma-engine, the slicer and analyses of a node (its nightly package, in this folder next to the executable).
 ENGINE_FOLDER = "tisma-engine"
 ENGINE_NAMES = ("tisma-engine.exe",) if os.name == "nt" else ("tisma-engine",)
+# The translation tables of the profile pack (Tisma-profiles-, AGPL-3.0 data), in tisma-profiles/translation next to
+# the executable (deploy/fetch_translation.py).
+PROFILES_FOLDER = "tisma-profiles"
 
 # Windows: no console window for the helper programs.
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -273,6 +276,14 @@ def find_engine_program() -> str | None:
                     pass
             return str(path)
     return None
+
+
+def find_translation_dir() -> str | None:
+    """translation/ of the profile pack the package brings (tisma-profiles/ next to this program), or None."""
+    if not getattr(sys, "frozen", False):
+        return None
+    folder = Path(sys.executable).resolve().parent / PROFILES_FOLDER / "translation"
+    return str(folder) if folder.is_dir() and any(folder.glob("*.json")) else None
 
 
 def find_scan_program() -> str | None:

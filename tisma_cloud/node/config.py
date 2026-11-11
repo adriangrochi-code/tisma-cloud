@@ -42,6 +42,10 @@ class NodeConfig:
     # tisma-engine: it runs the slicing and the analyses (its command line contract is docs/spec/features/cloud.md of
     # the engine, rules 18 to 21). The only slicer since Tisma Slicer was left (the owner, 2026-11-11).
     tisma_engine: str = ""
+    # The translation tables of the profile pack (translation/ of a release of Tisma-profiles-, which the package brings
+    # in tisma-profiles/): with them the engine reads the settings of other slicers' projects (--translation-dir).
+    # Empty or missing: those projects slice with the job's settings and the engine says so.
+    translation_dir: str = ""
     # The 3D scans of Tisma Scanner (jobs of kind "scan"): the program that rebuilds a part from its photos (tisma_scan
     # of the openscanner repository: COLMAP, OpenMVS and a graphics card): the program, or its tools/tisma_scan.py,
     # which runs with the Python of the machine. Its contract is in node/runners.py, run_scan().

@@ -6,6 +6,9 @@ master_url = "http://192.168.1.10:8000"
 # name = "i7-taller"                           # the name it asks to join with (the name of the machine without it)
 # The program every slicing and analysis runs with (the package brings it in tisma-engine/, found by itself).
 tisma_engine = "/opt/tisma/tisma-engine"       # Windows: C:/TismaCloud/tisma-engine/tisma-engine.exe
+# The translation tables of the profile pack (the package brings them in tisma-profiles/translation): with them the
+# engine reads the settings of other slicers' projects; without them those slice with the job's settings.
+# translation_dir = "/opt/tisma/tisma-profiles/translation"
 # 3D scans of Tisma Scanner (jobs "scan"; add "scan" to the priorities of this node on the master). tisma_scan.exe
 # (built by the CI of openscanner) needs nothing else; tools/tisma_scan.py runs with the first python3, python or py on
 # the PATH of the node (the venv's when the node runs inside an activated venv), which needs numpy,

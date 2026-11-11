@@ -164,6 +164,15 @@ def test_programs_come_with_the_package(tmp_path, monkeypatch):
     assert system.find_scan_program() == str(scan)
     assert m.detect_programs() == {"tisma_scan": str(scan)}
     assert m.read_node()["tisma_scan"] == str(scan)
+    # The translation tables of the profile pack (tisma-profiles/translation, deploy/fetch_translation.py).
+    assert system.find_translation_dir() is None
+    tables = exe.parent.resolve() / system.PROFILES_FOLDER / "translation"
+    tables.mkdir(parents=True)
+    assert system.find_translation_dir() is None  # a folder without tables
+    (tables / "prusaslicer.json").write_text("{}")
+    assert m.detect_programs() == {"translation_dir": str(tables)}
+    assert m.read_node()["translation_dir"] == str(tables)
+    assert {c.name: c for c in m.checks()}["Tablas de traducción"].ok is True
 
 
 def test_diagnosis_of_a_node(tmp_path, monkeypatch, capsys):

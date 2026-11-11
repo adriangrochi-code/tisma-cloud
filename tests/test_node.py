@@ -50,7 +50,7 @@ FAKE_ENGINE = """\
 import json, os, sys, time, zipfile
 args = sys.argv[1:]
 if args == ["--help"]:
-    print("usage: tisma-engine slice <project> -o <out> --summary <summary.json> [--sandbox] [--threads <n>]")
+    print("usage: tisma-engine slice <project> -o <out> --summary <summary.json> [--sandbox] [--threads <n>] [--translation-dir <folder>]")
     sys.exit(0)
 get = lambda k: args[args.index(k) + 1]
 command, project = args[0], args[1]
@@ -75,7 +75,7 @@ for p in (0, 50, 100):
 if command == "slice":
     open(out, "w").write("G1 X1\\n")
     json.dump({"print_time": "10m 8s", "print_time_s": 608, "filament_mm": 921.48, "filament_g": 2.75,
-               "layers": 50, "names": names}, open(summary, "w"))
+               "layers": 50, "names": names, "args": args}, open(summary, "w"))
 else:
     open(out, "wb").write(b"ANALYSIS")
     json.dump({"verdict": "holds", "args": args}, open(summary, "w"))
@@ -387,6 +387,39 @@ def test_engine_without_threads_option(client, f, engine_cfg):
     assert agent.run_once() == "done"
     args = client.get(f"/v1/jobs/{job['id']}", headers=user).json()["summary"]["args"]
     assert "--threads" not in args
+    runners._ENGINE_HELP.pop(engine_cfg.tisma_engine, None)
+
+
+@posix_only
+def test_the_pack_translation_tables_go_to_the_engine(client, f, engine_cfg, tmp_path):
+    """--translation-dir with the profile pack's tables (project_import.md rule 11), only to an engine that lists it
+    and only when the folder is there."""
+    from tisma_cloud.node import runners
+
+    tables = tmp_path / "tisma-profiles" / "translation"
+    tables.mkdir(parents=True)
+    (tables / "orcaslicer.json").write_text('{"format": "tisma-pack-translation"}')
+    user = f.user(plan=f.plan("big", concurrent=10))
+    agent = agent_for(client, f.node("n", "slice"), engine_cfg)
+
+    def args_of_a_slice() -> list[str]:
+        job = f.submit(user, data=make_3mf(extra={"Metadata/project_settings.config": "{}"}))
+        assert agent.run_once() == "done"
+        return client.get(f"/v1/jobs/{job['id']}", headers=user).json()["summary"]["args"]
+
+    assert "--translation-dir" not in args_of_a_slice()
+    engine_cfg.translation_dir = str(tables)
+    args = args_of_a_slice()
+    assert args[args.index("--translation-dir") + 1] == str(tables)
+    engine_cfg.translation_dir = str(tmp_path / "missing")
+    assert "--translation-dir" not in args_of_a_slice()
+    # An engine that does not list the option gets none (it would refuse the whole command).
+    engine_cfg.translation_dir = str(tables)
+    text = open(engine_cfg.tisma_engine).read()
+    with open(engine_cfg.tisma_engine, "w") as out:
+        out.write(text.replace(" [--translation-dir <folder>]", ""))
+    runners._ENGINE_HELP.pop(engine_cfg.tisma_engine, None)
+    assert "--translation-dir" not in args_of_a_slice()
     runners._ENGINE_HELP.pop(engine_cfg.tisma_engine, None)
 
 

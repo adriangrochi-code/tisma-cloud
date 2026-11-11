@@ -198,7 +198,12 @@ def run_slice(cfg: NodeConfig, params: dict, project: Path, work: Path, progress
     clean = work / "project.3mf"
     sanitize_project(project, clean)
     out = work / "plate.gcode"
-    summary = _run_engine(cfg, "slice", clean, out, [], work, progress, cancelled, params)
+    extra = []
+    # The pack's translation tables: the engine reads which program saved a 3MF and translates its settings
+    # (project_import.md rules 6, 8, 11); only to an engine that lists the option, as --threads.
+    if cfg.translation_dir and Path(cfg.translation_dir).is_dir() and _engine_has(cfg.tisma_engine, "--translation-dir"):
+        extra += ["--translation-dir", cfg.translation_dir]
+    summary = _run_engine(cfg, "slice", clean, out, extra, work, progress, cancelled, params)
     return Outcome(_binary_suffix(out), {**summary, "slicer": "tisma-engine"})
 
 

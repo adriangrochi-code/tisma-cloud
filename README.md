@@ -398,6 +398,12 @@ el último *nightly* de `tisma-engine`, el programa que corre los laminados y lo
 *nightly* es). No hace falta instalar nada más en ninguna máquina: se descomprime el paquete entero y `tisma-cloud`
 encuentra el motor solo (la carpeta `tisma-engine` tiene que quedar junto a `tisma-cloud.exe`).
 
+Trae también `dist/tisma-profiles/`: las tablas de traducción del paquete de perfiles (repositorio público
+`Tisma-profiles-`, AGPL-3.0, datos), del último release, comprobadas contra el tamaño y el SHA-256 de su `index.json`
+(`deploy/fetch_translation.py`), con su licencia y en `SOURCE.txt` qué versión es. El nodo se las pasa al motor
+(`--translation-dir`, si el motor lo tiene): con ellas, un proyecto de PrusaSlicer, OrcaSlicer, Bambu, Creality, Elegoo
+o Cura se lamina con sus propios ajustes traducidos; sin ellas, con los del trabajo, y el Diagnóstico lo avisa.
+
 Todo proyecto lo lamina el motor: los del Tisma nuevo (con `Metadata/tisma_project.json`), los modelos sin ajustes y
 los de otros laminadores, de los que el motor toma lo que conoce. No hay otro programa al que pasarle un trabajo si el
 motor falla: el trabajo falla con el motivo del motor. Un nodo sin motor (uno solo para escaneos) rechaza los demás

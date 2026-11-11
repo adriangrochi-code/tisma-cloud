@@ -67,6 +67,7 @@ NODE_FIELDS = [
     ("verify_tls", "Verificar el certificado HTTPS", bool, False),
     ("name", "Nombre con el que pide unirse (vacío: el de la máquina)", str, False),
     ("tisma_engine", "Programa tisma-engine (laminado y análisis; vacío: solo escaneos)", str, False),
+    ("translation_dir", "Tablas de traducción del paquete de perfiles (proyectos de otros laminadores)", str, False),
     ("tisma_scan", "Programa tisma_scan de Tisma Scanner (escaneos 3D; vacío: no hace escaneos)", str, False),
     ("scan_timeout_s", "Duración máxima de un escaneo 3D [s]", int, False),
 ]
@@ -103,7 +104,7 @@ def spanish():
         raise
 
 
-NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_engine": "", "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,
+NODE_DEFAULTS = {"master_url": "http://192.168.1.10:8000", "token": "", "tisma_engine": "", "translation_dir": "", "work_dir": "node-work", "slots": 0, "fea_slots": 1, "timeout_s": 3600, "gpu": True,
                  "cuda_cores": 0, "verify_tls": True}
 # The node of the master when it computes too (registered in its database by the service).
 MASTER_NODE = "maestro"
@@ -275,7 +276,7 @@ class Manager:
                 token = new_token("tn")
                 node.token_hash = hash_token(token)
         data = dict(NODE_DEFAULTS, master_url=f"http://127.0.0.1:{self.port()}", token=token, tisma_engine=engine,
-                    work_dir="master-work")
+                    translation_dir=system.find_translation_dir() or "", work_dir="master-work")
         scan = system.find_scan_program()
         if scan:
             # It takes scans when "scan" is among its priorities (admin node-set maestro --priorities scan,...).
@@ -817,13 +818,16 @@ class Manager:
 
     # ---- the programs of a node
     def detect_programs(self, replace: bool = False) -> dict[str, str]:
-        """Fills tisma_engine and tisma_scan of node.toml with the programs of the package's tisma-engine and tisma-scan
-        folders (only the empty or wrong ones, unless replace). Returns what was set."""
+        """Fills tisma_engine, tisma_scan and translation_dir of node.toml with what the package's tisma-engine,
+        tisma-scan and tisma-profiles folders bring (only the empty or wrong ones, unless replace). Returns what was
+        set."""
         node = self.read_node()
         found = {}
-        for key, path in (("tisma_engine", system.find_engine_program()), ("tisma_scan", system.find_scan_program())):
+        for key, path in (("tisma_engine", system.find_engine_program()), ("tisma_scan", system.find_scan_program()),
+                          ("translation_dir", system.find_translation_dir())):
             current = str(node.get(key) or "")
-            if path and (replace or not current or not Path(current).is_file()):
+            exists = Path(current).is_dir() if key == "translation_dir" else Path(current).is_file()
+            if path and (replace or not current or not exists):
                 found[key] = path
         if found:
             self.write_node(found)
@@ -1019,6 +1023,13 @@ class Manager:
                 out.append(Check(label, ok, path if ok else (f"No existe: {path}" if path else
                                                              "No configurado: «Buscar programas» (viene en la "
                                                              "carpeta tisma-engine del paquete)"),
+                                 None if ok else "programs"))
+            if not scan_only:
+                folder = str(node.get("translation_dir") or "")
+                ok = bool(folder) and Path(folder).is_dir()
+                out.append(Check("Tablas de traducción", True if ok else None, folder if ok else
+                                 "Sin ellas, los proyectos de otros laminadores se laminan con los ajustes del trabajo, "
+                                 "no con los suyos (vienen en la carpeta tisma-profiles del paquete)",
                                  None if ok else "programs"))
             asked = self.node_path.with_name(self.node_path.name + ".join").is_file()
             out.append(Check("Token del nodo", True if node.get("token") else None, "Configurado" if node.get("token")
