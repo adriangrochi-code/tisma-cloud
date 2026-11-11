@@ -1641,17 +1641,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "paid_until": u.paid_until.isoformat() + "Z" if u.paid_until else None,
                             "store_until": u.store_until.isoformat() + "Z" if u.store_until else None,
                             "email_verified": u.email_verified, "google_linked": u.google_sub is not None,
-                            "has_password": bool(u.password_hash), "extra_printers": u.extra_printers},
+                            "has_password": bool(u.password_hash), "extra_printers": u.extra_printers,
+                            "library_name": u.library_name},
                 "sessions": [{"device": t.label, "created_at": t.created_at.isoformat() + "Z",
                               "last_used": t.last_used.isoformat() + "Z" if t.last_used else None}
                              for t in s.execute(select(ApiToken).where(ApiToken.user_id == u.id)).scalars()],
                 "payments": [payment_view(p) for p in
                              s.execute(select(Payment).where(Payment.user_id == u.id)).scalars()],
-                "store_subscriptions": [{"product": p.product_id, "plan": p.plan_name, "state": p.state,
-                                         "order_id": p.order_id,
-                                         "until": p.entitled_until.isoformat() + "Z" if p.entitled_until else None}
-                                        for p in s.execute(select(PlaySubscription)
-                                                           .where(PlaySubscription.user_id == u.id)).scalars()],
+                "store_subscriptions": [
+                    {"store": stores.STORES[table], "product": p.product_id, "plan": p.plan_name,
+                     "state": getattr(p, "state", "revoked" if getattr(p, "revoked", False) else ""),
+                     "order_id": getattr(p, "order_id", None) or getattr(p, "original_transaction_id", None)
+                     or getattr(p, "subscription_id", None),
+                     "until": p.entitled_until.isoformat() + "Z" if p.entitled_until else None}
+                    for table in stores.STORES
+                    for p in s.execute(select(table).where(table.user_id == u.id)).scalars()],
+                "hour_adjustments": [adjustment_view(a) for a in
+                                     s.execute(select(HourAdjustment).where(HourAdjustment.user_id == u.id)).scalars()],
+                "scans_being_sent": [{"name": x.name, "size": x.size, "received": x.received,
+                                      "created_at": x.created_at.isoformat() + "Z"}
+                                     for x in s.execute(select(ScanUpload).where(ScanUpload.user_id == u.id,
+                                                                                 ScanUpload.job_id.is_(None))).scalars()],
+                "account_files": [file_view(x) for x in
+                                  s.execute(select(AccountFile).where(AccountFile.user_id == u.id)).scalars()],
+                "library": {
+                    "publications": [{**library.model_entry(m), "removed": m.removed_at is not None}
+                                     for m in s.execute(select(LibraryModel).where(LibraryModel.user_id == u.id))
+                                     .scalars()],
+                    "peer_keys": [{"public_key": k.public_key, "created_at": k.created_at.isoformat() + "Z"}
+                                  for k in s.execute(select(LibraryPeerKey).where(LibraryPeerKey.user_id == u.id))
+                                  .scalars()],
+                    "reports": [{"model": r.model_id, "sha256": r.sha256, "reason": r.reason,
+                                 "created_at": r.created_at.isoformat() + "Z", "outcome": r.outcome}
+                                for r in s.execute(select(LibraryReport).where(LibraryReport.user_id == u.id))
+                                .scalars()],
+                },
                 "usage": [{"month": x.month, "seconds": round(x.seconds, 1)}
                           for x in s.execute(select(Usage).where(Usage.user_id == u.id)).scalars()],
                 "jobs": [job_view(j) for j in s.execute(select(Job).where(Job.user_id == u.id)).scalars()],

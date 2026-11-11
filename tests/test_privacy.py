@@ -215,3 +215,37 @@ def test_registering_a_known_address_many_times_answers_the_same(client, f):
     # The owner gets one notice a minute, and the answer never changes (a 429 would tell the address is known).
     assert [r.status_code for r in answers] == [201, 201, 201]
     assert len([m for m in sent if m[0] == "ana@x.com"]) == 1
+
+
+def test_the_export_has_everything_kept_about_the_account(client, f):
+    """«Descargar mis datos» said everything the service keeps, but left out the App Store and Microsoft Store
+    subscriptions, the library (author name, publications, peer keys, reports made), the account's files, the scans
+    being sent and the hours given or taken."""
+    from sqlalchemy import select
+
+    from tisma_cloud.models import (AccountFile, AppleSubscription, HourAdjustment, LibraryModel, LibraryPeerKey,
+                                    LibraryReport, MicrosoftSubscription, ScanUpload, User)
+
+    ana = f.user("ana@x.com")
+    with f.db.session() as s:
+        u = s.execute(select(User)).scalars().first()
+        u.library_name = "Ana Maker"
+        uid = u.id
+        s.add(AppleSubscription(user_id=uid, original_transaction_id="1000", product_id="tisma_pro", plan_name=u.plan_name))
+        s.add(MicrosoftSubscription(user_id=uid, subscription_id="mdr:1", product_id="9NB", plan_name=u.plan_name,
+                                    state="Active"))
+        s.add(HourAdjustment(user_id=uid, month="2026-11", hours=2, note="buen reporte"))
+        s.add(ScanUpload(user_id=uid, name="casa.zip", size=100))
+        s.add(AccountFile(id="af_1", user_id=uid, name="Pieza", kind="scan", source_job="j1", size=10, files="[]"))
+        s.add(LibraryPeerKey(user_id=uid, public_key="k" * 44))
+        s.add(LibraryReport(user_id=uid, model_id="lm_" + "1" * 32, reason="copia"))
+    data = f.client.get("/v1/me/export", headers=ana).json()
+    assert data["account"]["library_name"] == "Ana Maker"
+    stores = {x["store"] for x in data["store_subscriptions"]}
+    assert stores == {"app_store", "microsoft_store"}
+    assert data["hour_adjustments"][0]["note"] == "buen reporte"
+    assert data["scans_being_sent"][0]["name"] == "casa.zip"
+    assert data["account_files"][0]["name"] == "Pieza"
+    assert data["library"]["peer_keys"][0]["public_key"] == "k" * 44
+    assert data["library"]["reports"][0]["reason"] == "copia"
+    assert data["library"]["publications"] == []
