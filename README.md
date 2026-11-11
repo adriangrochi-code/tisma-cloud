@@ -309,8 +309,9 @@ nada de otros sitios (salvo el botón de Google si está activado).
 
 **Lo que la persona puede hacer**: descargar una copia de todo lo que guardamos de su cuenta (`Descargar mis datos`, en
 JSON) y borrar la cuenta (con la contraseña, o con un código por correo si entra con Google). Al borrar se van las
-sesiones, trabajos y sus archivos, impresoras remotas y órdenes, compras de la tienda y el uso; quedan los pagos sin
-nada personal.
+sesiones, trabajos y sus archivos, escaneos a medio mandar, impresoras remotas y órdenes, compras de las tiendas, el
+uso, las horas dadas o quitadas, los archivos de la cuenta y sus publicaciones de la biblioteca; sus denuncias de
+modelos ajenos quedan para revisarlas, sin la cuenta, y los pagos, sin nada personal.
 
 **Archivos peligrosos** (`threats.py`): todo lo que se sube se revisa antes de guardarlo, y los administradores
 reciben una alerta con lo rechazado en la última hora (solo cuántos y de qué tipo).

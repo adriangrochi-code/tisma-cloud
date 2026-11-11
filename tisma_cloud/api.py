@@ -341,12 +341,18 @@ class Services:
             commands = s.execute(select(RemoteCommand.id).where(RemoteCommand.bridge_id.in_(bridges))).scalars().all() \
                 if bridges else []
             files = s.execute(select(AccountFile.id).where(AccountFile.user_id == user_id)).scalars().all()
+            # Scans half sent: their pieces on the disk are photos of the person's things.
+            uploads = s.execute(select(ScanUpload.id).where(ScanUpload.user_id == user_id,
+                                                            ScanUpload.job_id.is_(None))).scalars().all()
             thumbs = set(s.execute(select(LibraryModel.thumbnail_sha256).where(LibraryModel.user_id == user_id)).scalars())
             if files:
                 s.execute(delete(AccountFileTaken).where(AccountFileTaken.file_id.in_(files)))
             for model in (ApiToken, EmailCode, Usage, PlaySubscription, AppleSubscription, MicrosoftSubscription,
-                          MicrosoftKey, Job, Bridge, BugReport, AccountFile, LibraryModel, LibraryPeerKey):
+                          MicrosoftKey, Job, Bridge, BugReport, AccountFile, LibraryModel, LibraryPeerKey, ScanUpload,
+                          HourAdjustment):
                 s.execute(delete(model).where(model.user_id == user_id))
+            # Its reports of others' models stay for the review, without the account.
+            s.execute(update(LibraryReport).where(LibraryReport.user_id == user_id).values(user_id=None))
             # Its published models leave the index, and their images the disk (unless another model uses the same).
             library.bump(s, "index")
             s.flush()
@@ -363,6 +369,8 @@ class Services:
             self.storage.remove_job(job_id)
         for file_id in files:
             shutil.rmtree(Path(self.settings.storage_dir) / "files" / file_id, ignore_errors=True)
+        for upload_id in uploads:
+            scans.upload_path(self.storage.root, upload_id).unlink(missing_ok=True)
         for digest in thumbs - shared:
             (Path(self.settings.storage_dir) / "library" / "thumbs" / f"{digest}.webp").unlink(missing_ok=True)
         for command_id in commands:

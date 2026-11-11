@@ -347,3 +347,35 @@ def test_pieces_lost_in_a_power_cut_are_asked_again(c):
     job = c.post(f"/v1/scans/{up['id']}/complete", headers=user)
     assert job.status_code == 201, job.text
     assert c.app.state.services.storage.input_path(job.json()["id"]).read_bytes() == data
+
+
+def test_deleting_the_account_removes_its_scans_being_sent_and_its_traces(c):
+    """A scan half sent (its row, with the name of the file, and the pieces on the disk: photos of the person's
+    things), the hours given or taken with their notes, and the account on its reports of the library stayed after the
+    account was deleted."""
+    from sqlalchemy import func, select
+
+    from tisma_cloud import scans as scan_files
+    from tisma_cloud.models import HourAdjustment, LibraryReport, ScanUpload, User
+
+    f = Factory(c)
+    user = f.user("ana@x.com", plan=scan_plan(f))
+    data = make_scan()
+    up = c.post("/v1/scans", headers=user, json={"size": len(data), "name": "mi casa.zip"}).json()
+    assert c.put(f"/v1/scans/{up['id']}/data", params={"offset": 0}, headers=user,
+                 content=data[:1000]).status_code == 200
+    services = c.app.state.services
+    path = scan_files.upload_path(services.storage.root, up["id"])
+    assert path.exists()
+    with services.db.session() as s:
+        uid = s.execute(select(ScanUpload.user_id)).scalar_one()
+        s.add(HourAdjustment(user_id=uid, month="2026-11", hours=-2, note="Ana abusó del plan"))
+        s.add(LibraryReport(user_id=uid, model_id="lm_" + "0" * 32, reason="copia de un modelo"))
+    services.delete_account(uid)
+    assert not path.exists()
+    with services.db.session() as s:
+        assert s.execute(select(func.count()).select_from(ScanUpload)).scalar_one() == 0
+        assert s.execute(select(func.count()).select_from(HourAdjustment)).scalar_one() == 0
+        # The report stays for the review (it is about someone else's model), without the account.
+        assert s.execute(select(LibraryReport.user_id)).scalar_one() is None
+        assert s.get(User, uid).email.startswith("deleted-")
