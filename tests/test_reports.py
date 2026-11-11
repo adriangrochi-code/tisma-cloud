@@ -383,3 +383,19 @@ def test_search_by_fields_and_specific_filters(client, f):
     today = utcnow().date().isoformat()
     assert len(titles(since=today, until=today)) == 2
     assert titles(until="2020-01-01") == []
+
+
+def test_names_with_accents_and_spaces_are_hidden_too():
+    """Spanish names: an e-mail with accents or ñ was kept (or cut in half), and a Windows user folder with a space
+    kept the surname."""
+    text = reports.redact("mail josé.pérez@gmail.com y ñandú@correo.com.uy o ana@ñandú.uy\n"
+                          r"C:\Users\Juan Pérez\AppData\Roaming\Tisma\tisma.ini" "\n"
+                          r"C:/Users/María José/Documents/pieza.3mf" "\n"
+                          "/home/ana/tisma.log ok")
+    for name in ("josé", "pérez", "ñandú", "Juan", "Pérez", "María", "José", "ana/"):
+        assert name not in text, (name, text)
+    assert text.count("<email>") == 3
+    assert r"C:\Users\<user>\AppData\Roaming\Tisma\tisma.ini" in text
+    assert "C:/Users/<user>/Documents/pieza.3mf" in text and "/home/<user>/tisma.log ok" in text
+    # A time, a version and a plain path stay as they were.
+    assert reports.redact("18:24:53 v2.9.6 C:\\Program Files\\Tisma") == "18:24:53 v2.9.6 C:\\Program Files\\Tisma"

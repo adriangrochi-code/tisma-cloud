@@ -27,13 +27,15 @@ APPS = ("pc", "android", "web")
 KINDS = ("bug", "crash", "suggestion")
 STATUSES = ("new", "confirmed", "fixed", "wontfix", "duplicate")
 
-_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# Letters of any language (josé.pérez@..., ñandú@..., a domain with ñ).
+_EMAIL = re.compile(r"[\w.%+-]+@[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
 _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 # IPv6 candidates (checked with ipaddress: a time as 18:24:53 is not one).
 _IPV6 = re.compile(r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])")
 _MAC = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
 # The user folder of the system in a path (Windows, Linux, macOS).
-_HOME = re.compile(r"(?i)([A-Z]:[\\/]+Users[\\/]+|/home/|/Users/)([^\\/\s\"']+)")
+# On Windows a user folder may have spaces ("Juan Pérez"): up to the next separator.
+_HOME = re.compile(r"(?i)([A-Z]:[\\/]+Users[\\/]+)([^\\/\"'\r\n<>|*?]+)|(/home/|/Users/)([^\\/\s\"']+)")
 _BEARER = re.compile(r"(?i)\bBearer\s+\S+")
 _TOKEN = re.compile(r"\b(?:tu|tn|tb)_[A-Za-z0-9_-]{16,}")
 # key = value of secrets (also "access code: 12345678" of the Bambu Lab printers and their serial numbers).
@@ -69,7 +71,7 @@ def redact(text: str) -> str:
     text = _MAC.sub("<mac>", text)
     text = _IPV6.sub(_ipv6, text)
     text = _IPV4.sub("<ip>", text)
-    text = _HOME.sub(lambda m: m.group(1) + "<user>", text)
+    text = _HOME.sub(lambda m: (m.group(1) or m.group(3)) + "<user>", text)
     return _LONG_HEX.sub("<hex>", text)
 
 
