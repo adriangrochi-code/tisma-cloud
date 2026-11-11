@@ -141,6 +141,9 @@ class LibraryKey:
         if not verify(project_key_bytes(project_key), cert, CERT_PREFIX + self.public):
             raise LibraryError("El certificado no es una firma de esta clave de la biblioteca con la clave del proyecto")
         self.cert_path.write_text(b64(cert) + "\n")
+        # The project's public key next to the certificate: a running master reads it there (updates.py) without
+        # waiting for a restart to read TISMA_LIBRARY_PROJECT_KEY again.
+        (self.path.parent / PROJECT_KEY_FILE).write_text(project_key_bytes(project_key).hex() + "\n")
 
 
     def address_salt(self, day: str) -> bytes:
@@ -202,6 +205,18 @@ def certify(key: LibraryKey, pem: bytearray, configured: str = "", password: byt
     del private
     key.install_certificate(b64(cert), public.hex())
     return public
+
+
+PROJECT_KEY_FILE = "library.project"
+
+
+def certified_project_key(folder: Path) -> str:
+    """The project's public key kept by the last certification (64 hex digits), or ""."""
+    try:
+        text = (Path(folder) / PROJECT_KEY_FILE).read_text().strip()
+    except OSError:
+        return ""
+    return text if re.fullmatch(r"[0-9a-f]{64}", text) else ""
 
 
 def project_key_bytes(text: str) -> bytes:

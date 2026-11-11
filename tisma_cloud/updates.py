@@ -44,9 +44,11 @@ def fetch_url(url: str) -> bytes:
 
 
 class UpdateMirror:
-    def __init__(self, url: str, folder: Path, fetch: Fetch = fetch_url, project_key: str = "") -> None:
+    def __init__(self, url: str, folder: Path, fetch: Fetch = fetch_url,
+                 project_key: str | Callable[[], str] = "") -> None:
         self.url = url.strip()
-        self.project_key = self._key(project_key)
+        # A text, or a function read again at each check (the key may be set while the master runs).
+        self._project_key = project_key
         self.folder = Path(folder)
         self.fetch = fetch
         self._lock = threading.Lock()
@@ -70,6 +72,11 @@ class UpdateMirror:
         if self._whole(*pair):
             self._pair = pair
 
+    @property
+    def project_key(self) -> bytes | None:
+        text = self._project_key() if callable(self._project_key) else self._project_key
+        return self._key(text or "")
+
     @staticmethod
     def _key(text: str) -> bytes | None:
         from .library import LibraryError, project_key_bytes
@@ -91,11 +98,12 @@ class UpdateMirror:
         return self._signed(listing, signature)
 
     def _signed(self, listing: bytes, signature: bytes) -> bool:
-        if self.project_key is None:
+        key = self.project_key
+        if key is None:
             return True
         from .library import verify
 
-        return verify(self.project_key, signature, listing)
+        return verify(key, signature, listing)
 
     def current(self) -> tuple[bytes, bytes] | None:
         """The list and its signature, always from the same download."""

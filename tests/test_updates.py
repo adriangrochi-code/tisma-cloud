@@ -95,3 +95,40 @@ def test_a_list_and_a_signature_of_two_publications_are_not_kept(tmp_path):
     assert UpdateMirror(URL, tmp_path, files(), project_key=key).current() is None
     # Without the project's key the shape is all that is checked, as before.
     assert UpdateMirror(URL, tmp_path, files()).current() == (old, pairs["new"][1])
+
+
+def test_a_master_certified_while_running_checks_the_list_without_a_restart(tmp_path):
+    """The one-click certification sets TISMA_LIBRARY_PROJECT_KEY in .env, which the running master reads only when
+    it starts: until a restart its mirror did not check the list's signature. The certification also keeps the
+    project's public key next to the certificate, and the mirror reads it there."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from tisma_cloud import library
+
+    project = Ed25519PrivateKey.generate()
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    old = b'{"format": "tisma-updates", "versions": [{"version": "1.0.1"}]}'
+    new = b'{"format": "tisma-updates", "versions": [{"version": "1.0.2"}]}'
+    mirror = UpdateMirror(URL, storage / "updates", files(old, project.sign(old)),
+                          project_key=lambda: library.certified_project_key(storage))
+    assert mirror.refresh()
+    pem = bytearray(project.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                          serialization.NoEncryption()))
+    library.certify(library.LibraryKey(storage), pem)
+    assert library.certified_project_key(storage) == library.public_bytes(project.public_key()).hex()
+    mirror.fetch = files(old, project.sign(new))
+    assert not mirror.refresh() and mirror.current() == (old, project.sign(old))
+
+
+def test_the_three_step_certification_keeps_the_project_key_too(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from tisma_cloud import library
+
+    project = Ed25519PrivateKey.generate()
+    key = library.LibraryKey(tmp_path)
+    public = library.public_bytes(project.public_key())
+    key.install_certificate(library.b64(project.sign(library.CERT_PREFIX + key.public)), library.b64(public))
+    assert library.certified_project_key(tmp_path) == public.hex()
