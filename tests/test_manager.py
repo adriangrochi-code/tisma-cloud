@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tisma_cloud import cli
+from tisma_cloud import manager as manager_module
 from tisma_cloud.manager import Manager
 from tisma_cloud.node.config import NodeConfig
 
@@ -405,3 +406,47 @@ def test_the_panel_opens_in_the_browser_when_its_window_fails(tmp_path, monkeypa
     assert cli.open_panel(m) == 0
     assert opened == ["http://127.0.0.1:8000/admin#token=tu_x"]
     assert "navegador" in capsys.readouterr().err
+
+
+def test_the_library_relay_and_seeder_run_with_the_master(tmp_path, monkeypatch):
+    """tisma-relay of the package, as the relay and the seeder of the library: off by default, then children of the
+    service with their settings from .env and their files in the storage folder."""
+    from tisma_cloud import system
+
+    m = Manager(tmp_path)
+    m.set_role("master")
+    m.set_port(8123)
+    m.set_master_computes(False)
+    relay = tmp_path / "tisma-relay"
+    relay.write_text("")
+    monkeypatch.setattr(system, "find_relay_program", lambda: str(relay))
+    assert list(m.children()) == ["main"]
+    assert not any("biblioteca" in c.name for c in m.checks())
+    m.set_setting("relay", "on")
+    m.set_setting("seed", "on")
+    assert m.library_service("relay") and m.library_service("seed")
+    m.write_env({"TISMA_LIBRARY_PROJECT_KEY": "ab" * 32, "TISMA_RELAY_ANNOUNCE": "/ip4/200.40.10.7/tcp/4001",
+                 "TISMA_RELAY_LISTEN": "/ip4/0.0.0.0/tcp/4001", "TISMA_SEED_LISTEN": "/ip4/0.0.0.0/tcp/4002",
+                 "TISMA_SEED_TOKEN": "tu_seed", "TISMA_SMTP_PASSWORD": "secret"})
+    children = m.children()
+    assert children["relay"] == [str(relay)] and children["seed"] == [str(relay), "seed"]
+    storage = (tmp_path / "storage").resolve()
+    env = m.child_env("relay")
+    assert env["TISMA_MASTER_URL"] == "http://127.0.0.1:8123" and env["TISMA_LIBRARY_PROJECT_KEY"] == "ab" * 32
+    assert env["TISMA_RELAY_LISTEN"] == "/ip4/0.0.0.0/tcp/4001" and env["TISMA_RELAY_ANNOUNCE"].endswith("/4001")
+    assert Path(env["TISMA_RELAY_KEY"]).resolve() == storage / "relay.key"
+    assert "TISMA_SMTP_PASSWORD" not in env and "TISMA_SEED_TOKEN" not in env
+    seed = m.child_env("seed")
+    # Its own port: both read TISMA_RELAY_LISTEN.
+    assert seed["TISMA_RELAY_LISTEN"] == "/ip4/0.0.0.0/tcp/4002" and "TISMA_RELAY_ANNOUNCE" not in seed
+    assert seed["TISMA_SEED_TOKEN"] == "tu_seed" and Path(seed["TISMA_SEED_DIR"]).resolve() == storage / "seed"
+    assert m.child_env("main") == {}
+    # The diagnosis: the relay is ready; the seeder needs ClamAV.
+    monkeypatch.setattr(manager_module.shutil, "which", lambda name: None)
+    checks = {c.name: c for c in m.checks()}
+    assert checks["Intermediario de la biblioteca"].ok is True
+    assert checks["Sembrador de la biblioteca"].ok is False and "ClamAV" in checks["Sembrador de la biblioteca"].detail
+    # Without tisma-relay in the package nothing starts, and the diagnosis says why.
+    monkeypatch.setattr(system, "find_relay_program", lambda: None)
+    assert list(m.children()) == ["main"]
+    assert "falta tisma-relay" in {c.name: c for c in m.checks()}["Intermediario de la biblioteca"].detail

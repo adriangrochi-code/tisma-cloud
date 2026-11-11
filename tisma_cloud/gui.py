@@ -876,6 +876,8 @@ class App:
             env = self.m.read_env()
             rows.append(("port", "Puerto", self.m.port(), False))
             rows.append(("master_computes", "El maestro también calcula", self.m.master_computes(), False))
+            rows.append(("relay", "Intermediario de la biblioteca (tisma-relay)", self.m.library_service("relay"), False))
+            rows.append(("seed", "Sembrador de la biblioteca (tisma-relay seed)", self.m.library_service("seed"), False))
             rows += [(key, label, env.get(key, ""), secret) for key, label, secret in MASTER_FIELDS]
         else:
             node = self.m.read_node()
@@ -921,7 +923,10 @@ class App:
             if self.m.role() == "master":
                 self.m.set_port(int(self.fields["port"].get()))
                 self.m.set_master_computes(bool(self.fields["master_computes"].get()))
-                self.m.write_env({k: str(v.get()) for k, v in self.fields.items() if k not in ("port", "master_computes")})
+                for name in ("relay", "seed"):
+                    self.m.set_library_service(name, bool(self.fields[name].get()))
+                self.m.write_env({k: str(v.get()) for k, v in self.fields.items()
+                                  if k not in ("port", "master_computes", "relay", "seed")})
             else:
                 self.m.write_node({k: v.get() for k, v in self.fields.items()})
         except Exception as e:  # noqa: BLE001

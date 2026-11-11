@@ -82,6 +82,27 @@ jobs:
           go vet ./...
           go test -count=1 ./...
           go build -o tisma-relay .
+      # The program for the package of tisma-cloud (dist/tisma-relay/), for Windows and Linux: pure Go, no cgo.
+      - name: Build for the package
+        working-directory: relay
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -e
+          mkdir -p out/windows out/linux
+          GOOS=windows GOARCH=amd64 go build -trimpath -o out/windows/tisma-relay.exe .
+          GOOS=linux GOARCH=amd64 go build -trimpath -o out/linux/tisma-relay .
+          ls -la out/windows out/linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tisma-relay-windows
+          path: relay/out/windows
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tisma-relay-linux
+          path: relay/out/linux
+          retention-days: 7
       # The seeder's virus check with the real ClamAV (a program apart, GPL: called, never linked) and its signatures:
       # the EICAR test file alone and inside a 3MF, a clean 3MF, and the whole seeder with an infected model. When
       # freshclam cannot download the official signatures (database.clamav.net limits the downloads), a signature of
@@ -106,7 +127,7 @@ jobs:
 
   # The server as one program, tisma-cloud (.exe on Windows): master, node and administration (tisma-cloud.spec).
   executable:
-    needs: tests
+    needs: [tests, relay]
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +181,24 @@ jobs:
           pip install httpx > /dev/null
           python deploy/fetch_translation.py --out dist/tisma-profiles
           cat dist/tisma-profiles/SOURCE.txt
+      # The library's relay and seeder (the relay job above): run by the service of the master when turned on.
+      - uses: actions/download-artifact@v4
+        with:
+          name: tisma-relay-${{ matrix.name }}
+          path: dist/tisma-relay
+      - name: tisma-relay in the package
+        run: |
+          set -e
+          ls -la dist/tisma-relay
+          if [ "${{ matrix.name }}" = linux ]; then chmod +x dist/tisma-relay/tisma-relay; fi
+          export TISMA_HOME="$PWD/relay-home"
+          dist/${{ matrix.exe }} role master
+          dist/${{ matrix.exe }} config relay on | grep -E '^relay = on'
+          dist/${{ matrix.exe }} config TISMA_LIBRARY_PROJECT_KEY abababababababababababababababababababababababababababababababab > /dev/null
+          # check answers 1 here (the service is stopped): only the line of the relay is looked at.
+          dist/${{ matrix.exe }} check > relay-check.txt || true
+          cat relay-check.txt
+          grep -E 'Intermediario de la biblioteca: .*tisma-relay[/\\]tisma-relay' relay-check.txt
       - name: Try it
         env:
           TISMA_DATABASE_URL: sqlite:///./try.db
@@ -332,6 +371,7 @@ jobs:
             dist/${{ matrix.exe }}
             dist/tisma-engine
             dist/tisma-profiles
+            dist/tisma-relay
             .env.example
             deploy/node.example.toml
           retention-days: 7

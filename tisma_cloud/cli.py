@@ -164,6 +164,9 @@ def show_config(manager) -> None:
     if role == "master":
         env = manager.read_env()
         print(f"port = {manager.port()}")
+        print(f"master_computes = {'on' if manager.master_computes() else 'off'}    # El maestro también calcula")
+        print(f"relay = {'on' if manager.library_service('relay') else 'off'}    # Intermediario de la biblioteca")
+        print(f"seed = {'on' if manager.library_service('seed') else 'off'}    # Sembrador de la biblioteca")
         for key, label, secret in MASTER_FIELDS:
             value = env.get(key, "")
             print(f"{key} = {'********' if secret and value else value}    # {label}")

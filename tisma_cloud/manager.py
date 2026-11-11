@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -53,7 +54,19 @@ MASTER_FIELDS = [
     ("TISMA_SMTP_USER", "Usuario SMTP", False),
     ("TISMA_SMTP_PASSWORD", "Contraseña SMTP", True),
     ("TISMA_SMTP_FROM", "Remitente de los correos", False),
+    ("TISMA_LIBRARY_PROJECT_KEY", "Biblioteca: clave pública del proyecto (64 cifras hex)", False),
+    ("TISMA_LIBRARY_RELAYS", "Biblioteca: intermediarios que se dan a las apps (PeerId y direcciones)", False),
+    ("TISMA_RELAY_ANNOUNCE", "Intermediario: sus direcciones públicas (/ip4/IP/tcp/4001,...)", False),
+    ("TISMA_SEED_TOKEN", "Sembrador: sesión de una cuenta interna", True),
+    ("TISMA_SEED_ANNOUNCE", "Sembrador: sus direcciones públicas (/ip4/IP/tcp/4002,...)", False),
+    ("TISMA_SEED_GB", "Sembrador: espacio para los modelos [GB] (50)", False),
 ]
+# The library's relay and seeder (tisma-relay of the package), run by the service of the master when turned on:
+# setting of tisma-cloud.toml -> the arguments of tisma-relay.
+LIBRARY_SERVICES = {"relay": [], "seed": ["seed"]}
+# The processes of the service, in its messages.
+SERVICE_NAMES = {"main": "el servicio", "node": "el nodo del maestro", "relay": "el intermediario de la biblioteca",
+                 "seed": "el sembrador de la biblioteca"}
 # Settings of a node: key, label, type, secret.
 NODE_FIELDS = [
     ("master_url", "Dirección del maestro (http://IP:8000)", str, False),
@@ -244,6 +257,41 @@ class Manager:
         """The master also runs jobs, as a node of its own (on unless it was turned off)."""
         return bool(self._settings().get("master_computes", True))
 
+    def library_service(self, name: str) -> bool:
+        """The relay or the seeder of the library runs with the master (off unless turned on)."""
+        return bool(self._settings().get(name, False))
+
+    def set_library_service(self, name: str, on: bool) -> None:
+        data = self._settings()
+        data[name] = bool(on)
+        self._save_settings(data)
+
+    def child_env(self, name: str) -> dict[str, str]:
+        """What the relay or the seeder reads (relay/main.go), from .env, with its own files in the storage folder and
+        the master of this machine by default. Nothing for the master and its node (they read .env themselves)."""
+        if name not in LIBRARY_SERVICES:
+            return {}
+        env = {k: v for k, v in self.read_env().items() if k.startswith("TISMA_") and v}
+        storage = self._storage_dir()
+        out = {"TISMA_MASTER_URL": f"http://127.0.0.1:{self.port()}"}
+        for key in ("TISMA_LIBRARY_PROJECT_KEY", "TISMA_RELAY_ANNOUNCE", "TISMA_CLAMAV", "TISMA_MASTER_URL"):
+            if env.get(key):
+                out[key] = env[key]
+        if name == "relay":
+            out["TISMA_RELAY_KEY"] = str(storage / "relay.key")
+            if env.get("TISMA_RELAY_LISTEN"):
+                out["TISMA_RELAY_LISTEN"] = env["TISMA_RELAY_LISTEN"]
+        else:
+            # Both read TISMA_RELAY_LISTEN (4001 and 4002 by default): the seeder's own is TISMA_SEED_LISTEN.
+            out.update(TISMA_SEED_DIR=str(storage / "seed"), TISMA_SEED_KEY=str(storage / "seed.key"))
+            for key in ("TISMA_SEED_TOKEN", "TISMA_SEED_ANNOUNCE", "TISMA_SEED_GB", "TISMA_SEED_MB_PER_HOUR"):
+                if env.get(key):
+                    out[key] = env[key]
+            out.pop("TISMA_RELAY_ANNOUNCE", None)
+            if env.get("TISMA_SEED_LISTEN"):
+                out["TISMA_RELAY_LISTEN"] = env["TISMA_SEED_LISTEN"]
+        return out
+
     def set_master_computes(self, on: bool) -> None:
         data = self._settings()
         data["master_computes"] = bool(on)
@@ -377,6 +425,8 @@ class Manager:
             self.set_port(int(value))
         elif key == "master_computes":
             self.set_master_computes(value.strip().lower() in ("1", "true", "yes", "si", "sí", "on"))
+        elif key in LIBRARY_SERVICES:
+            self.set_library_service(key, value.strip().lower() in ("1", "true", "yes", "si", "sí", "on"))
         elif key.startswith("TISMA_"):
             self.write_env({key: value})
         else:
@@ -834,6 +884,30 @@ class Manager:
         return found
 
     # ---- diagnosis
+    def _library_service_checks(self) -> list[Check]:
+        """The relay and the seeder of the library, when they are on: tisma-relay of the package, the project key and,
+        for the seeder, its account's session and ClamAV."""
+        on = [n for n in LIBRARY_SERVICES if self.library_service(n)]
+        if not on:
+            return []
+        env = self.read_env()
+        relay = system.find_relay_program()
+        problems = [] if relay else ["falta tisma-relay junto al programa (carpeta tisma-relay del paquete)"]
+        if not (os.environ.get("TISMA_LIBRARY_PROJECT_KEY") or env.get("TISMA_LIBRARY_PROJECT_KEY")):
+            problems.append("falta TISMA_LIBRARY_PROJECT_KEY")
+        out = [Check("Intermediario de la biblioteca", not problems,
+                     "; ".join(problems) or f"{relay}: {env.get('TISMA_RELAY_ANNOUNCE') or 'sin TISMA_RELAY_ANNOUNCE'}")
+               ] if "relay" in on else []
+        if "seed" in on:
+            seed = list(problems)
+            if not env.get("TISMA_SEED_TOKEN"):
+                seed.append("falta TISMA_SEED_TOKEN (la sesión de una cuenta interna)")
+            clam = env.get("TISMA_CLAMAV") or "clamdscan"
+            if not shutil.which(clam):
+                seed.append(f"no se encuentra {clam} (ClamAV, aparte: TISMA_CLAMAV)")
+            out.append(Check("Sembrador de la biblioteca", not seed, "; ".join(seed) or f"{relay}, ClamAV {clam}"))
+        return out
+
     def _library_check(self) -> Check:
         """The library shared between users answers only with its key certified by the owner (library.py)."""
         from . import library
@@ -984,6 +1058,7 @@ class Manager:
                              "Sin servidor de correo (TISMA_SMTP_HOST): los códigos para confirmar una cuenta y elegir "
                              "una contraseña nueva van solo al registro, así que nadie puede confirmar su cuenta"))
             out.append(self._library_check())
+            out += self._library_service_checks()
             env = self.read_env()
             url = env.get("TISMA_PUBLIC_URL", "")
             if url:
@@ -1148,13 +1223,26 @@ class Manager:
                 out["node"] = run_command(self.home, "--child", "--local-node")
             else:
                 print("[tisma-cloud] el maestro no calcula: falta tisma-engine en esta máquina", flush=True)
+        if self.role() == "master":
+            relay = system.find_relay_program()
+            for name, args in LIBRARY_SERVICES.items():
+                if not self.library_service(name):
+                    continue
+                if relay:
+                    # Their keys and files go in the storage folder, which the master makes when it starts.
+                    self._storage_dir().mkdir(parents=True, exist_ok=True)
+                    out[name] = [relay, *args]
+                else:
+                    print(f"[tisma-cloud] {SERVICE_NAMES[name]} no arranca: falta tisma-relay junto al programa",
+                          flush=True)
         return out
 
     def _supervise(self) -> int:
-        """Runs the role in a child process (and the node of the master in another one when it computes too) and starts
-        each one again when it stops with an error (after 5 s, doubling up to a minute while it keeps failing). A clean
-        exit of the master or the node ends the service."""
+        """Runs the role in a child process (and the node of the master in another one when it computes too, and the
+        library's relay and seeder when they are on) and starts each one again when it stops with an error (after 5 s,
+        doubling up to a minute while it keeps failing). A clean exit of the master or the node ends the service."""
         commands = self.children()
+        child_env = {name: self.child_env(name) for name in commands}
         # The children use the unpacked files of the executable of the supervisor (they end with it), not a copy each.
         env = dict(os.environ)
         env.pop("PYINSTALLER_RESET_ENVIRONMENT", None)
@@ -1180,7 +1268,8 @@ class Manager:
                 proc = running.get(name)
                 if proc is None:
                     if now >= restart_at[name]:
-                        running[name] = subprocess.Popen(cmd, cwd=str(self.home), stdin=subprocess.DEVNULL, env=env,
+                        running[name] = subprocess.Popen(cmd, cwd=str(self.home), stdin=subprocess.DEVNULL,
+                                                         env={**env, **child_env[name]},
                                                          creationflags=0x08000000 if os.name == "nt" else 0)  # no window
                         started[name] = now
                     continue
@@ -1193,7 +1282,7 @@ class Manager:
                     return 0
                 if now - started[name] > 300:
                     delay[name] = 5.
-                what = "el servicio" if name == "main" else "el nodo del maestro"
+                what = SERVICE_NAMES.get(name, name)
                 print(f"[tisma-cloud] {time.strftime('%Y-%m-%d %H:%M:%S')}: {what} terminó con el código {code}; "
                       f"arranca de nuevo en {delay[name]:.0f} s", flush=True)
                 restart_at[name] = now + delay[name]

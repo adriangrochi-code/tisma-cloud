@@ -704,6 +704,18 @@ Ajustes: `TISMA_SEED_DIR` (`./library`), `TISMA_SEED_GB` (50, los modelos más n
 `TISMA_SEED_MB_PER_HOUR` (0: sin tope), `TISMA_CLAMAV` (`clamdscan`), `TISMA_SEED_KEY`. La cuenta del sembrador es
 interna (`tisma-cloud admin user-set … --unlimited`): solo una cuenta interna puede marcar «checked».
 
+**Con el paquete, sin compilar nada:** el paquete trae `tisma-relay\` junto a `tisma-cloud.exe` (Windows y Linux, lo
+compila la CI), y el servicio del maestro corre el intermediario y el sembrador como corre su nodo: arrancan con él y
+vuelven a arrancar si se caen. Vienen apagados; se prenden en la ventana (Configuración) o con
+`tisma-cloud config relay on` y `tisma-cloud config seed on`, y después Reiniciar. Toman de `.env` del maestro
+`TISMA_LIBRARY_PROJECT_KEY`, `TISMA_RELAY_ANNOUNCE`, `TISMA_RELAY_LISTEN`, `TISMA_SEED_TOKEN`, `TISMA_SEED_ANNOUNCE`,
+`TISMA_SEED_LISTEN` (el puerto del sembrador: los dos leen `TISMA_RELAY_LISTEN`), `TISMA_SEED_GB`,
+`TISMA_SEED_MB_PER_HOUR` y `TISMA_CLAMAV`; hablan con el maestro de la misma máquina (`http://127.0.0.1:PUERTO`) y
+guardan sus claves y los modelos en `storage\` (`relay.key`, `seed.key`, `seed\`). El Diagnóstico dice qué les falta
+(la clave del proyecto, la sesión del sembrador, ClamAV). En el router: abrir 4001 (intermediario) y 4002
+(sembrador), TCP y UDP. Su registro va al del servicio (`tisma-cloud logs`), y ahí escribe el intermediario la
+dirección para `TISMA_LIBRARY_RELAYS`.
+
 **Piezas escaneadas en la cuenta** (regla 7 bis): «Imprimir» en la app del escáner guarda la pieza de un escaneo
 terminado en la cuenta, privada (`POST /v1/files` con el trabajo; se toma del resultado, que dura `TISMA_RETENTION_H`).
 Tisma la lista en «Mi biblioteca» (`GET /v1/files`) y la baja para laminar; «Publicar» la manda a la biblioteca con
