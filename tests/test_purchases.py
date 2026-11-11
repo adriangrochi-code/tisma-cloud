@@ -94,3 +94,30 @@ def test_app_store_and_microsoft_store(store, ms):  # noqa: F811
     plans = {p["name"]: p for p in ms.get("/v1/plans").json()["plans"]}
     # This server sells through both (the two fixtures share the settings): each store's own product.
     assert plans["pro"]["store_products"] == {"app_store": "tisma_pro", "microsoft_store": MS_PRO}
+
+
+def test_a_manual_payment_and_a_store_subscription_together(play):
+    """The plan is that of the access that lasts longest (cloud.md 5b): a manual payment of another plan recorded
+    during a store subscription took the plan away from what the store keeps charging; and when the store's plan
+    ended, the account stayed in it although only the manual payment of another plan was still paid."""
+    from test_play import user_row
+
+    ana = register(play, "ana@correo.com")
+    play.google.buy("tok-1", account_id(play, ana), "tisma_pro", days=60)
+    assert buy(play, ana, store="google_play", product_id="tisma_pro", purchase_token="tok-1").json()["plan"] == "pro"
+    # One month of basico by transfer: Google still charges pro for 60 days.
+    # (As the panel records it: the panel answers only on the local network, this client comes from internet.)
+    from tisma_cloud import billing
+    from tisma_cloud.models import Plan, User
+
+    with play.app.state.services.db.session() as s:
+        u = s.get(User, user_row(play, "ana@correo.com").id)
+        billing.record_manual(s, u, s.get(Plan, "basico"), 1, 1000, "USD", "transfer")
+    assert play.get("/v1/me", headers=ana).json()["plan"] == "pro"
+    # Google refunds: basico, paid by the transfer, not pro nor the free plan.
+    play.google.subs["tok-1"]["subscriptionState"] = "SUBSCRIPTION_STATE_EXPIRED"
+    play.google.subs["tok-1"]["lineItems"][0]["expiryTime"] = rfc3339(utcnow() - timedelta(minutes=1))
+    assert notify(play, notification("tok-1", 12)).status_code == 200
+    me = play.get("/v1/me", headers=ana).json()
+    assert me["plan"] == "basico" and me["paid"] is True and me["subscription"] is None
+    assert user_row(play, "ana@correo.com").store_until is None

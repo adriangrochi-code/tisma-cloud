@@ -47,16 +47,33 @@ def free_plan(session: Session) -> Plan | None:
                            .order_by(Plan.monthly_hours.desc())).scalars().first() or session.get(Plan, "trial")
 
 
+def _set_plan(user: User, plan: Plan) -> None:
+    # Both: the column may have been set apart from the relationship (billing.approve), and assigning the object the
+    # relationship already holds changes nothing.
+    user.plan = plan
+    user.plan_name = plan.name
+
+
 def update_access(session: Session, user: User) -> None:
+    """The store access of the account and its plan: that of the access that lasts longest (cloud.md 5b), a store's
+    subscription or the paid period (the plan of its last approved payment). When the store's plan ends and nothing
+    else is paid, the free plan again (cloud.md 5c, CC23)."""
+    from .models import Payment
+
     now = utcnow()
     best = best_subscription(session, user, now)
     had_store = user.store_until is not None
     user.store_until = best.entitled_until if best else None
-    if best is not None:
-        user.plan = session.get(Plan, best.plan_name)
-    elif had_store and not (user.paid_until and user.paid_until > now):
-        # The store's plan ended (expired, cancelled, refunded) and nothing else pays it: the free plan again
-        # (cloud.md 5c, CC23).
+    paid = user.paid_until if user.paid_until and user.paid_until > now else None
+    if best is not None and (paid is None or best.entitled_until >= paid):
+        _set_plan(user, session.get(Plan, best.plan_name))
+    elif paid is not None:
+        last = session.execute(select(Payment.plan_name).where(Payment.user_id == user.id,
+                                                               Payment.status == "approved")
+                               .order_by(Payment.paid_at.desc(), Payment.id.desc())).scalars().first()
+        if last is not None and session.get(Plan, last) is not None:
+            _set_plan(user, session.get(Plan, last))
+    elif had_store:
         plan = free_plan(session)
         if plan is not None:
-            user.plan = plan
+            _set_plan(user, plan)

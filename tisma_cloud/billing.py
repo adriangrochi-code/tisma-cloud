@@ -122,6 +122,11 @@ def approve(session: Session, payment: Payment) -> None:
     user.extra_printers = payment.extra_printers
     payment.status = "approved"
     payment.paid_at = now
+    session.flush()
+    # A store subscription that lasts longer keeps its plan (cloud.md 5b: the longest access).
+    from .stores import update_access
+
+    update_access(session, user)
 
 
 def record_manual(session: Session, user: User, plan: Plan, months: int, amount_cents: int, currency: str,
