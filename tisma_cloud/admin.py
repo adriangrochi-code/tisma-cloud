@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import sys
 from datetime import datetime
 
@@ -150,6 +151,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("node-reject", help="refuse a machine that asks to be a node")
     p.add_argument("id")
     sub.add_parser("queue", help="jobs waiting and running by class")
+    p = sub.add_parser("metrics", help="the jobs, waits, failures, accounts and nodes of the last days")
+    p.add_argument("--days", type=float, default=1., help="how many days back (1 by default)")
+    p.add_argument("--json", action="store_true", help="as JSON")
     sub.add_parser("library-key", help="the public key of the library and whether its certificate is installed")
     p = sub.add_parser("library-cert", help="install the owner's signature of the library key (project key, base64)")
     p.add_argument("certificate")
@@ -345,6 +349,14 @@ def main(argv: list[str] | None = None) -> int:
             counts = {(c, st): n for c, st, n in rows}
             for c in JOB_CLASSES:
                 print(f"{c:14} queued {counts.get((c, 'queued'), 0):5}  running {counts.get((c, 'running'), 0):5}")
+        elif args.command == "metrics":
+            from . import metrics
+
+            m = metrics.report(s, args.days, node_minutes=settings.alert_node_minutes)
+            if args.json:
+                print(json.dumps(m, indent=1, ensure_ascii=False))
+            else:
+                print(metrics.text(m))
         elif args.command == "reports":
             statuses = [x for x in args.status.split(",") if x]
             unknown = [x for x in statuses if x not in reports.STATUSES]

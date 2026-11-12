@@ -97,6 +97,12 @@
       <div class="stat"><span class="muted">Trabajos corriendo</span><b id="s-running">–</b></div>
     </div>
 
+    <h2>Últimas 24 horas</h2>
+    <p class="muted">Los trabajos que terminaron en el último día: cuántos salieron bien, cuántos fallaron y por qué, cuánto
+      esperaron en la cola y cuánto tardaron. Lo mismo para más días: <code>tisma-cloud admin metrics --days 7</code>.</p>
+    <div class="stats" id="metrics-stats"></div>
+    <div class="table-wrap"><table id="metrics-errors"></table></div>
+
     <h2>Servidores</h2>
     <div id="requests"></div>
     <p class="muted">Cada servidor toma los tipos de trabajo marcados, en ese orden: primero el 1, si no hay, el 2… Un tipo sin marcar no lo hace nunca.</p>
@@ -498,6 +504,21 @@ function renderPlans(plans) {
 }
 $("plan-new").onclick = () => editPlan(null);
 
+function renderMetrics(m) {
+  const secs = (v) => (v === null || v === undefined) ? "–" : `${Math.round(v)} s`;
+  const stat = (label, value) => el("div", { class: "stat" }, el("span", { class: "muted" }, label), el("b", {}, String(value)));
+  $("metrics-stats").replaceChildren(
+    stat("Bien", m.done), stat("Fallidos", m.failed),
+    stat("Fallan", m.failure_rate === null ? "–" : `${(m.failure_rate * 100).toFixed(1)} %`),
+    stat("Espera (mediana / 90 %)", `${secs(m.wait_s.median)} / ${secs(m.wait_s.p90)}`),
+    stat("Cálculo (mediana / 90 %)", `${secs(m.run_s.median)} / ${secs(m.run_s.p90)}`),
+    stat("Horas usadas", m.hours_used),
+    stat("Cuentas con trabajos", m.accounts.with_jobs), stat("Cuentas nuevas", m.accounts.new));
+  $("metrics-errors").replaceChildren(el("tr", {}, el("th", {}, "Error más común"), el("th", {}, "Veces")),
+    ...(m.top_errors.length ? m.top_errors.map((e) => el("tr", {}, el("td", {}, e.error), el("td", {}, e.count)))
+      : [el("tr", {}, el("td", { colspan: 2, class: "muted" }, "Ninguno"))]));
+}
+
 function renderCapacity(cap) {
   const r = cap.resources;
   $("capacity-total").textContent = `${r.nodes} nodos habilitados: ${r.cpu_cores} núcleos de procesador y ${r.cuda_cores} núcleos CUDA.`;
@@ -684,6 +705,7 @@ async function refresh() {
       api("/v1/admin/node-requests"), api("/v1/admin/plans")]);
     renderPlans(plans.plans);
     renderCapacity(await api("/v1/admin/capacity"));
+    renderMetrics(await api("/v1/admin/metrics?days=1"));
     renderRequests(requests.requests);
     // Open problems on top (also sent by e-mail); the solved ones of the week, smaller.
     const open = alerts.alerts.filter((a) => !a.resolved_at);

@@ -42,12 +42,19 @@ tisma-cloud status
 tisma-cloud logs 100               # las últimas líneas del registro (logs\tisma-cloud.log)
 tisma-cloud check
 tisma-cloud admin queue            # trabajos en espera y corriendo, por clase
+tisma-cloud admin metrics          # el último día: bien y fallidos, espera, errores más comunes, cuentas, nodos
+tisma-cloud admin metrics --days 7 # la semana
 tisma-cloud admin node-list        # los nodos y si están conectados
 tisma-cloud panel                  # el panel de control (/admin) en una ventana
 ```
 
-Los avisos (un nodo caído, una copia que falló, el disco lleno) llegan por correo a `TISMA_ALERT_EMAILS` y se ven en
-rojo arriba del panel (README, «Avisos de problemas»).
+El panel muestra lo mismo arriba, en «Últimas 24 horas». Durante la beta, mirar cada día que «Fallan» quede bajo
+(el error más común dice por qué) y que la espera no crezca.
+
+Los avisos llegan por correo a `TISMA_ALERT_EMAILS` (o a los administradores) y se ven en rojo arriba del panel
+(README, «Avisos de problemas»): un nodo que no responde hace `TISMA_ALERT_NODE_MINUTES` (5), un trabajo que espera más
+de `TISMA_ALERT_QUEUE_MINUTES` (30), menos de `TISMA_ALERT_DISK_FREE_GB` (5) libres, una copia de seguridad que falló y
+ClamAV sin responder. Cuando se resuelve, llega otro correo.
 
 ## Respaldar
 

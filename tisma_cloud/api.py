@@ -3386,6 +3386,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(404, "No such user")
             return {"user": user_view(user), "account": scheduler.account(s, user, cfg.grace_days).as_dict()}
 
+    @app.get("/v1/admin/metrics")
+    def admin_metrics(_admin: AdminDep, days: float = 1.) -> dict:
+        """The jobs, waits, failures, accounts and nodes of the last days (metrics.py), for the panel."""
+        from . import metrics
+
+        if not 0 < days <= 90:
+            raise HTTPException(422, "days must be above 0 and at most 90")
+        with db.session() as s:
+            return metrics.report(s, days, node_minutes=cfg.alert_node_minutes)
+
     @app.get("/v1/admin/alerts")
     def admin_alerts(_admin: AdminDep) -> dict:
         """The open alerts and the ones solved in the last week."""
