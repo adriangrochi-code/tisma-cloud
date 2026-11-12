@@ -410,9 +410,9 @@ o Cura se lamina con sus propios ajustes traducidos; sin ellas, con los del trab
 Todo proyecto lo lamina el motor: los del Tisma nuevo (con `Metadata/tisma_project.json`), los modelos sin ajustes y
 los de otros laminadores, de los que el motor toma lo que conoce. No hay otro programa al que pasarle un trabajo si el
 motor falla: el trabajo falla con el motivo del motor. Un nodo sin motor (uno solo para escaneos) rechaza los demás
-trabajos con el código `needs_engine`. El resumen de cada laminado lo dice (`"slicer": "tisma-engine"`). El 06-11 el
-*nightly* respondía el código 2 a un modelo suelto (lo laminaba entonces Tisma Slicer); la CI prueba un modelo suelto
-con cada *nightly* sin frenar el paquete.
+trabajos con el código `needs_engine`. El resumen de cada laminado lo dice (`"slicer": "tisma-engine"`). El motor
+lamina un modelo suelto con sus ajustes por defecto desde su *nightly* del 12-11 (ffc7502); la CI lo prueba con cada
+*nightly* y no arma el paquete si falla.
 
 Se maneja de dos formas, con lo mismo:
 

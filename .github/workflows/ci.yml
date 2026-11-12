@@ -295,7 +295,8 @@ jobs:
           tc logs 15
           if (-not $back) { throw "the master was not started again" }
           tc stop
-      # The node of the package finds tisma-engine by itself and slices projects of the new Tisma with it.
+      # The node of the package finds tisma-engine by itself and slices with it projects of the new Tisma and a bare
+      # model (a 3MF with no settings: since the nightly of 11-12, ffc7502, the engine slices it with its defaults).
       - name: Programs of the package
         run: |
           set -e
@@ -307,17 +308,18 @@ jobs:
           dist/${{ matrix.exe }} config | grep -E '^translation_dir = .*tisma-profiles[/\\]translation'
           unset TISMA_HOME
           pip install ".[master,test]" > /dev/null
-          TISMA_ENGINE_BIN="$PWD/$engine" pytest -q -s tests/test_node.py -k real_engine_slices_the_new -rs | tee real.log
-          grep -q "1 passed" real.log
-      # orient, aero and analyze of the engine's nightly against cloud.md (rules 19 to 19c), and a bare model sliced:
-      # reported, not blocking the package (a nightly that strays is told to the engine).
-      - name: tisma-engine contract of orient, aero and analyze, and a bare model (its nightly)
+          TISMA_ENGINE_BIN="$PWD/$engine" pytest -q -s tests/test_node.py \
+            -k "real_engine_slices_the_new or real_engine_slices_a_bare_model" -rs | tee real.log
+          grep -q "2 passed" real.log
+      # orient, aero and analyze of the engine's nightly against cloud.md (rules 19 to 19c): reported, not blocking the
+      # package (a nightly that strays is told to the engine).
+      - name: tisma-engine contract of orient, aero and analyze (its nightly)
         continue-on-error: true
         shell: bash
         run: |
           if [ "${{ matrix.name }}" = windows ]; then engine=dist/tisma-engine/tisma-engine.exe; else
             engine=dist/tisma-engine/tisma-engine; fi
-          TISMA_ENGINE_BIN="$PWD/$engine" pytest -q -s tests/test_node.py -k "real_engine_keeps_the_contract or real_engine_slices_a_bare_model" -rs
+          TISMA_ENGINE_BIN="$PWD/$engine" pytest -q -s tests/test_node.py -k real_engine_keeps_the_contract -rs
       # The beta as it will run (deploy/BETA.md): the packaged master as a service, computing with its own node and the
       # tisma-engine of the package, and deploy/smoke.py from outside the process: health, public plans, the account and
       # a real project sliced by that node, its G-code back.

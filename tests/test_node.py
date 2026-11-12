@@ -537,8 +537,8 @@ def test_real_engine_slices_the_new_tisma_projects(client, f, tmp_path):
 @pytest.mark.skipif(not ENGINE, reason="set TISMA_ENGINE_BIN")
 def test_real_engine_slices_a_bare_model(client, f, tmp_path):
     """A 3MF with no settings (a model from a library, or saved by another program). The engine is the only slicer of
-    the nodes since 2026-11-11; on 11-06 it gave code 2 for any 3MF not saved by Tisma, which Tisma Slicer sliced
-    then. Reported by the CI without blocking the package, as the contract of the other commands."""
+    the nodes since 2026-11-11; it refused any 3MF not saved by Tisma (not_a_project) until its nightly of 11-12
+    (ffc7502), which slices it with its defaults. Part of the package check of the CI since then."""
     cfg = NodeConfig(master_url="http://testserver", token="", tisma_engine=ENGINE, work_dir=tmp_path / "work", gpu=False,
                      timeout_s=600)
     user = f.user()
