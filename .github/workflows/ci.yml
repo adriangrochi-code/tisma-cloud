@@ -166,19 +166,24 @@ jobs:
           if gh release download nightly -R "$ENGINE_REPO" -p "tisma-engine-nightly-*-${{ matrix.name }}-x64.zip" -D engine-download; then
             gh release view nightly -R "$ENGINE_REPO" --json name,body -q '.name + "\n" + .body' > engine-source.txt
           else
-            # No nightly release (it is deleted and published again on every nightly, and publishing can fail): the
-            # newest package of the engine's nightly runs, an artifact of that run (a nightly run inside its 20 h
-            # window ends well without building one, so the newest artifact is looked for, not the newest run).
-            art=$(gh api "repos/$ENGINE_REPO/actions/artifacts?per_page=100" --jq \
-              '[.artifacts[] | select(.expired | not) | select(.name | test("^tisma-engine-nightly-.*-${{ matrix.name }}-x64"))]
-               | sort_by(.created_at) | last | select(. != null)
-               | "\(.workflow_run.id) \(.workflow_run.head_sha) \(.created_at) \(.name)"')
-            [ -n "$art" ] || { echo "no nightly release and no package of a nightly run of tisma-engine"; exit 1; }
-            echo "::warning::tisma-engine has no nightly release: the package of its run ${art}"
-            set -- $art
-            gh run download "$1" -R "$ENGINE_REPO" -n "$4" -D engine-download/"$4"
-            printf 'tisma-engine nightly package %s of run %s (commit %s, %s): https://github.com/%s/actions/runs/%s\n' \
-              "$4" "$1" "$2" "$3" "$ENGINE_REPO" "$1" > engine-source.txt
+            # No nightly release (publishing it can fail): the newest package of the engine's nightly runs (workflow
+            # nightly.yml), an artifact named by its system (linux-x64, windows-x64) that holds the package's zip.
+            # A nightly run inside its 20 h window ends well without building one, so the runs are looked through,
+            # newest first.
+            found_run=""
+            for run in $(gh run list -R "$ENGINE_REPO" --workflow nightly.yml --status success --limit 20 \
+                         --json databaseId -q '.[].databaseId'); do
+              if gh api "repos/$ENGINE_REPO/actions/runs/$run/artifacts" \
+                   --jq '.artifacts[] | select(.expired | not) | .name' | grep -qx "${{ matrix.name }}-x64"; then
+                found_run=$run; break
+              fi
+            done
+            [ -n "$found_run" ] || { echo "no nightly release and no package of a nightly run of tisma-engine"; exit 1; }
+            info=$(gh run view "$found_run" -R "$ENGINE_REPO" --json headSha,createdAt -q '"\(.headSha) \(.createdAt)"')
+            echo "::warning::tisma-engine has no nightly release: the package of its nightly run $found_run ($info)"
+            gh run download "$found_run" -R "$ENGINE_REPO" -n "${{ matrix.name }}-x64" -D engine-download
+            printf 'tisma-engine nightly run %s (commit and date: %s): https://github.com/%s/actions/runs/%s\n' \
+              "$found_run" "$info" "$ENGINE_REPO" "$found_run" > engine-source.txt
           fi
           # A zip inside (the release asset, or an artifact holding it) is unpacked; then the folder of the program is
           # taken, wherever it is.
