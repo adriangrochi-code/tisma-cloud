@@ -248,6 +248,9 @@ def matches(r, query: str) -> bool:  # noqa: ANN001
 def system_of(os_text: str) -> str:
     """The family of a system ("Windows 11 Pro" -> "Windows") for the filters."""
     os_text = (os_text or "").strip()
+    # iPadOS goes with iOS (cloud.md rule 11: the iPhone and iPad app is one).
+    if "ipados" in os_text.lower():
+        return "iOS"
     for name in ("Windows", "macOS", "Android", "iOS", "Linux"):
         if name.lower() in os_text.lower() or (name == "macOS" and "mac os" in os_text.lower()):
             return name

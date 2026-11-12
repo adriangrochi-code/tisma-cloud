@@ -426,3 +426,11 @@ def test_a_report_from_the_iphone_app_is_its_own_group(client, f):
     groups = client.get("/v1/admin/reports", headers=admin).json()["groups"]
     assert sorted((g["app"], g["reports"]) for g in groups) == [("android", 1), ("ios", 2)]
     assert client.post("/v1/reports", json=report(app="iphone")).status_code == 422
+
+
+def test_the_ipad_is_filtered_with_the_iphone():
+    """cloud.md rule 11: a system of iPadOS is grouped with iOS in the panel's filters."""
+    assert reports.system_of("iPadOS 18.1") == "iOS"
+    assert reports.system_of("iOS 18.1") == "iOS"
+    assert reports.system_of("macOS 15.1") == "macOS"
+    assert reports.system_of("Windows 11 Pro") == "Windows"
