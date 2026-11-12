@@ -646,7 +646,7 @@ class ProgressBody(BaseModel):
 
 
 class ReportBody(BaseModel):
-    """A problem reported from Tisma (pc), the app (android) or the web site."""
+    """A problem reported from Tisma (pc), the app (android, ios) or the web site."""
     app: str = Field(pattern="^(" + "|".join(reports.APPS) + ")$")
     kind: str = Field(default="bug", pattern="^(" + "|".join(reports.KINDS) + ")$")
     title: str = Field(min_length=3, max_length=reports.TITLE_MAX)

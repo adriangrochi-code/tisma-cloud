@@ -66,7 +66,7 @@ def test_a_report_without_account_is_kept_clean(client):
 
 
 def test_wrong_values_and_tokens_are_refused(client):
-    assert client.post("/v1/reports", json=report(app="ios")).status_code == 422
+    assert client.post("/v1/reports", json=report(app="mac")).status_code == 422
     assert client.post("/v1/reports", json=report(kind="spam")).status_code == 422
     assert client.post("/v1/reports", json=report(title="x")).status_code == 422
     assert client.post("/v1/reports", json=report(), headers={"Authorization": "Bearer tu_wrong"}).status_code == 401
@@ -415,3 +415,14 @@ def test_the_longest_report_allowed_fits_in_a_request(client):
         assert len(data) > 512 << 10
         r = client.post("/v1/reports", content=data, headers={"Content-Type": "application/json"})
         assert r.status_code == 201, (len(data), r.text[:200])
+
+
+def test_a_report_from_the_iphone_app_is_its_own_group(client, f):
+    """cloud.md rule 11: «ios» for the reports of the app on the iPhone, grouped apart from the same text on Android."""
+    admin = f.user("admin@x.com", admin=True)
+    for app in ("ios", "android", "ios"):
+        assert client.post("/v1/reports", json=report(app=app, kind="bug", title="The camera does not open",
+                                                      log="")).status_code == 201
+    groups = client.get("/v1/admin/reports", headers=admin).json()["groups"]
+    assert sorted((g["app"], g["reports"]) for g in groups) == [("android", 1), ("ios", 2)]
+    assert client.post("/v1/reports", json=report(app="iphone")).status_code == 422

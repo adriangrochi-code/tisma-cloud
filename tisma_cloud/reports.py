@@ -23,7 +23,7 @@ from datetime import datetime
 
 from . import triage
 
-APPS = ("pc", "android", "web")
+APPS = ("pc", "android", "ios", "web")
 KINDS = ("bug", "crash", "suggestion")
 STATUSES = ("new", "confirmed", "fixed", "wontfix", "duplicate")
 
