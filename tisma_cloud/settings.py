@@ -174,6 +174,8 @@ class Settings:
     alert_emails: str = field(default_factory=lambda: os.environ.get("TISMA_ALERT_EMAILS", ""))
     alert_node_minutes: int = field(default_factory=lambda: _int("TISMA_ALERT_NODE_MINUTES", 5))
     alert_queue_minutes: int = field(default_factory=lambda: _int("TISMA_ALERT_QUEUE_MINUTES", 30))
+    # The public state (GET /v1/status, /estado) says «with delays» when the oldest job waiting waited longer than this.
+    status_slow_minutes: int = field(default_factory=lambda: _int("TISMA_STATUS_SLOW_MINUTES", 10))
     alert_disk_free_gb: int = field(default_factory=lambda: _int("TISMA_ALERT_DISK_FREE_GB", 5))
     alert_repeat_h: int = field(default_factory=lambda: _int("TISMA_ALERT_REPEAT_H", 12))
     # Key of the web site for /v1/site (it creates the users and records their payments). Empty: disabled.

@@ -1082,6 +1082,8 @@ python -m tisma_cloud.admin reports --format jsonl --app android
 | Quién | Método y ruta | Qué hace |
 |---|---|---|
 | todos | `GET /v1/health`, `GET /v1/plans` | estado, planes |
+| todos | `GET /v1/status`; la página `/estado` | estado público del servicio: `status` `ok`, `slow` o `down` (funcionando, con demoras, caído) por los nodos conectados y la espera de la cola (`TISMA_STATUS_SLOW_MINUTES`, 10), con `label_*` y `message_*` en español e inglés; sin datos de usuarios; se calcula como mucho cada 15 s |
+| administrador | `GET /v1/admin/metrics?days=N` | los trabajos terminados, la espera, los errores más comunes, las cuentas y los nodos del período (el panel y `tisma-cloud admin metrics`) |
 | usuario | `POST /v1/auth/login` `{email, password, device}` | token del dispositivo |
 | usuario | `POST /v1/auth/logout`, `GET /v1/me` | cerrar sesión; plan, al día, horas, trabajos activos |
 | usuario | `GET /v1/me/sessions`, `DELETE /v1/me/sessions/{id}`, `POST /v1/me/sessions/close-others` | dispositivos con sesión abierta; cerrar uno o todos los demás |

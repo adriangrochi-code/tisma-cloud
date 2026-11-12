@@ -101,3 +101,42 @@ def text(m: dict) -> str:
         lines.append("Errores más comunes:")
         lines += [f"  {e['count']:4} × {e['error']}" for e in m["top_errors"]]
     return "\n".join(lines)
+
+
+# The public state of the service (GET /v1/status, the page /estado): what the app and the program show as a notice.
+STATUS_TEXT = {
+    "ok": ("Funcionando", "Working"),
+    "slow": ("Con demoras", "Delayed"),
+    "down": ("Caído", "Down"),
+}
+
+
+def status(session: Session, node_minutes: int = 5, slow_minutes: int = 10, now: datetime | None = None) -> dict:
+    """«down» when no enabled node answered in the last «node_minutes»; «slow» when the oldest job waiting has waited
+    more than «slow_minutes», or some kinds of computing have no node connected that takes them; «ok» otherwise.
+    No data of any user: the counts of nodes and the longest wait only."""
+    now = now or utcnow()
+    seen = now - timedelta(minutes=node_minutes)
+    online = [n for n in session.execute(select(Node).where(Node.enabled.is_(True))).scalars()
+              if n.last_seen is not None and n.last_seen >= seen]
+    served = {c for n in online for c in n.priority_list}
+    unavailable = [c for c in JOB_CLASSES if c not in served]
+    oldest = session.execute(select(func.min(Job.created_at)).where(Job.status == "queued")).scalar_one()
+    wait_s = max(0, int((now - oldest).total_seconds())) if oldest is not None else 0
+    if not online:
+        state = "down"
+        es, en = ("No hay servidores de cálculo conectados: los trabajos esperan en la cola hasta que vuelvan.",
+                  "No computing servers are connected: jobs wait in the queue until they are back.")
+    elif wait_s > slow_minutes * 60 or unavailable:
+        state = "slow"
+        parts = ([("Hay más espera de lo normal.", "Waiting times are longer than usual.")]
+                 if wait_s > slow_minutes * 60 else [])
+        if unavailable:
+            parts.append(("Algunos cálculos no están disponibles ahora.", "Some kinds of computing are not available now."))
+        es, en = " ".join(p[0] for p in parts), " ".join(p[1] for p in parts)
+    else:
+        state, es, en = "ok", "Todo funciona con normalidad.", "Everything is working normally."
+    label_es, label_en = STATUS_TEXT[state]
+    return {"status": state, "label_es": label_es, "label_en": label_en, "message_es": es, "message_en": en,
+            "unavailable": unavailable, "longest_wait_s": wait_s, "nodes_online": len(online),
+            "checked_at": now.isoformat() + "Z"}

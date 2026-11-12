@@ -62,3 +62,48 @@ def test_percentiles():
     assert metrics._percentile([], .5) is None
     assert metrics._percentile([3., 1., 2.], .5) == 2.
     assert metrics._percentile([float(i) for i in range(1, 11)], .9) == 9.
+
+
+def test_public_status(client, f, monkeypatch):
+    """GET /v1/status and /estado: down without nodes, slow with a long wait or a kind of computing nobody takes, ok
+    otherwise; no data of any user."""
+    from tisma_cloud import api
+    from tisma_cloud.models import Node
+
+    monkeypatch.setattr(api, "STATUS_CACHE_S", 0.)
+    s = client.get("/v1/status").json()
+    assert s["status"] == "down" and s["label_es"] == "Caído" and s["label_en"] == "Down" and s["nodes_online"] == 0
+    node = f.node("n1", ",".join(["fea_optimize", "fea", "slice_large", "slice", "aero", "orient", "scan"]))
+    client.post("/v1/node/claim", headers=node, json={})  # the node is seen
+    s = client.get("/v1/status").json()
+    assert s["status"] == "ok" and s["unavailable"] == [] and s["message_en"] == "Everything is working normally."
+    # A job waiting longer than TISMA_STATUS_SLOW_MINUTES (10).
+    user = f.user()
+    job = f.submit(user)
+    with f.db.session() as session:
+        session.get(Job, job["id"]).created_at = utcnow() - timedelta(minutes=11)
+    s = client.get("/v1/status").json()
+    assert s["status"] == "slow" and s["longest_wait_s"] >= 660 and s["label_es"] == "Con demoras"
+    assert "ana@x.com" not in str(s)
+    # No node connected takes a kind of computing.
+    with f.db.session() as session:
+        session.get(Job, job["id"]).created_at = utcnow()
+        session.query(Node).one().priorities = "slice"
+    s = client.get("/v1/status").json()
+    assert s["status"] == "slow" and "aero" in s["unavailable"] and "Algunos cálculos" in s["message_es"]
+    # Only that: no word of a long wait.
+    assert s["message_es"] == "Algunos cálculos no están disponibles ahora." and "Waiting" not in s["message_en"]
+    # The node stopped answering.
+    with f.db.session() as session:
+        session.query(Node).one().last_seen = utcnow() - timedelta(minutes=6)
+    assert client.get("/v1/status").json()["status"] == "down"
+    # Without a session, and the page.
+    page = client.get("/estado")
+    assert page.status_code == 200 and "/v1/status" in page.text and "script-src 'sha256-" in \
+        page.headers["content-security-policy"]
+
+
+def test_public_status_is_cached(client, f):
+    first = client.get("/v1/status").json()
+    f.node("n1", "slice")
+    assert client.get("/v1/status").json() == first

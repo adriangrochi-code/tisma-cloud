@@ -48,7 +48,9 @@ tisma-cloud admin node-list        # los nodos y si están conectados
 tisma-cloud panel                  # el panel de control (/admin) en una ventana
 ```
 
-El panel muestra lo mismo arriba, en «Últimas 24 horas». Durante la beta, mirar cada día que «Fallan» quede bajo
+El panel muestra lo mismo arriba, en «Últimas 24 horas». Lo que ve la gente está en
+`https://tismaservidores.net/estado` (funcionando, con demoras o caído; lo mismo leen la app y el programa en
+`/v1/status`). Durante la beta, mirar cada día que «Fallan» quede bajo
 (el error más común dice por qué) y que la espera no crezca.
 
 Los avisos llegan por correo a `TISMA_ALERT_EMAILS` (o a los administradores) y se ven en rojo arriba del panel

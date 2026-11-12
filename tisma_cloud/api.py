@@ -534,6 +534,10 @@ def script_hashes(page: str) -> str:
                     for script in re.findall(r"<script>(.*?)</script>", page, re.S))
 
 
+# How long the public state (GET /v1/status) is kept before it is computed again.
+STATUS_CACHE_S = 15.
+
+
 def static_page(name: str) -> tuple[str, dict[str, str]]:
     page = resources.files("tisma_cloud").joinpath(f"static/{name}").read_text(encoding="utf-8")
     headers = dict(PAGE_HEADERS)
@@ -1130,6 +1134,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "google_client_id": services.google.client_ids[0] if services.google.client_ids else "",
                 "play_payments": services.play is not None, "apple_payments": services.apple is not None,
                 "microsoft_payments": services.microsoft is not None}
+
+    # The public state of the service (metrics.status), for the app, the program and the page /estado: computed at
+    # most every STATUS_CACHE_S, since anyone may ask.
+    status_cache: dict[str, Any] = {"at": 0., "value": None}
+
+    @app.get("/v1/status")
+    def service_status() -> dict:
+        from . import metrics
+
+        now = time.monotonic()
+        if status_cache["value"] is None or now - status_cache["at"] > STATUS_CACHE_S:
+            with db.session() as s:
+                status_cache["value"] = metrics.status(s, cfg.alert_node_minutes, cfg.status_slow_minutes)
+            status_cache["at"] = now
+        return status_cache["value"]
+
+    @app.get("/estado", response_class=HTMLResponse, include_in_schema=False)
+    def status_page() -> HTMLResponse:
+        page, headers = static_page("estado.html")
+        return HTMLResponse(page, headers=headers)
 
     # The signed list of versions, byte for byte (updates.py): a second address for the programs and the app.
     def update_file(index: int, media_type: str) -> Response:

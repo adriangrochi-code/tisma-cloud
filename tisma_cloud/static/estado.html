@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Tisma Cloud · Estado</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --bg: #f4f3f7; --panel: #fff; --text: #1d1b22; --muted: #6b6775; --line: #e2dfe8;
+          --ok: #1f8a4c; --bad: #c0352b; --warn: #b26a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16151a; --panel: #211f27; --text: #ecebf0; --muted: #a39fae; --line: #34313d;
+            --ok: #4cc27f; --bad: #f06a5f; --warn: #e0a238; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 40px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 18px; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .state { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 600; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--muted); flex: none; }
+  .ok .dot { background: var(--ok); } .slow .dot { background: var(--warn); } .down .dot { background: var(--bad); }
+  .en { color: var(--muted); }
+  p { margin: 10px 0 0; }
+  .muted { color: var(--muted); font-size: 13px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tisma Cloud</h1>
+  <div class="box" id="box">
+    <div class="state"><span class="dot"></span><span id="label">…</span></div>
+    <p id="message-es"></p>
+    <p class="en" id="message-en"></p>
+  </div>
+  <p class="muted" id="checked"></p>
+</main>
+<script>
+"use strict";
+// The public state of the service (GET /v1/status): no data of any user. Asked again every minute.
+async function load() {
+  const box = document.getElementById("box");
+  try {
+    const r = await fetch("/v1/status", { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    const s = await r.json();
+    box.className = "box " + s.status;
+    document.getElementById("label").textContent = `${s.label_es} · ${s.label_en}`;
+    document.getElementById("message-es").textContent = s.message_es;
+    document.getElementById("message-en").textContent = s.message_en;
+    document.getElementById("checked").textContent =
+      `Revisado / checked: ${new Date(s.checked_at).toLocaleString()}`;
+  } catch (e) {
+    box.className = "box down";
+    document.getElementById("label").textContent = "Sin respuesta · No answer";
+    document.getElementById("message-es").textContent = "El servidor no responde. Probá de nuevo en unos minutos.";
+    document.getElementById("message-en").textContent = "The server does not answer. Try again in a few minutes.";
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
