@@ -110,10 +110,10 @@ class UpdateMirror:
         with self._lock:
             return self._pair
 
-    def _failed(self, error: str) -> None:
+    def _failed(self, error: str, quiet: bool = False) -> None:
         # Once per kind of failure, not every hour (before the release exists, GitHub answers 404 for days).
         if error != self.error:
-            log.warning("%s", error)
+            (log.info if quiet else log.warning)("%s", error)
         self.error = error
 
     def refresh(self) -> bool:
@@ -124,6 +124,14 @@ class UpdateMirror:
             try:
                 listing = self.fetch(self.url)
                 signature = self.fetch(self.url + ".sig")
+            except httpx.HTTPStatusError as ex:
+                if ex.response.status_code == 404:
+                    # Nothing published there yet (the release of the programs' versions does not exist): not a
+                    # failure of the service (beta drill, 11-12).
+                    self._failed(f"Sin actualizaciones publicadas todavía ({self.url})", quiet=True)
+                else:
+                    self._failed(f"The list of versions could not be downloaded: {ex}")
+                return False
             except (httpx.HTTPError, OSError, ValueError) as ex:
                 self._failed(f"The list of versions could not be downloaded: {ex}")
                 return False

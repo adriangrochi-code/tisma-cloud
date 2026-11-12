@@ -112,12 +112,32 @@ def serve_master(host: str, port: int) -> int:
                                                  files, settings.max_connections)
     # As deploy/Dockerfile.master: short keep-alive. No proxy_headers: the master reads the user's address itself, and
     # only from a trusted proxy (TISMA_TRUSTED_PROXIES); uvicorn would take X-Forwarded-For from anyone.
+    import logging as _logging
+
+    _logging.getLogger("uvicorn.error").addFilter(ShutdownCancelFilter())
     # At most 5 s to close on a stop: the long waits of nodes and bridges (up to 20 s) would hold «tisma-cloud stop»
     # until the supervisor's limit (found in the beta drill, 11-12); they ask again by themselves.
     uvicorn.run(create_app(settings), host=host, port=port, proxy_headers=False,
                 limit_concurrency=settings.max_connections, timeout_keep_alive=5, server_header=False, backlog=4096,
                 access_log=settings.access_log, timeout_graceful_shutdown=5)
     return 0
+
+
+class ShutdownCancelFilter:
+    """Drops uvicorn's «Exception in ASGI application» for a long wait (a node or a bridge waiting for work) cancelled
+    because the master is stopping: a stop, not an error (its traceback filled the log at every stop, beta drill
+    11-12). Every other error is logged as before."""
+
+    def filter(self, record) -> bool:  # noqa: ANN001
+        import asyncio
+
+        exc = record.exc_info[1] if record.exc_info else None
+        if isinstance(exc, asyncio.CancelledError) and "graceful shutdown" in str(exc):
+            return False
+        if "timeout graceful shutdown exceeded" in record.getMessage():
+            # «Cancel N running task(s)…»: what a stop does, as information.
+            record.levelno, record.levelname = 20, "INFO"
+        return True
 
 
 def run_master(args: list[str]) -> int:
@@ -389,19 +409,20 @@ def run_restore(manager, rest: list[str]) -> int:
     from . import backup
 
     if len(rest) != 1:
-        print("Usage: tisma-cloud restore FILE (a backup from the backups/daily or backups/weekly folder)",
+        print("Uso: tisma-cloud restore ARCHIVO (una copia de la carpeta backups/daily o backups/weekly)",
               file=sys.stderr)
         return 2
     settings = _master_settings(manager)
     if manager.status().running:
-        print("Error: stop the service first (tisma-cloud stop)", file=sys.stderr)
+        print("Error: primero detené el servicio (tisma-cloud stop)", file=sys.stderr)
         return 1
     try:
         db_file = backup.restore_sqlite(Path(rest[0]), settings.database_url)
     except backup.BackupError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-    print(f"Restored into {db_file} (the one it replaced: {db_file.name}.before-restore). Start the service again.")
+    print(f"Restaurada en {db_file} (la que reemplazó quedó como {db_file.name}.before-restore). Iniciá el servicio "
+          f"de nuevo (tisma-cloud start).")
     return 0
 
 

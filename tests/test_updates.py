@@ -132,3 +132,46 @@ def test_the_three_step_certification_keeps_the_project_key_too(tmp_path):
     public = library.public_bytes(project.public_key())
     key.install_certificate(library.b64(project.sign(library.CERT_PREFIX + key.public)), library.b64(public))
     assert library.certified_project_key(tmp_path) == public.hex()
+
+
+def test_nothing_published_yet_is_a_quiet_notice(tmp_path, caplog):
+    """GitHub answers 404 until the release of the versions exists: an info line «Sin actualizaciones publicadas
+    todavía», not a warning at every start (beta drill, 11-12)."""
+    import logging
+
+    import httpx
+
+    from tisma_cloud import updates
+
+    def not_found(url: str) -> bytes:
+        request = httpx.Request("GET", url)
+        raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404, request=request))
+
+    lst = updates.UpdateMirror("https://example.invalid/updates.json", tmp_path, fetch=not_found)
+    with caplog.at_level(logging.INFO, logger="tisma_cloud"):
+        assert not lst.refresh()
+    assert "Sin actualizaciones publicadas" in lst.error
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_the_stop_of_a_long_wait_is_not_logged_as_an_error():
+    import asyncio
+    import logging
+    import sys
+
+    from tisma_cloud.cli import ShutdownCancelFilter
+
+    def record(exc: BaseException) -> logging.LogRecord:
+        try:
+            raise exc
+        except BaseException:
+            return logging.LogRecord("uvicorn.error", logging.ERROR, __file__, 1, "Exception in ASGI application",
+                                     None, sys.exc_info())
+
+    f = ShutdownCancelFilter()
+    assert not f.filter(record(asyncio.CancelledError("Task cancelled, timeout graceful shutdown exceeded")))
+    assert f.filter(record(asyncio.CancelledError()))
+    assert f.filter(record(RuntimeError("a real error")))
+    note = logging.LogRecord("uvicorn.error", logging.ERROR, __file__, 1,
+                             "Cancel %s running task(s), timeout graceful shutdown exceeded", (8,), None)
+    assert f.filter(note) and note.levelname == "INFO"
