@@ -113,14 +113,17 @@ STATUS_TEXT = {
 
 def status(session: Session, node_minutes: int = 5, slow_minutes: int = 10, now: datetime | None = None) -> dict:
     """«down» when no enabled node answered in the last «node_minutes»; «slow» when the oldest job waiting has waited
-    more than «slow_minutes», or some kinds of computing have no node connected that takes them; «ok» otherwise.
+    more than «slow_minutes», or some kinds of computing that enabled nodes take have none of them connected (a kind
+    no enabled node takes is not offered, not delayed); «ok» otherwise.
     No data of any user: the counts of nodes and the longest wait only."""
     now = now or utcnow()
     seen = now - timedelta(minutes=node_minutes)
-    online = [n for n in session.execute(select(Node).where(Node.enabled.is_(True))).scalars()
-              if n.last_seen is not None and n.last_seen >= seen]
+    enabled = list(session.execute(select(Node).where(Node.enabled.is_(True))).scalars())
+    online = [n for n in enabled if n.last_seen is not None and n.last_seen >= seen]
     served = {c for n in online for c in n.priority_list}
-    unavailable = [c for c in JOB_CLASSES if c not in served]
+    # A kind of computing no enabled node takes is not offered (scans without a scan node): not a delay.
+    offered = {c for n in enabled for c in n.priority_list}
+    unavailable = [c for c in JOB_CLASSES if c in offered and c not in served]
     oldest = session.execute(select(func.min(Job.created_at)).where(Job.status == "queued")).scalar_one()
     wait_s = max(0, int((now - oldest).total_seconds())) if oldest is not None else 0
     if not online:

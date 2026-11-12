@@ -85,17 +85,24 @@ def test_public_status(client, f, monkeypatch):
     s = client.get("/v1/status").json()
     assert s["status"] == "slow" and s["longest_wait_s"] >= 660 and s["label_es"] == "Con demoras"
     assert "ana@x.com" not in str(s)
-    # No node connected takes a kind of computing.
+    # A kind no enabled node takes (scans without a scan node) is not offered: no delay.
     with f.db.session() as session:
         session.get(Job, job["id"]).created_at = utcnow()
         session.query(Node).one().priorities = "slice"
+    assert client.get("/v1/status").json()["status"] == "ok"
+    # A kind only an offline node takes is a delay.
+    aero = f.node("n2", "aero")
+    client.post("/v1/node/claim", headers=aero, json={})
+    with f.db.session() as session:
+        session.query(Node).filter(Node.name == "n2").one().last_seen = utcnow() - timedelta(minutes=6)
     s = client.get("/v1/status").json()
-    assert s["status"] == "slow" and "aero" in s["unavailable"] and "Algunos cálculos" in s["message_es"]
+    assert s["status"] == "slow" and s["unavailable"] == ["aero"] and "Algunos cálculos" in s["message_es"]
     # Only that: no word of a long wait.
     assert s["message_es"] == "Algunos cálculos no están disponibles ahora." and "Waiting" not in s["message_en"]
-    # The node stopped answering.
+    # The nodes stopped answering.
     with f.db.session() as session:
-        session.query(Node).one().last_seen = utcnow() - timedelta(minutes=6)
+        for n in session.query(Node).all():
+            n.last_seen = utcnow() - timedelta(minutes=6)
     assert client.get("/v1/status").json()["status"] == "down"
     # Without a session, and the page.
     page = client.get("/estado")

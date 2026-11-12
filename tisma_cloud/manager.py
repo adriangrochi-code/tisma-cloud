@@ -64,6 +64,8 @@ MASTER_FIELDS = [
 # The library's relay and seeder (tisma-relay of the package), run by the service of the master when turned on:
 # setting of tisma-cloud.toml -> the arguments of tisma-relay.
 LIBRARY_SERVICES = {"relay": [], "seed": ["seed"]}
+# Seconds the relay and the seeder wait after the master starts (the master answers in 1 to 3 s, README).
+LIBRARY_START_DELAY_S = 8.
 # The processes of the service, in its messages.
 SERVICE_NAMES = {"main": "el servicio", "node": "el nodo del maestro", "relay": "el intermediario de la biblioteca",
                  "seed": "el sembrador de la biblioteca"}
@@ -1249,7 +1251,10 @@ class Manager:
         running: dict[str, subprocess.Popen] = {}
         started: dict[str, float] = {}
         delay = {name: 5. for name in commands}
-        restart_at = {name: 0. for name in commands}
+        # The relay and the seeder ask the master for the library key when they start: they start a few seconds after
+        # it, not in a failed first try each time.
+        restart_at = {name: time.monotonic() + LIBRARY_START_DELAY_S if name in LIBRARY_SERVICES else 0.
+                      for name in commands}
 
         def stop_all() -> None:
             for proc in running.values():
