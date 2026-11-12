@@ -24,14 +24,44 @@ tisma-cloud firewall on            # solo el maestro, en Windows: el puerto para
 tisma-cloud check                  # el Diagnóstico; con --fix arregla lo que se puede
 ```
 
+La primera vez, en el maestro, antes de dar la dirección a nadie (el Diagnóstico marca lo que falta):
+
+```
+tisma-cloud config TISMA_SMTP_HOST smtp.tudominio.com   # el correo de los códigos y de los avisos
+tisma-cloud config TISMA_SMTP_USER codigos@tudominio.com
+tisma-cloud config TISMA_SMTP_PASSWORD ...
+tisma-cloud config TISMA_SMTP_FROM "Tisma Cloud <codigos@tudominio.com>"
+tisma-cloud config TISMA_ALERT_EMAILS tu@correo.com      # a quién llegan los avisos (si no, a los administradores)
+tisma-cloud admin plan-set beta --hours 5 --concurrent 2 --classes all --public
+tisma-cloud admin user-add tu@correo.com --plan beta --admin --password
+tisma-cloud restart
+```
+
+El puerto del correo es 587 con STARTTLS; otro: `TISMA_SMTP_PORT` y `TISMA_SMTP_SECURITY` (`ssl` para el 465).
+
 - El maestro también calcula (su propio nodo, «maestro») salvo `tisma-cloud config master_computes off`.
 - Un nodo nuevo pide unirse solo: aceptalo en la ventana del maestro (Nodos) o con
   `tisma-cloud admin node-requests` y `tisma-cloud admin node-accept <id>` (el id que muestra la lista). Qué hace cada uno:
   `tisma-cloud admin node-set <nombre> --priorities slice,slice_large,fea` (README, «Instalar un nodo»).
 - La biblioteca entre usuarios, en el maestro (README, «Biblioteca entre usuarios»): certificar su clave una vez
-  (`tisma-cloud admin library-certify --key E:\clave.pem`, la clave del proyecto en el pendrive), y si se quiere el intermediario y el sembrador:
-  `tisma-cloud config relay on`, `tisma-cloud config seed on`, sus ajustes en `.env` y `tisma-cloud restart`. En el
-  router, 4001 y 4002 (TCP y UDP).
+  (`tisma-cloud admin library-certify --key E:\clave.pem`, la clave del proyecto en el pendrive). Si se quiere el
+  intermediario y el sembrador:
+
+  ```
+  tisma-cloud admin user-add sembrador@tudominio.com --plan beta --unlimited   # muestra su token una sola vez
+  tisma-cloud config TISMA_SEED_TOKEN tu_...                                  # ese token
+  tisma-cloud config TISMA_RELAY_ANNOUNCE /ip4/TU-IP-PÚBLICA/tcp/4001
+  tisma-cloud config TISMA_SEED_ANNOUNCE /ip4/TU-IP-PÚBLICA/tcp/4002
+  tisma-cloud config relay on
+  tisma-cloud config seed on
+  tisma-cloud restart
+  tisma-cloud logs 30                # el intermediario escribe su dirección para TISMA_LIBRARY_RELAYS
+  tisma-cloud config TISMA_LIBRARY_RELAYS /ip4/TU-IP-PÚBLICA/tcp/4001/p2p/...   # la de la línea del registro
+  ```
+
+  El sembrador necesita ClamAV instalado aparte (en Windows, el instalador de clamav.net y `freshclam` para las
+  firmas; `TISMA_CLAMAV` con la ruta de `clamdscan` o `clamscan` si no está en el PATH). En el router, 4001 y 4002
+  (TCP y UDP).
 - Desde afuera: `python deploy/smoke.py --url https://tismaservidores.net --token tu_...` (README, «Instalar el
   maestro»).
 
@@ -89,9 +119,10 @@ tisma-cloud start
 tisma-cloud check
 ```
 
-La configuración, la base y `storage\` no se tocan; el maestro pone la base al día solo al arrancar. El CI lo prueba
-desde la versión del 24-10-2026 (`deploy/upgrade_drill.py`). Un `node.toml` de antes del 11-11-2026, con
-`tisma_slicer` y `tisma_fea`, sigue sirviendo: esos ajustes no se usan, y el servicio encuentra solo
+`stop` espera a que terminen todos los procesos del servicio (unos segundos), así que el paquete se puede copiar
+apenas dice «Detenido». La configuración, la base y `storage\` no se tocan; el maestro pone la base al día solo al
+arrancar. El CI lo prueba desde la versión del 24-10-2026 (`deploy/upgrade_drill.py`). Un `node.toml` de antes del
+11-11-2026, con `tisma_slicer` y `tisma_fea`, sigue sirviendo: esos ajustes no se usan, y el servicio encuentra solo
 `tisma-engine\` y `tisma-profiles\` del paquete nuevo.
 
 ## Apagar

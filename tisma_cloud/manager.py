@@ -159,6 +159,35 @@ class Status:
     detail: str
 
 
+def _group_alive(pgid: int) -> bool:
+    """Whether a process of the group still runs (POSIX; the service starts in a session of its own)."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return _group_has_live(pgid)
+
+
+def _group_has_live(pgid: int) -> bool:
+    """A member of the group that is not a zombie (/proc on Linux; elsewhere the group's answer is taken)."""
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return True
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except OSError:
+            continue
+        # After the name: state, ppid, pgrp.
+        if int(fields[2]) == pgid and fields[0] != "Z":
+            return True
+    return False
+
+
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -785,15 +814,38 @@ class Manager:
                 raise RuntimeError("No se pudo detener el servicio (si arranca con la máquina corre como SYSTEM: "
                                    "ejecutá como administrador). " + (r.stderr or r.stdout).strip())
         else:
+            # The service runs in a session of its own; its group is that of the process the executable unpacked to,
+            # led by the executable's own starter (PyInstaller), not the pid written in tisma-cloud.pid.
             try:
-                os.killpg(pid, signal.SIGTERM)
+                group = os.getpgid(pid)
+            except ProcessLookupError:
+                group = pid
+            if group == os.getpgrp():
+                group = None  # never this command's own group
+            try:
+                if group is None:
+                    raise ProcessLookupError
+                os.killpg(group, signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
                 os.kill(pid, signal.SIGTERM)
             deadline = time.monotonic() + wait_s
-            while _pid_alive(pid) and time.monotonic() < deadline:
+
+            def running() -> bool:
+                return _pid_alive(pid) or (group is not None and _group_alive(group))
+
+            # The whole group: the supervisor and its children (the master, its node, the relay, the seeder), so that
+            # the program's files are free when «stop» says it stopped (found in the beta drill, 11-12).
+            while running() and time.monotonic() < deadline:
                 time.sleep(0.2)
-            if _pid_alive(pid):
-                os.kill(pid, signal.SIGKILL)
+            if running():
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    if group is not None:
+                        os.killpg(group, signal.SIGKILL)
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(pid, signal.SIGKILL)
+                end = time.monotonic() + 5.
+                while running() and time.monotonic() < end:
+                    time.sleep(0.2)
         deadline = time.monotonic() + 5.
         while _pid_alive(pid) and time.monotonic() < deadline:
             time.sleep(0.2)
@@ -1260,6 +1312,14 @@ class Manager:
             for proc in running.values():
                 if proc.poll() is None:
                     proc.terminate()
+            # Their end is waited for: a child still running keeps the program's file in use, and the package cannot
+            # be replaced right after «tisma-cloud stop» (found in the beta drill, 11-12).
+            deadline = time.monotonic() + 10.
+            for proc in running.values():
+                try:
+                    proc.wait(max(0.1, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
         def stop(_signum, _frame):  # noqa: ANN001
             stop_all()

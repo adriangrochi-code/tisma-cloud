@@ -112,9 +112,11 @@ def serve_master(host: str, port: int) -> int:
                                                  files, settings.max_connections)
     # As deploy/Dockerfile.master: short keep-alive. No proxy_headers: the master reads the user's address itself, and
     # only from a trusted proxy (TISMA_TRUSTED_PROXIES); uvicorn would take X-Forwarded-For from anyone.
+    # At most 5 s to close on a stop: the long waits of nodes and bridges (up to 20 s) would hold «tisma-cloud stop»
+    # until the supervisor's limit (found in the beta drill, 11-12); they ask again by themselves.
     uvicorn.run(create_app(settings), host=host, port=port, proxy_headers=False,
                 limit_concurrency=settings.max_connections, timeout_keep_alive=5, server_header=False, backlog=4096,
-                access_log=settings.access_log)
+                access_log=settings.access_log, timeout_graceful_shutdown=5)
     return 0
 
 
