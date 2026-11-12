@@ -56,8 +56,11 @@ def certify(client) -> None:
 
 
 @pytest.fixture(autouse=True)
-def certified(client):
-    certify(client)
+def certified(request):
+    # Only for the tests that use the fixture's app: the ones that make their own app (new_app) would otherwise empty a
+    # shared PostgreSQL database under the sweep of an app they do not use.
+    if "client" in request.fixturenames:
+        certify(request.getfixturevalue("client"))
 
 
 def signed(client, name: str) -> dict:
@@ -689,26 +692,25 @@ def test_published_texts_carry_no_control_or_direction_characters(client, f):
     assert app.publish(description="Primera línea\nSegunda línea")["description"] == "Primera línea\nSegunda línea"
 
 
-def test_an_app_announces_only_its_own_address(settings):
+def test_an_app_announces_only_its_own_address(client):
     """Announcing another machine's address would send every downloader to it (a reflection attack): the direct
     addresses must be the one the announcement comes from."""
-    import dataclasses
-
     from fastapi.testclient import TestClient
 
-    from conftest import Factory, new_app
+    from conftest import Factory
 
-    with TestClient(new_app(dataclasses.replace(settings)), client=("203.0.113.7", 50000)) as c:
-        certify(c)
-        f = Factory(c)
-        app = App(c, f.user("lucia@x.com"))
-        app.bind()
-        model = app.publish()["id"]
-        assert announce(c, app, [model], True, ["/ip4/203.0.113.7/udp/4001/quic-v1", "/ip4/203.0.113.7/tcp/4001"]) == 200
-        assert announce(c, app, [model], True, ["/ip4/198.51.100.99/tcp/4001"]) == 422
-        assert announce(c, app, [model], True, ["/dns4/victima.example/tcp/443"]) == 422
-        # Through the relay no address is kept, so anything goes.
-        assert announce(c, app, [model], False, ["/ip4/198.51.100.99/tcp/4001"]) == 200
+    # The running app of the fixture, seen from an address of internet, without «with» (its lifespan is the fixture's,
+    # started once). A second app would empty a shared PostgreSQL database under the sweep of the fixture's one.
+    c = TestClient(client.app, client=("203.0.113.7", 50000))
+    f = Factory(c)
+    app = App(c, f.user("lucia@x.com"))
+    app.bind()
+    model = app.publish()["id"]
+    assert announce(c, app, [model], True, ["/ip4/203.0.113.7/udp/4001/quic-v1", "/ip4/203.0.113.7/tcp/4001"]) == 200
+    assert announce(c, app, [model], True, ["/ip4/198.51.100.99/tcp/4001"]) == 422
+    assert announce(c, app, [model], True, ["/dns4/victima.example/tcp/443"]) == 422
+    # Through the relay no address is kept, so anything goes.
+    assert announce(c, app, [model], False, ["/ip4/198.51.100.99/tcp/4001"]) == 200
 
 
 def test_one_publication_is_blocked_by_its_code(client, f):
