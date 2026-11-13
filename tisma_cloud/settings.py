@@ -3,11 +3,32 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 # Private networks (RFC 1918, loopback, IPv6 unique local and link local): the local network of the servers.
 PRIVATE_NETWORKS = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128,fc00::/7,fe80::/10"
 from pathlib import Path
+
+
+def utc_offset(value: str) -> timedelta:
+    """A fixed offset from UTC written «-03:00», «+05:30» or «UTC» (empty: UTC). A fixed one and not a time zone: no
+    zone database is needed (Windows has none for Python), and Uruguay is UTC-3 all the year since 2015."""
+    value = (value or "").strip().upper()
+    if value in ("", "UTC", "Z"):
+        return timedelta(0)
+    match = re.fullmatch(r"(?:UTC)?([+-])(\d{1,2}):?(\d{2})?", value)
+    if not match or int(match[2]) > 14 or int(match[3] or 0) >= 60:
+        raise ValueError(f"TISMA_USAGE_UTC_OFFSET: {value!r} is not an offset like -03:00 or +00:00")
+    sign = -1 if match[1] == "-" else 1
+    return sign * timedelta(hours=int(match[2]), minutes=int(match[3] or 0))
+
+
+def usage_offset() -> timedelta:
+    """Where the month of the plans' hours starts: the first day at 00:00 of this offset (TISMA_USAGE_UTC_OFFSET).
+    Read from the environment at each call, so the master, the console and the window count the same month."""
+    return utc_offset(os.environ.get("TISMA_USAGE_UTC_OFFSET", ""))
 
 
 def _int(name: str, default: int) -> int:
@@ -209,6 +230,8 @@ class Settings:
 
     def __post_init__(self) -> None:
         self.storage_dir = Path(self.storage_dir)
+        # A wrong offset stops the master at start rather than counting the hours of another month.
+        usage_offset()
 
     def is_internal_email(self, email: str) -> bool:
         """Whether the e-mail is one of internal_emails, or of one of its domains."""

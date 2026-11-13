@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .crypto import Encrypted, index
 from .db import Base
+from .settings import usage_offset
 
 
 def utcnow() -> datetime:
@@ -20,7 +21,14 @@ def utcnow() -> datetime:
 
 
 def month_of(when: datetime) -> str:
-    return when.strftime("%Y-%m")
+    """The month of the plans' hours of a time in UTC: calendar months of TISMA_USAGE_UTC_OFFSET (UTC by default)."""
+    return (when + usage_offset()).strftime("%Y-%m")
+
+
+def month_start(when: datetime) -> datetime:
+    """The start, in UTC, of the month of the plans' hours that holds a time in UTC."""
+    offset = usage_offset()
+    return (when + offset).replace(day=1, hour=0, minute=0, second=0, microsecond=0) - offset
 
 
 class Plan(Base):
@@ -207,7 +215,7 @@ class ApiToken(Base):
 
 
 class Usage(Base):
-    """Seconds of computing used by a user in a calendar month (UTC)."""
+    """Seconds of computing used by a user in a month of the plans (month_of: UTC unless TISMA_USAGE_UTC_OFFSET)."""
 
     __tablename__ = "usage"
     __table_args__ = (UniqueConstraint("user_id", "month"),)

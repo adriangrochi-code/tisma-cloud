@@ -586,7 +586,7 @@ class Manager:
         from sqlalchemy import func, select
 
         from . import pairing
-        from .models import Alert, Job, Node, Payment, Usage, User, month_of, utcnow
+        from .models import Alert, Job, Node, Payment, Usage, User, month_of, month_start, utcnow
         from .scheduler import ACTIVE
 
         db, settings = self._database()
@@ -619,7 +619,7 @@ class Manager:
             payments = [{"currency": currency, "count": count, "amount_cents": int(amount or 0)}
                         for currency, count, amount in s.execute(
                             select(Payment.currency, func.count(), func.sum(Payment.amount_cents))
-                            .where(Payment.status == "approved", Payment.paid_at >= today.replace(day=1))
+                            .where(Payment.status == "approved", Payment.paid_at >= month_start(now))
                             .group_by(Payment.currency)).all()]
             requests = pairing.pending(s)
             alerts = [{"message": a.message, "started_at": a.started_at.isoformat(timespec="seconds")}

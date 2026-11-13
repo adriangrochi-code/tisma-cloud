@@ -39,7 +39,8 @@ Tisma / app / página web ──HTTPS──► MAESTRO (Caddy + API + PostgreSQL
 
 - La **página web** crea los usuarios (correo y contraseña), elige su plan y registra cada pago moviendo la fecha
   «pagado hasta». Lo hace con la API `/v1/site` y la clave `TISMA_SITE_KEY`.
-- Un **plan** tiene horas de cómputo por mes calendario (UTC), cuántos trabajos puede tener un usuario esperando o
+- Un **plan** tiene horas de cómputo por mes calendario (UTC; otro corte con `TISMA_USAGE_UTC_OFFSET`, por ejemplo
+  `-03:00` para la medianoche de Uruguay), cuántos trabajos puede tener un usuario esperando o
   corriendo a la vez, cuántas peticiones por minuto puede hacer y su prioridad en la cola.
 - Se cobra el **tiempo real** que el trabajo corrió en un nodo (los que fallan no se cobran; uno cancelado mientras
   corría sí). Un trabajo empieza si quedan horas, aunque termine pasándose un poco.
