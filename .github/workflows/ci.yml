@@ -343,6 +343,21 @@ jobs:
             exit 1
           fi
           "$exe" stop
+      # The master that other repositories' end-to-end tests start from this artifact (tools/ci_master.sh): it must
+      # come up alone, with a test account that logs in and a library certified with a throwaway project key.
+      - name: Master for the end-to-end tests of the apps (tools/ci_master.sh)
+        if: matrix.name == 'linux'
+        run: |
+          set -e
+          cp -r dist ci-pkg
+          bash tools/ci_master.sh start "$PWD/ci-pkg" 18996 ci-master.env
+          set -a; . ./ci-master.env; set +a
+          curl -sf -X POST "$url/v1/auth/login" -H 'Content-Type: application/json' \
+               -d "{\"email\":\"$email\",\"password\":\"$password\"}" > /dev/null
+          curl -sf "$url/v1/me" -H "Authorization: Bearer $token" > /dev/null
+          curl -sf "$url/v1/library/index.json" > /dev/null
+          test ${#library_project_key} -eq 64
+          bash tools/ci_master.sh stop "$PWD/ci-pkg"
       # Restore drill with the program of the package (deploy/restore_drill.py): a master with data, its backup, the
       # same data back on an empty machine with its data.key, and a refusal to start without that key.
       - name: Restore drill
@@ -402,4 +417,5 @@ jobs:
             dist/tisma-relay
             .env.example
             deploy/node.example.toml
+            tools/ci_master.sh
           retention-days: 7
