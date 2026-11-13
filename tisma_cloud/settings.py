@@ -194,7 +194,7 @@ class Settings:
     remote_requests_per_minute: int = field(default_factory=lambda: _int("TISMA_REMOTE_REQUESTS_PER_MINUTE", 600))
     remote_command_minutes: int = field(default_factory=lambda: _int("TISMA_REMOTE_COMMAND_MINUTES", 10))
     # Problems reported from Tisma and the app: per hour from an account and from an address without account, and how
-    # long they are kept [days].
+    # long they are kept [days] (with the library's reports already reviewed; 0: kept until the account is deleted).
     reports_per_hour: int = field(default_factory=lambda: _int("TISMA_REPORTS_PER_HOUR", 20))
     anonymous_reports_per_hour: int = field(default_factory=lambda: _int("TISMA_ANONYMOUS_REPORTS_PER_HOUR", 5))
     report_days: int = field(default_factory=lambda: _int("TISMA_REPORT_DAYS", 365))

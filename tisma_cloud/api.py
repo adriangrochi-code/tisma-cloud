@@ -348,10 +348,13 @@ class Services:
                                                   RemoteCommand.updated_at < now - timedelta(days=1)))
             s.execute(delete(EmailCode).where(EmailCode.expires_at < now))
             s.execute(delete(ApiToken).where(func.coalesce(ApiToken.last_used, ApiToken.created_at) < sessions))
-            s.execute(delete(BugReport).where(BugReport.created_at < now - timedelta(days=self.settings.report_days)))
-            # The reports of the library already reviewed, as long as the problem reports (one waiting stays).
-            s.execute(delete(LibraryReport).where(LibraryReport.handled_at.is_not(None),
-                                                  LibraryReport.created_at < now - timedelta(days=self.settings.report_days)))
+            # The problem reports, and the reports of the library already reviewed (one waiting stays); 0 days keeps
+            # them (not «older than now», which would delete them all).
+            if self.settings.report_days > 0:
+                reports_limit = now - timedelta(days=self.settings.report_days)
+                s.execute(delete(BugReport).where(BugReport.created_at < reports_limit))
+                s.execute(delete(LibraryReport).where(LibraryReport.handled_at.is_not(None),
+                                                      LibraryReport.created_at < reports_limit))
             stale = s.execute(select(Bridge.id).where(
                 func.coalesce(Bridge.last_seen, Bridge.created_at) < now - timedelta(days=remote.FORGET_BRIDGE_DAYS))
             ).scalars().all()

@@ -142,6 +142,12 @@ def test_old_reports_are_forgotten(client):
     with services.db.session() as s:
         s.query(BugReport).update({"created_at": utcnow() - timedelta(days=services.settings.report_days + 1)})
     client.post("/v1/reports", json=report(title="A new one"))
+    # TISMA_REPORT_DAYS=0 keeps them (not «older than now», which would delete them all).
+    services.settings.report_days, days = 0, services.settings.report_days
+    services.forget_old_data()
+    with services.db.session() as s:
+        assert s.query(BugReport).count() == 2
+    services.settings.report_days = days
     services.forget_old_data()
     with services.db.session() as s:
         assert [r.title for r in s.query(BugReport)] == ["A new one"]
