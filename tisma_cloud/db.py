@@ -38,6 +38,7 @@ class Database:
 
         Base.metadata.create_all(self.engine)
         self._add_new_columns()
+        self._add_new_indexes()
         # A first plan, so that users can be created before the web site sets the real ones.
         with self.session() as s:
             if s.query(models.Plan).count() == 0:
@@ -64,6 +65,20 @@ class Database:
                             repr(default) if isinstance(default, (int, float)) else "'" + str(default).replace("'", "''") + "'"
                         ddl += f" DEFAULT {literal} NOT NULL"
                     conn.execute(text(ddl))
+
+    def _add_new_indexes(self) -> None:
+        """The indexes added to the models in a new version, on the tables of an existing database (create_all makes
+        them only with a new table, and a column added above gets none). Only the ones that are not unique: those never
+        fail on the rows already there, so the master always starts."""
+        existing = inspect(self.engine)
+        with self.engine.begin() as conn:
+            for table in Base.metadata.sorted_tables:
+                if not existing.has_table(table.name):
+                    continue
+                present = {i["name"] for i in existing.get_indexes(table.name)}
+                for index in table.indexes:
+                    if not index.unique and index.name not in present:
+                        index.create(conn)
 
     @contextmanager
     def session(self) -> Iterator[Session]:

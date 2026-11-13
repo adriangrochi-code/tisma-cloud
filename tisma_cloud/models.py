@@ -474,7 +474,8 @@ class LibraryModel(Base):
     tags: Mapped[str] = mapped_column(Text, default="[]")
     license: Mapped[str] = mapped_column(String(40))
     author_name: Mapped[str] = mapped_column(String(60))
-    thumbnail_sha256: Mapped[str] = mapped_column(String(64))
+    # Looked for at each request of a thumbnail (only a model still published shows it).
+    thumbnail_sha256: Mapped[str] = mapped_column(String(64), index=True)
     thumbnail_size: Mapped[int] = mapped_column(Integer)
     size: Mapped[int] = mapped_column(BigInteger)
     # JSON: the files ([{path, role, size, sha256, ...}]), the summary of the analyses, the swarm of the peer network.
