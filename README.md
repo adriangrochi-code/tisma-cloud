@@ -307,6 +307,14 @@ datos ni entrar con un correo, y junto a la copia no protege nada. Si el maestro
 base, no arranca (en vez de escribir datos con la equivocada). `tisma-cloud-admin` y el programa de gestión usan la
 misma clave: hay que correrlos con la misma `TISMA_STORAGE_DIR` que el servicio.
 
+**Cambiar la clave** (si se pudo haber filtrado): `tisma-cloud stop`, `tisma-cloud rotate-key`, `tisma-cloud start`.
+Hace una copia de la base antes, escribe de nuevo cada dato cifrado con una clave nueva, rehace el índice de los
+correos y deja la clave vieja como `data.key.old-AAAAMMDD-HHMMSS` al lado: **las copias de antes se leen solo con
+ella**, así que va guardada con esas copias. Los códigos públicos de las cuentas en la biblioteca (`author.account`)
+salen de la clave y cambian con ella: la lista de bloqueo los pasa a los nuevos y las dos listas se firman de nuevo. Si
+se corta a mitad, correrlo otra vez termina lo que quedó. Con `TISMA_DATA_KEY` no hay archivo que cambiar: se hace a
+mano.
+
 Nunca pasan por el central los datos de las tarjetas (se cargan en la página del medio de pago). Las páginas no cargan
 nada de otros sitios (salvo el botón de Google si está activado).
 

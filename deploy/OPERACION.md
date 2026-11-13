@@ -105,8 +105,22 @@ tisma-cloud restore backups\daily\tisma-AAAAMMDD-HHMMSS.db   # la base de antes 
 tisma-cloud start
 ```
 
-En otra máquina: el paquete, `.env`, `storage\data.key` en su lugar y después lo de arriba. El CI lo prueba en cada
+En otra máquina: el paquete, `.env`, `storage\data.key` en su lugar y después lo de arriba. Una copia de antes de
+cambiar la clave (`rotate-key`, abajo) se lee con la clave de entonces: `storage\data.key.old-...` en lugar de
+`data.key`. El CI lo prueba en cada
 cambio (`deploy/restore_drill.py`).
+
+## Cambiar la clave de los datos personales
+
+Solo si se pudo haber filtrado (README, «Datos personales cifrados en la base»):
+
+```
+tisma-cloud stop
+tisma-cloud rotate-key             # hace una copia antes; la clave vieja queda como data.key.old-<fecha>
+tisma-cloud start
+```
+
+Después: la clave nueva al pendrive, y la vieja junto a las copias de antes (sin ella no se leen).
 
 ## Actualizar
 

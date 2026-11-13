@@ -13,6 +13,7 @@ of the service (gui.py); over SSH the same is done with these commands, or with 
     tisma-cloud check [--fix]           check what the machine needs to serve, and fix what can be fixed
     tisma-cloud backup                  a backup of the database of the master now (the master makes one every day)
     tisma-cloud restore FILE            put a backup in place of the database (with the service stopped)
+    tisma-cloud rotate-key              a new key for the personal data (with the service stopped; a backup first)
     tisma-cloud console                 a menu with all of the above (for SSH)
     tisma-cloud panel                   the control panel of the master in a window (servers, queue, jobs, users)
     tisma-cloud admin <command> ...     administration of the master (as tisma-cloud-admin: users, nodes, plans...)
@@ -426,6 +427,47 @@ def run_restore(manager, rest: list[str]) -> int:
     return 0
 
 
+def run_rotate_key(manager) -> int:
+    """A new data.key (crypto.rotate): with the service stopped, after a backup of the database."""
+    from . import backup, crypto
+    from .models import utcnow
+
+    settings = _master_settings(manager)
+    if manager.status().running:
+        print("Error: primero detené el servicio (tisma-cloud stop)", file=sys.stderr)
+        return 1
+    if os.environ.get("TISMA_DATA_KEY", "").strip():
+        print("Error: la clave está en TISMA_DATA_KEY, no en un archivo: cambiala a mano", file=sys.stderr)
+        return 1
+    db, settings = manager._database()
+    dest = backup.backup_dir(settings)
+    now = utcnow()
+    if dest is not None:
+        try:
+            made = backup.make(settings, dest, now)
+        except backup.BackupError as e:
+            print(f"Error: no se pudo hacer la copia de antes ({e}); no se cambió nada", file=sys.stderr)
+            return 1
+        print(f"Copia de antes: {made.path}")
+    else:
+        print("Aviso: las copias están apagadas (TISMA_BACKUP_DIR=off): no hay copia de antes", file=sys.stderr)
+    try:
+        done = crypto.rotate(db, crypto.key_path(settings, manager.home), now.strftime("%Y%m%d-%H%M%S"))
+    except crypto.RotationError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        db.engine.dispose()
+    if done["finished"]:
+        print(f"Terminado el cambio que había quedado a medias. La clave vieja quedó en {done['old_key']}.")
+    else:
+        print(f"Clave nueva en su lugar: {done['values']} datos cifrados de nuevo, {done['users']} cuentas. La clave "
+              f"vieja quedó en {done['old_key']}: guardala con las copias de seguridad anteriores (sin ella no se "
+              f"leen) y guardá la nueva en el pendrive. Los códigos públicos de las cuentas en la biblioteca cambian; "
+              f"el índice y la lista de bloqueo se firman de nuevo al arrancar. Iniciá el servicio (tisma-cloud start).")
+    return 0
+
+
 def open_gui(manager) -> int:
     try:
         from .gui import main as gui_main
@@ -516,6 +558,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_backup(manager)
         if command == "restore":
             return run_restore(manager, rest)
+        if command == "rotate-key":
+            return run_rotate_key(manager)
         if command == "console":
             return console(manager)
         if command == "panel":
