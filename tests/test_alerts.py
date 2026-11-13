@@ -145,3 +145,28 @@ def test_one_step_of_the_sweep_failing_does_not_stop_the_others(client, f, setti
     services.sweep()
     assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "queued"
     assert checked
+
+
+def test_library_index_near_what_the_apps_take(client, f, monkeypatch):
+    """p2p_library.md 3 ter bis: the apps discard an index over 64 MB compressed or 256 MB plain; the owner is told
+    from 80 % of either, and told again when it is back under."""
+    from tisma_cloud import library
+
+    f.user("jefe@x.com", admin=True)
+    signed = client.app.state.services.library
+    # The index as the apps get it (built at their first request).
+    with client.app.state.services.db.session() as s:
+        signed.get(s, "index")
+    small = signed.sizes("index")
+    assert small is not None and min(small) > 0
+    assert "library-index" not in [a.key for a in run(client)]
+
+    monkeypatch.setattr(signed, "sizes", lambda _name: (210 << 20, 20 << 20))   # 82 % of the plain limit
+    open_ = [a for a in run(client) if a.key == "library-index"]
+    assert len(open_) == 1 and "82 %" in open_[0].message and "3 ter bis" in open_[0].message
+    monkeypatch.setattr(signed, "sizes", lambda _name: (100 << 20, 52 << 20))   # 81 % of the compressed one
+    assert "81 %" in [a for a in run(client) if a.key == "library-index"][0].message
+    monkeypatch.setattr(signed, "sizes", lambda _name: (100 << 20, 25 << 20))
+    assert "library-index" not in [a.key for a in run(client)]
+    assert any("resuelto" in str(m).lower() for m in sent(client))
+    assert library.APP_MAX_INDEX_GZIP == 64 << 20 and library.APP_MAX_INDEX_PLAIN == 256 << 20

@@ -86,7 +86,8 @@ El panel muestra lo mismo arriba, en «Últimas 24 horas». Lo que ve la gente e
 Los avisos llegan por correo a `TISMA_ALERT_EMAILS` (o a los administradores) y se ven en rojo arriba del panel
 (README, «Avisos de problemas»): un nodo que no responde hace `TISMA_ALERT_NODE_MINUTES` (5), un trabajo que espera más
 de `TISMA_ALERT_QUEUE_MINUTES` (30), menos de `TISMA_ALERT_DISK_FREE_GB` (5) libres, una copia de seguridad que falló y
-ClamAV sin responder. Cuando se resuelve, llega otro correo.
+ClamAV sin responder, y el índice de la biblioteca cerca de lo que aceptan las apps (80 %). Cuando se resuelve,
+llega otro correo.
 
 ## Respaldar
 

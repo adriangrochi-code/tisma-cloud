@@ -19,6 +19,9 @@ from .models import Alert, Job, Node, User, utcnow
 
 log = logging.getLogger("tisma_cloud.alerts")
 
+# The share of the most the apps take for the library's index from which the owner is told.
+INDEX_ALERT_FRACTION = .8
+
 
 @dataclass
 class Problem:
@@ -28,7 +31,7 @@ class Problem:
 
 def find_problems(session: Session, settings, storage_dir: Path, now: datetime | None = None,  # noqa: ANN001
                   refused: dict[str, int] | None = None, twins: set[int] | None = None,
-                  backup_failed: str | None = None) -> list[Problem]:
+                  backup_failed: str | None = None, index_sizes: tuple[int, int] | None = None) -> list[Problem]:
     now = now or utcnow()
     problems: list[Problem] = []
     # Files refused in the last hour (threats.py): projects, G-code, found by the antivirus, antivirus not answering.
@@ -69,6 +72,17 @@ def find_problems(session: Session, settings, storage_dir: Path, now: datetime |
         if free_gb < settings.alert_disk_free_gb:
             problems.append(Problem("disk", f"Queda poco disco en el central: {free_gb:.1f} GB libres "
                                             f"de {usage.total / 1e9:.0f} GB."))
+    # The library's index near the most the apps take (p2p_library.md 3 ter bis): past it, every app discards it.
+    if index_sizes is not None:
+        from .library import APP_MAX_INDEX_GZIP, APP_MAX_INDEX_PLAIN
+
+        plain, packed = index_sizes
+        used = max(plain / APP_MAX_INDEX_PLAIN, packed / APP_MAX_INDEX_GZIP)
+        if used >= INDEX_ALERT_FRACTION:
+            problems.append(Problem("library-index", f"El índice de la biblioteca va por el {used * 100:.0f} % de lo que "
+                                                     f"aceptan las apps ({packed / 1e6:.1f} MB comprimido de 64 MB, "
+                                                     f"{plain / 1e6:.0f} MB de 256 MB): pasado el tope, ninguna app lo "
+                                                     f"usa. Hace falta el índice por partes (p2p_library.md 3 ter bis)."))
     return problems
 
 
@@ -102,11 +116,12 @@ def recipients(session: Session, settings) -> list[str]:  # noqa: ANN001
 
 def update(session: Session, settings, storage_dir: Path, mailer: Mailer, now: datetime | None = None,  # noqa: ANN001
            refused: dict[str, int] | None = None, twins: set[int] | None = None,
-           backup_failed: str | None = None) -> list[Alert]:
+           backup_failed: str | None = None, index_sizes: tuple[int, int] | None = None) -> list[Alert]:
     """Compares the problems now with the open alerts: opens, repeats and closes them, and e-mails each change.
     Returns the open alerts."""
     now = now or utcnow()
-    current = {p.key: p for p in find_problems(session, settings, storage_dir, now, refused, twins, backup_failed)}
+    current = {p.key: p for p in find_problems(session, settings, storage_dir, now, refused, twins, backup_failed,
+                                                    index_sizes)}
     open_alerts = {a.key: a for a in session.execute(select(Alert).where(Alert.resolved_at.is_(None))).scalars()}
     to_send: list[tuple[str, str]] = []
     repeat = timedelta(hours=settings.alert_repeat_h)

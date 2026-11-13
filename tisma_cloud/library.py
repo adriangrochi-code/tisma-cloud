@@ -41,6 +41,9 @@ CERT_PREFIX = b"tisma-library-key/1\n"
 # The blocklist is signed again this often even without changes, and it is valid this long (rule 6).
 RESIGN_S = 6 * 3600
 BLOCKLIST_VALID = timedelta(days=7)
+# The largest index the apps take (p2p_library.md 3 ter bis): compressed and plain; a larger one they discard.
+APP_MAX_INDEX_GZIP = 64 << 20
+APP_MAX_INDEX_PLAIN = 256 << 20
 # Licences a model may be published under (SPDX identifiers).
 LICENSES = ("CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC-BY-NC-4.0", "CC-BY-NC-SA-4.0", "CC-BY-ND-4.0",
             "CC-BY-NC-ND-4.0", "MIT", "GPL-3.0-or-later", "LicenseRef-All-Rights-Reserved")
@@ -557,6 +560,12 @@ class Signed:
                 cached = (seq, time.monotonic(), data, sig, etag, day, authors_off, gzip.compress(data, 6))
                 self._cache[name] = cached
             return cached[2], cached[3], cached[4]
+
+    def sizes(self, name: str) -> tuple[int, int] | None:
+        """The bytes of the list as last built, plain and compressed (None before the first build)."""
+        with self._lock:
+            cached = self._cache.get(name)
+            return (len(cached[2]), len(cached[7])) if cached else None
 
     def compressed(self, name: str) -> bytes | None:
         """The list as last built, compressed with gzip (built once with it; the signature is of the plain bytes)."""

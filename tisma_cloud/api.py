@@ -485,7 +485,8 @@ class Services:
         """Opens, repeats and closes the alerts (one check at a time, so that an alert is never opened twice)."""
         with self._alerts_lock, self.db.session() as s:
             return alerts.update(s, self.settings, self.storage.root, self.mailer, now, self.refused.recent(),
-                                 self.twins.twins(now or utcnow()), self.backup_failed)
+                                 self.twins.twins(now or utcnow()), self.backup_failed,
+                                 self.library.sizes("index"))
 
 
 def job_view(job: Job) -> dict[str, Any]:

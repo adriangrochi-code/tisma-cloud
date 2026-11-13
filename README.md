@@ -732,7 +732,9 @@ de `TISMA_ALERT_EMAILS`) cuando:
 - un nodo que ya estuvo conectado no responde hace más de `TISMA_ALERT_NODE_MINUTES` (5);
 - un trabajo espera en la cola más de `TISMA_ALERT_QUEUE_MINUTES` (30): ningún nodo hace ese tipo de trabajo, o están
   todos ocupados o caídos;
-- quedan menos de `TISMA_ALERT_DISK_FREE_GB` (5) GB libres en el disco del central.
+- quedan menos de `TISMA_ALERT_DISK_FREE_GB` (5) GB libres en el disco del central;
+- el índice de la biblioteca pasa el 80 % de lo que aceptan las apps (64 MB comprimido o 256 MB sin comprimir,
+  `p2p_library.md` 3 ter bis): pasado el tope, ninguna app lo usa.
 
 Si el disco del central se llena del todo, lo que no entra (un proyecto, un escaneo, un resultado) se responde con 507 y
 «el servidor no tiene lugar para archivos ahora» en vez de un error del servidor; un escaneo que no entraría se rechaza antes
