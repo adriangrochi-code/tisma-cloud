@@ -138,12 +138,13 @@ def test_reports_go_with_the_account(client, f):
 
 def test_old_reports_are_forgotten(client):
     services = client.app.state.services
+    # TISMA_REPORT_DAYS=0 keeps them (not «older than now», which would delete them all). Set before any report is
+    # made old, so that the app's own sweep (it forgets old data at start) never sees one with 365 days.
+    services.settings.report_days, days = 0, services.settings.report_days
     client.post("/v1/reports", json=report())
     with services.db.session() as s:
-        s.query(BugReport).update({"created_at": utcnow() - timedelta(days=services.settings.report_days + 1)})
+        s.query(BugReport).update({"created_at": utcnow() - timedelta(days=days + 1)})
     client.post("/v1/reports", json=report(title="A new one"))
-    # TISMA_REPORT_DAYS=0 keeps them (not «older than now», which would delete them all).
-    services.settings.report_days, days = 0, services.settings.report_days
     services.forget_old_data()
     with services.db.session() as s:
         assert s.query(BugReport).count() == 2
