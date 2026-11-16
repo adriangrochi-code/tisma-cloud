@@ -22,6 +22,7 @@ import httpx
 from .. import __version__
 from ..jobs import FEA_CLASSES
 from .config import NodeConfig, memory_gb
+from .connection import StateFile, explain
 from .errors import HTTPError, HTTPStatusError, TransportError
 from .runners import RUNNERS, JobCancelled, JobFailed, scan_readiness
 
@@ -51,8 +52,10 @@ def machine_info(cfg: NodeConfig) -> dict:
 
 
 class Agent:
-    def __init__(self, cfg: NodeConfig, client: httpx.Client | None = None) -> None:
+    def __init__(self, cfg: NodeConfig, client: httpx.Client | None = None, state_path: Path | None = None) -> None:
         self.cfg = cfg
+        # How the last request to the master went, for «status» and the window (connection.py).
+        self.state = StateFile(state_path) if state_path is not None else None
         self.client = client or httpx.Client(base_url=cfg.master_url, verify=cfg.verify_tls, timeout=60.)
         self.client.headers["Authorization"] = f"Bearer {cfg.token}"
         self.info = machine_info(cfg)
@@ -71,13 +74,26 @@ class Agent:
         cfg.work_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- master
+    def connected(self) -> None:
+        if self.state is not None:
+            self.state.write(True, f"Conectado al maestro {self.cfg.master_url}")
+
+    def cut_off(self, ex: BaseException) -> str:
+        """Notes why the master was not reached; returns it said for a person."""
+        why = explain(ex, self.cfg.master_url)
+        if self.state is not None:
+            self.state.write(False, why)
+        return why
+
     def claim(self, wait: int | None = None, exclude: tuple[str, ...] = ()) -> dict | None:
         params = {"wait": wait} if wait is not None else None
         r = self.client.post("/v1/node/claim", json={"info": self.info, "exclude": list(exclude)}, params=params,
                              timeout=120.)
         if r.status_code == 204:
+            self.connected()
             return None
         r.raise_for_status()
+        self.connected()
         return r.json()["job"]
 
     def check_scans(self, force: bool = False) -> bool:
@@ -104,6 +120,7 @@ class Agent:
         r = self.client.post("/v1/node/heartbeat", json={"running": running, "info": self.info,
                                                                 "instance": self.instance}, timeout=30.)
         r.raise_for_status()
+        self.connected()
         for job_id in r.json().get("cancel", []):
             with self._lock:
                 if job_id in self._running:
@@ -263,15 +280,17 @@ class Agent:
                     if holds:
                         self.release_fea()
             except HTTPStatusError as ex:
+                why = self.cut_off(ex)
                 if ex.response.status_code == 401:
                     self._token_refused()
                     return
-                log.warning("Slot %d: the master answered %s, retrying in %.0f s", index, ex.response.status_code,
-                            backoff)
+                log.warning("Slot %d: the master answered %s, retrying in %.0f s (%s)", index, ex.response.status_code,
+                            backoff, why)
                 self._stop.wait(backoff)
                 backoff = min(backoff * 2, 60.)
             except HTTPError as ex:
-                log.warning("Slot %d: master not reachable (%s), retrying in %.0f s", index, ex, backoff)
+                log.warning("Slot %d: master not reachable (%s), retrying in %.0f s: %s", index, ex, backoff,
+                            self.cut_off(ex))
                 self._stop.wait(backoff)
                 backoff = min(backoff * 2, 60.)
 
@@ -286,12 +305,13 @@ class Agent:
             try:
                 self.heartbeat()
             except HTTPStatusError as ex:
+                why = self.cut_off(ex)
                 if ex.response.status_code == 401:
                     self._token_refused()
                     return
-                log.warning("Heartbeat failed: %s", ex)
+                log.warning("Heartbeat failed: %s (%s)", ex, why)
             except HTTPError as ex:
-                log.warning("Heartbeat failed: %s", ex)
+                log.warning("Heartbeat failed: %s (%s)", ex, self.cut_off(ex))
 
     def run_forever(self) -> None:
         log.info("Node with %d slot(s) (%d for analyses) working for %s", self.cfg.slots, self.cfg.fea_slots,

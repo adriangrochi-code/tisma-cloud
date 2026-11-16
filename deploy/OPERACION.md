@@ -157,4 +157,30 @@ trabajos que estaban corriendo vuelven a la cola y los toma un nodo cuando haya 
 | La biblioteca no responde (503) | Diagnóstico: «Biblioteca entre usuarios» (la clave sin certificar) |
 | El sembrador no revisa modelos | Diagnóstico: «Sembrador de la biblioteca» (ClamAV, `TISMA_SEED_TOKEN`) |
 
+### El nodo no vuelve
+
+Después de apagar la PC del nodo de golpe, un corte de luz o de red, el nodo vuelve solo: con «Inicio con la máquina»
+arranca al prender la PC y se reconecta apenas llega al maestro, sin tocar nada. Si no vuelve:
+
+1. **En la PC del nodo**, `tisma-cloud status` dice qué vio el nodo la última vez, y `tisma-cloud check` (o la ventana)
+   lo prueba en el momento:
+
+   | Dice | Qué hacer |
+   |---|---|
+   | «Detenido» | `tisma-cloud start`; para que arranque solo, `tisma-cloud autostart on` |
+   | «Nada atiende en IP:puerto» | el maestro está detenido, o el puerto no es ese: en el maestro, `tisma-cloud status` |
+   | «El maestro no contesta en IP:puerto» | el puerto está bloqueado: en el maestro, `tisma-cloud firewall on`; o esa no es la dirección del maestro en esta red (`master_url` del nodo) |
+   | «No se encuentra …» / «Esta máquina no llega a …» | la dirección del maestro está mal escrita, o esta PC no tiene red |
+   | «El maestro no reconoce el token» | quitaron el nodo en el maestro: el nodo pide unirse solo; aceptalo en el maestro (Nodos) |
+   | «deshabilitado» | en el maestro, Nodos: «Habilitar / deshabilitar» |
+   | «responde otro programa» | la dirección o el puerto son de otro programa, no del maestro |
+   | «Versión: … y este nodo la …» | sigue andando; actualizá primero el maestro y después el nodo |
+
+2. **En el maestro**, Nodos muestra al lado de cada nodo qué pasa: «Nunca se conectó», «Sin señal hace N min» (la PC
+   está apagada, sin red, o su servicio detenido), «Dos programas responden con su token» o una versión distinta.
+
+3. Una versión de antes del 16-11-2026 podía quedarse sin arrancar después de un corte: decía «En marcha» pero el nodo
+   no corría, porque el archivo `tisma-cloud.pid` que quedó nombraba a otro programa. Si pasa con esa versión: borrar
+   `tisma-cloud.pid` de la carpeta del nodo y `tisma-cloud start`. Desde esa fecha se reconoce solo.
+
 Los paquetes corren solo en las máquinas propias del dueño: no se le dan a nadie.

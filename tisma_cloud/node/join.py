@@ -16,6 +16,7 @@ import httpx
 
 from .agent import machine_info
 from .config import NodeConfig
+from .connection import StateFile, explain
 from .errors import HTTPError
 
 log = logging.getLogger("tisma_cloud.node")
@@ -41,7 +42,7 @@ def write_token(config_path: Path, token: str) -> None:
 
 
 def ask_to_join(cfg: NodeConfig, config_path: Path, client: httpx.Client | None = None,
-                sleep: Callable[[float], None] = time.sleep) -> str:
+                sleep: Callable[[float], None] = time.sleep, status_file: StateFile | None = None) -> str:
     """Asks the master to make this machine a node and waits for the answer. Returns the token (also written in
     node.toml); raises Rejected when the administrator rejects it."""
     client = client or httpx.Client(base_url=cfg.master_url, verify=cfg.verify_tls, timeout=30.)
@@ -74,6 +75,9 @@ def ask_to_join(cfg: NodeConfig, config_path: Path, client: httpx.Client | None 
             r.raise_for_status()
             answer = r.json()
             backoff = 5.
+            if status_file is not None and answer["status"] not in ("accepted", "rejected"):
+                status_file.write(False, f"Pidió unirse al maestro {cfg.master_url}: aceptalo en la ventana del maestro "
+                                   f"(Nodos)")
             if answer["status"] == "accepted":
                 write_token(config_path, answer["token"])
                 state_path.unlink(missing_ok=True)
@@ -85,6 +89,9 @@ def ask_to_join(cfg: NodeConfig, config_path: Path, client: httpx.Client | None 
             sleep(poll_s)
         except HTTPError as ex:
             # Not reachable, or not from this network (404 on the join of a master on internet), or too many requests.
-            log.warning("Asking the master to join failed (%s), again in %.0f s", ex, backoff)
+            why = explain(ex, cfg.master_url)
+            if status_file is not None:
+                status_file.write(False, why)
+            log.warning("Asking the master to join failed (%s), again in %.0f s: %s", ex, backoff, why)
             sleep(backoff)
             backoff = min(backoff * 2, 60.)

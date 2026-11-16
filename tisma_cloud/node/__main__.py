@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .agent import Agent, cleanup_work_dir
 from .config import NodeConfig
+from .connection import STATE_FILE, StateFile
 from .join import Rejected, ask_to_join, write_token
 
 log = logging.getLogger("tisma_cloud.node")
@@ -25,17 +26,24 @@ def main(argv: list[str] | None = None) -> int:
     config_path = Path(args.config)
     cfg = NodeConfig.load(config_path)
     cleanup_work_dir(cfg.work_dir)
+    # How the last request to the master went, next to node.toml (the folder of the service): «status» reads it.
+    state_path = config_path.with_name(STATE_FILE)
+    state = StateFile(state_path)
+    # What a run before this one saw is not said as if it were now.
+    state.write(False, f"Conectando con el maestro {cfg.master_url}…")
     while True:
         if not cfg.token:
             if args.no_join:
                 log.error("No token in %s", config_path)
                 return 1
             try:
-                cfg.token = ask_to_join(cfg, config_path)
+                cfg.token = ask_to_join(cfg, config_path, status_file=state)
             except Rejected:
+                state.write(False, "El maestro rechazó esta máquina: el nodo se detuvo (iniciarlo de nuevo vuelve a "
+                                   "pedir unirse)")
                 log.error("The master rejected this machine: the node stops (start it again to ask again)")
                 return 0
-        agent = Agent(cfg)
+        agent = Agent(cfg, state_path=state_path)
         agent.run_forever()
         if not agent.unknown_token:
             return 0

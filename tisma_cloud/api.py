@@ -510,7 +510,11 @@ def job_view(job: Job) -> dict[str, Any]:
     }
 
 
-def node_view(node: Node, running: int = 0, timeout_s: int = 90) -> dict[str, Any]:
+def node_view(node: Node, running: int = 0, timeout_s: int = 90, twins: bool = False) -> dict[str, Any]:
+    from .node_problems import node_problem
+
+    now = utcnow()
+    online = node.last_seen is not None and now - node.last_seen < timedelta(seconds=timeout_s)
     return {
         "name": node.name,
         "priorities": node.priority_list,
@@ -518,8 +522,11 @@ def node_view(node: Node, running: int = 0, timeout_s: int = 90) -> dict[str, An
         "info": node.info_dict,
         "last_seen": node.last_seen.isoformat() + "Z" if node.last_seen else None,
         # Seen recently: the node is waiting for jobs or running them (it claims or beats every few seconds).
-        "online": node.last_seen is not None and utcnow() - node.last_seen < timedelta(seconds=timeout_s),
+        "online": online,
         "running": running,
+        # Why it does not work, said for a person ("" when it does): node_problems.py.
+        "problem": node_problem(node.enabled, node.last_seen, online, now, str(node.info_dict.get("version") or ""),
+                                twins),
     }
 
 
@@ -2672,6 +2679,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return Response(status_code=204)
         return {"job": job, "priorities": node.priority_list}
 
+    @app.get("/v1/node/whoami")
+    def node_whoami(authorization: Annotated[str | None, Header()] = None) -> dict:
+        """Whether the master knows a node's token, for the diagnosis of the node (its window, «tisma-cloud check»):
+        its name and whether it is enabled. Unlike the node's other requests it does not count as seeing the node."""
+        token = bearer(authorization)
+        with db.session() as s:
+            node = s.execute(select(Node).where(Node.token_hash == hash_token(token))).scalar_one_or_none()
+            if node is None:
+                raise HTTPException(401, "Invalid node token", headers={"WWW-Authenticate": "Bearer"})
+            return {"name": node.name, "enabled": node.enabled, "version": __version__}
+
     @app.post("/v1/node/heartbeat")
     def node_heartbeat(node: NodeDep, body: HeartbeatBody) -> dict:
         with db.session() as s:
@@ -3172,7 +3190,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 select(Job.node_id, func.count()).where(Job.status == "running").group_by(Job.node_id)
             ).all())
             nodes = s.execute(select(Node).order_by(Node.name)).scalars().all()
-            return {"nodes": [node_view(n, running.get(n.id, 0), cfg.node_timeout_s) for n in nodes],
+            twins = services.twins.twins(utcnow())
+            return {"nodes": [node_view(n, running.get(n.id, 0), cfg.node_timeout_s, n.id in twins) for n in nodes],
                     "classes": list(JOB_CLASSES), "descriptions": JOB_CLASS_DESCRIPTIONS}
 
     @app.post("/v1/admin/nodes", status_code=201)

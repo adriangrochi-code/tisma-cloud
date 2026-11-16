@@ -584,8 +584,9 @@ class App:
         box = self.section(self.pages["nodes"], "Qué hace cada nodo",
                            "Doble clic en un nodo para elegir qué hace y en qué orden")
         box.pack(fill="both", expand=True)
-        self.nodes_view = self.table(box.inner, (("state", "Estado", 150), ("does", "Qué hace, en orden de prioridad",
-                                                 340), ("machine", "Máquina", 220)), first=("Nodo", 140))
+        self.nodes_view = self.table(box.inner, (("state", "Estado", 120), ("does", "Qué hace, en orden de prioridad",
+                                                 280), ("machine", "Máquina", 180), ("why", "Qué pasa", 420)),
+                                     first=("Nodo", 130))
         self.nodes_view.bind("<Double-1>", lambda _e: self.edit_node())
         bar = tk.Frame(box.inner, bg=CARD)
         bar.pack(fill="x", pady=(10, 0))
@@ -606,9 +607,11 @@ class App:
         rows = []
         for n in self.node_list:
             state, _color = self.node_state(n)
+            # Why it does not work, for a person (node_problems.py), never a bare «sin señal».
+            why = n.get("problem") or "–"
             rows.append((n["name"], (state, " → ".join(JOB_CLASS_NAMES.get(p, p) for p in n["priorities"]),
-                                     self.machine_text(n.get("info") or {}) or "–"),
-                         "muted" if state == "deshabilitado" else ""))
+                                     self.machine_text(n.get("info") or {}) or "–", why),
+                         "muted" if state == "deshabilitado" else "bad" if n.get("problem") else ""))
         self.fill(self.nodes_view, rows, tree=True)
         self.request_list = board.get("requests", [])
         self.fill(self.requests_view, [

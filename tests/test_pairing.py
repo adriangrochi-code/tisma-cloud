@@ -172,9 +172,9 @@ def test_a_removed_node_forgets_its_token_and_asks_again(client, f, tmp_path, mo
     assert agent.unknown_token
     # The service of the node: it forgets the token, asks again and stops when rejected.
     asked = []
-    monkeypatch.setattr(node_main, "Agent", lambda c: Agent(c, client=client))
+    monkeypatch.setattr(node_main, "Agent", lambda c, **kw: Agent(c, client=client, **kw))
 
-    def ask(c, p):  # noqa: ANN001
+    def ask(c, p, **_kw):  # noqa: ANN001
         asked.append(NodeConfig.load(p).token)
         raise Rejected()
 

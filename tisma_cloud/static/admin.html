@@ -323,6 +323,8 @@ function renderNode(node, jobs) {
   return el("div", { class: "card" },
     el("h3", {}, node.name, el("span", { class: "pill " + state[0] }, state[1])),
     el("div", { class: "info" }, facts || "Todavía no informó sus datos", el("br"), `Última señal ${ago(node.last_seen)}`),
+    // Why it does not work, said for a person (node_problems.py on the master): never a bare «Sin señal».
+    node.problem ? el("div", { class: "info", style: "color:var(--bad, #c0392b)" }, node.problem) : null,
     scanLine,
     el("div", { class: "running" },
       mine.length ? mine.map((j) => el("div", { class: "job-line" },

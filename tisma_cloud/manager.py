@@ -624,6 +624,7 @@ class Manager:
 
         from . import pairing
         from .models import Alert, Job, Node, Payment, Usage, User, month_of, month_start, utcnow
+        from .node_problems import node_problem
         from .scheduler import ACTIVE
 
         db, settings = self._database()
@@ -632,11 +633,17 @@ class Manager:
         with db.session() as s:
             running = dict(s.execute(select(Job.node_id, func.count()).where(Job.status == "running")
                                      .group_by(Job.node_id)).all())
-            nodes = [{"name": n.name, "priorities": n.priority_list, "enabled": n.enabled, "info": n.info_dict,
-                      "online": n.last_seen is not None and (now - n.last_seen).total_seconds() < settings.node_timeout_s,
-                      "last_seen": n.last_seen.isoformat(timespec="seconds") if n.last_seen else "",
-                      "running": running.get(n.id, 0)}
-                     for n in s.execute(select(Node).order_by(Node.name)).scalars()]
+            nodes = []
+            for n in s.execute(select(Node).order_by(Node.name)).scalars():
+                online = n.last_seen is not None and (now - n.last_seen).total_seconds() < settings.node_timeout_s
+                nodes.append({"name": n.name, "priorities": n.priority_list, "enabled": n.enabled, "info": n.info_dict,
+                              "online": online,
+                              "last_seen": n.last_seen.isoformat(timespec="seconds") if n.last_seen else "",
+                              "running": running.get(n.id, 0),
+                              # Why it does not work, for a person (node_problems.py; the twins are known only by the
+                              # master's process, so the window says the rest).
+                              "problem": node_problem(n.enabled, n.last_seen, online, now,
+                                                      str(n.info_dict.get("version") or ""))})
             active = dict(s.execute(select(Job.status, func.count()).where(Job.status.in_(ACTIVE))
                                     .group_by(Job.status)).all())
             ended = dict(s.execute(select(Job.status, func.count()).where(Job.finished_at >= today)
@@ -831,6 +838,10 @@ class Manager:
                       f"Arrancando (pid {pid}), puerto {self.port()}")
         else:
             detail = f"En marcha (pid {pid}), maestro {self.read_node().get('master_url')}"
+            state = self.node_connection()
+            if state and state.get("message"):
+                # What the node itself saw at its last request: connected, or why not (node/connection.py).
+                detail = f"En marcha (pid {pid}). {state['message']}"
         return Status(role, running, pid if running else None, healthy, detail)
 
     def start(self, wait_s: float = 20.) -> Status:
@@ -1221,22 +1232,7 @@ class Manager:
                                  "Sin ellas, los proyectos de otros laminadores se laminan con los ajustes del trabajo, "
                                  "no con los suyos (vienen en la carpeta tisma-profiles del paquete)",
                                  None if ok else "programs"))
-            asked = self.node_path.with_name(self.node_path.name + ".join").is_file()
-            out.append(Check("Token del nodo", True if node.get("token") else None, "Configurado" if node.get("token")
-                             else "Pidió unirse al maestro: aceptalo en la ventana del maestro (Nodos)" if asked
-                             else "Sin token: al iniciar, el nodo pide unirse al maestro; aceptalo en la ventana del "
-                                  "maestro (Nodos)"))
-            master = str(node.get("master_url") or "").rstrip("/")
-            try:
-                import ssl
-
-                context = None if node.get("verify_tls", True) else ssl._create_unverified_context()  # noqa: S323
-                with urllib.request.urlopen(f"{master}/v1/health", timeout=4, context=context) as r:
-                    reach = r.status == 200
-                detail = f"{master} responde"
-            except Exception as e:  # noqa: BLE001
-                reach, detail = False, f"{master} no responde ({getattr(e, 'reason', e)})"
-            out.append(Check("Maestro", reach, detail))
+            out += self._master_checks(node)
             work = Path(node.get("work_dir") or "node-work")
             work = work if work.is_absolute() else self.home / work
             try:
@@ -1248,6 +1244,60 @@ class Manager:
             except OSError as e:
                 out.append(Check("Carpeta de trabajo", False, f"{work}: {e}"))
         return out
+
+    def _master_checks(self, node: dict) -> list[Check]:
+        """Whether this node reaches its master, and if not why, said for a person (node/connection.py): nothing
+        listening, a blocked port, a wrong address; the master's version; whether the master knows the token."""
+        import httpx
+
+        from . import __version__
+        from .node.connection import explain, explain_status, version_note
+
+        master = str(node.get("master_url") or "").rstrip("/")
+        token = str(node.get("token") or "")
+        asked = self.node_path.with_name(self.node_path.name + ".join").is_file()
+        out: list[Check] = []
+        try:
+            with httpx.Client(base_url=master, verify=bool(node.get("verify_tls", True)), timeout=5.,
+                              trust_env=False) as client:
+                r = client.get("/v1/health")
+                health = r.json() if r.status_code == 200 else None
+                if not isinstance(health, dict) or health.get("service") != "tisma-cloud":
+                    out.append(Check("Maestro", False, explain_status(404 if r.status_code == 200 else r.status_code,
+                                                                      master)))
+                    return out
+                out.append(Check("Maestro", True, f"{master} responde"))
+                note = version_note(str(health.get("version") or ""), __version__)
+                out.append(Check("Versión", None if note else True, note or f"La misma que el maestro ({__version__})"))
+                if not token:
+                    out.append(Check("Token del nodo", None,
+                                     "Pidió unirse al maestro: aceptalo en la ventana del maestro (Nodos)" if asked
+                                     else "Sin token: al iniciar, el nodo pide unirse al maestro; aceptalo en la "
+                                          "ventana del maestro (Nodos)"))
+                    return out
+                r = client.get("/v1/node/whoami", headers={"Authorization": f"Bearer {token}"})
+                if r.status_code == 404:
+                    out.append(Check("Token del nodo", True, "Configurado (este maestro no lo deja comprobar)"))
+                elif r.status_code != 200:
+                    out.append(Check("Token del nodo", False, explain_status(r.status_code, master)))
+                elif not r.json().get("enabled", True):
+                    out.append(Check("Token del nodo", False, explain_status(403, master)))
+                else:
+                    out.append(Check("Token del nodo", True, f"El maestro lo conoce: nodo «{r.json().get('name')}»"))
+        except Exception as e:  # noqa: BLE001 (any failure is said, never raised)
+            out.append(Check("Maestro", False, explain(e, master)))
+            if not token:
+                out.append(Check("Token del nodo", None,
+                                 "Pidió unirse al maestro: aceptalo en la ventana del maestro (Nodos)" if asked
+                                 else "Sin token: al iniciar, el nodo pide unirse al maestro; aceptalo en la ventana "
+                                      "del maestro (Nodos)"))
+        return out
+
+    def node_connection(self) -> dict | None:
+        """How the running node's last request to its master went (node-state.json), or None."""
+        from .node.connection import STATE_FILE, read_state
+
+        return read_state(self.home / STATE_FILE)
 
     def fix(self, key: str) -> str:
         """Fixes one item of the diagnosis (Check.fix). Returns what was done."""
