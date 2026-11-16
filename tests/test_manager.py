@@ -464,3 +464,41 @@ def test_check_writes_utf8_to_a_file(tmp_path):
                        timeout=120)
     text = out.read_bytes().decode("utf-8")
     assert "Error" not in text and ("✖" in text or "!" in text or "✔" in text), text
+
+
+def test_a_pid_file_left_by_a_cut_does_not_stop_the_service_from_starting(tmp_path):
+    """A power cut or a crash leaves tisma-cloud.pid behind; after a reboot Windows may give its number to another
+    program. That program is not the service: «start» must start it (a tester's node did not start again, Windows 10,
+    11-16) and «stop» must not kill that program."""
+    import os
+    import subprocess
+    import time
+
+    m = Manager(tmp_path)
+    m.set_role("node")
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        time.sleep(0.5)
+        # The service's own file: the number and when that process started (another time: another program).
+        m.pid_path.write_text(f"{other.pid}\n1000.00\n")
+        assert m._read_pid() is None and not m.status().running
+        m.stop()
+        assert other.poll() is None and not m.pid_path.exists()
+        # A file of an older version (only the number), written before that program started.
+        m.pid_path.write_text(str(other.pid))
+        old = time.time() - 3600
+        os.utime(m.pid_path, (old, old))
+        assert m._read_pid() is None and not m.status().running
+        m.stop()
+        assert other.poll() is None
+        # The same file still names a service that is running (the number and its start agree).
+        m.pid_path.write_text(f"{other.pid}\n{manager_module._process_start(other.pid):.2f}\n")
+        assert m._read_pid() == other.pid and m.status().running
+        m.pid_path.write_text(str(other.pid))
+        assert m._read_pid() == other.pid
+    finally:
+        other.kill()
+        other.wait()
+    assert manager_module._process_start(other.pid) is None or not manager_module._pid_alive(other.pid)
+    started = manager_module._process_start(os.getpid())
+    assert started is not None and 0 <= time.time() - started < 3600

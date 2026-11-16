@@ -261,7 +261,7 @@ jobs:
           # The process of "start" has ended and its unpacked files are deleted: the supervisor must still be able to
           # start the master again (it unpacks its own files, PYINSTALLER_RESET_ENVIRONMENT).
           if [ "${{ matrix.name }}" = linux ]; then
-            sup=$(cat service-home/tisma-cloud.pid)
+            sup=$(head -n 1 service-home/tisma-cloud.pid)
             kill -9 "$(ps -o pid=,args= --ppid "$sup" | grep -v -- --local-node | head -n 1 | awk '{print $1}')"
             for _ in $(seq 1 40); do sleep 1; curl -sf http://127.0.0.1:18991/v1/health > /dev/null 2>&1 && break; done
             curl -sf http://127.0.0.1:18991/v1/health || { "$exe" logs 20; exit 1; }
@@ -285,7 +285,7 @@ jobs:
           tc config master_computes off
           tc start
           Start-Sleep 3
-          $sup = [int](Get-Content "$svc/tisma-cloud.pid")
+          $sup = [int](Get-Content "$svc/tisma-cloud.pid" -TotalCount 1)
           $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$sup" | Where-Object { $_.CommandLine -notmatch '--local-node' } | Select-Object -First 1
           if (-not $child) { throw "no child of the supervisor $sup" }
           taskkill /PID $child.ProcessId /T /F | Out-Null
@@ -385,7 +385,7 @@ jobs:
           tc status
           if (-not (healthy)) { tc logs 40; throw "the master does not answer" }
           # The supervisor starts the master again when it dies.
-          $sup = [int](Get-Content "$svc/tisma-cloud.pid")
+          $sup = [int](Get-Content "$svc/tisma-cloud.pid" -TotalCount 1)
           $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$sup" | Where-Object { $_.CommandLine -notmatch '--local-node' } | Select-Object -First 1
           if (-not $child) { throw "no child of the supervisor $sup" }
           taskkill /PID $child.ProcessId /T /F | Out-Null

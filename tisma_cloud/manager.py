@@ -213,6 +213,43 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+# How far the start of a process may differ from the one written in tisma-cloud.pid (clock ticks, rounding) [s].
+PID_START_TOLERANCE_S = 2.
+
+
+def _process_start(pid: int) -> float | None:
+    """When a process started, in seconds since 1970 (None where it cannot be read): with the pid it tells a process
+    apart from a later one that got the same number. Windows reuses numbers soon, so a pid file left by a power cut or
+    a crash may name another program after a reboot."""
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return None
+        try:
+            times = [wintypes.FILETIME() for _ in range(4)]
+            if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+                return None
+            # FILETIME: 100 ns since 1601-01-01.
+            return ((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime) / 1e7 - 11644473600
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        # /proc/<pid>/stat: the start (field 22, clock ticks since boot, after the name in parentheses); /proc/stat:
+        # the boot (btime, seconds since 1970).
+        ticks = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+        boot = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                    if line.startswith("btime "))
+        return boot + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, IndexError, ValueError, StopIteration):
+        return None
+
+
 def _toml_value(value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -746,10 +783,32 @@ class Manager:
 
     # ---- the process
     def _read_pid(self) -> int | None:
+        """The service's process, from tisma-cloud.pid (its pid, and on the second line when it started). None when
+        the file names a process that is not the one that wrote it: the service was cut (a power cut, a crash) and the
+        number was given to another program, which must neither count as the service nor be stopped."""
         try:
-            return int(self.pid_path.read_text().strip())
-        except (OSError, ValueError):
+            lines = self.pid_path.read_text().split()
+            pid = int(lines[0])
+            written = self.pid_path.stat().st_mtime
+        except (OSError, ValueError, IndexError):
             return None
+        started = _process_start(pid) if _pid_alive(pid) else None
+        if started is not None:
+            try:
+                recorded = float(lines[1]) if len(lines) > 1 else None
+            except ValueError:
+                recorded = None
+            # The start written with the pid, or (a file of an older version, without it) a process that started after
+            # the file was written: another program.
+            if (recorded is not None and abs(started - recorded) > PID_START_TOLERANCE_S) or \
+                    (recorded is None and started > written + PID_START_TOLERANCE_S):
+                return None
+        return pid
+
+    def _write_pid(self) -> None:
+        pid = os.getpid()
+        started = _process_start(pid)
+        self.pid_path.write_text(f"{pid}\n{'' if started is None else f'{started:.2f}'}\n")
 
     def health(self, timeout: float = 2.) -> bool:
         try:
@@ -1246,7 +1305,7 @@ class Manager:
             os.dup2(log.fileno(), 2)
             sys.stdout = sys.stderr = log
         if not child:
-            self.pid_path.write_text(str(os.getpid()))
+            self._write_pid()
             try:
                 return self._supervise()
             finally:

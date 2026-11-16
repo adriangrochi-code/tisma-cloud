@@ -99,6 +99,40 @@ def agent_for(client, node_headers, cfg) -> Agent:
     return Agent(cfg, client=client)
 
 
+def test_a_node_cut_off_and_started_again_is_taken_back(client, f, tmp_path, monkeypatch):
+    """A tester's node (Windows 10, 11-16): stopped, or cut from the network, and started again. The master takes the
+    same token back from the new program: its heartbeat is answered, it is not taken for two programs with one token,
+    and it gets the jobs."""
+    from tisma_cloud.models import utcnow
+
+    services = client.app.state.services
+    cfg = NodeConfig(master_url="http://testserver", token="", work_dir=tmp_path / "work", gpu=False)
+    first = agent_for(client, f.node("n", "slice"), cfg)
+    first.heartbeat()
+    # The network goes: every request to the master fails as unreachable.
+    real_post = client.post
+
+    def unreachable(url, *args, **kwargs):
+        raise httpx.ConnectError("network down", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(client, "post", unreachable)
+    with pytest.raises(httpx.ConnectError):
+        first.heartbeat()
+    with pytest.raises(httpx.ConnectError):
+        first.claim(wait=0)
+    monkeypatch.setattr(client, "post", real_post)
+    # The program is started again: a new instance with the token kept in node.toml.
+    second = Agent(cfg, client=client)
+    assert second.instance != first.instance
+    second.heartbeat()
+    assert not services.twins.twins(utcnow())
+    user = f.user()
+    job = f.submit(user)
+    assert second.claim(wait=0)["id"] == job["id"]
+    second.heartbeat()
+    assert not services.twins.twins(utcnow())
+
+
 @posix_only
 def test_result_is_sent_again_while_the_master_is_busy(client, f, engine_cfg, monkeypatch):
     # Under load the master answered a node's result with 429 and the node failed a job already computed.
