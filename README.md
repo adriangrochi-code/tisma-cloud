@@ -716,6 +716,22 @@ Ajustes: `TISMA_SEED_DIR` (`./library`), `TISMA_SEED_GB` (50, los modelos más n
 `TISMA_SEED_MB_PER_HOUR` (0: sin tope), `TISMA_CLAMAV` (`clamdscan`), `TISMA_SEED_KEY`. La cuenta del sembrador es
 interna (`tisma-cloud admin user-set … --unlimited`): solo una cuenta interna puede marcar «checked».
 
+**Por HTTPS, mientras no haya red de pares** (p2p_library.md 8 octies y 8 nonies): el sembrador también escucha en
+`TISMA_SEED_HTTP` (`127.0.0.1:18100`; `off` lo apaga), y el túnel de la dirección pública le manda `/v1/seed/`
+(`deploy/cloudflared-config.example.yml`):
+
+- **bajar:** `GET /v1/seed/<sha256>/pieces` (la lista de 8 septies) y `GET /v1/seed/<sha256>/piece/<n>` (los bytes),
+  con `Authorization: Bearer <permiso>` de `POST /v1/library/relay-ticket`, que sin `peer_key` sale sin par (sirve
+  solo acá: el intermediario lo rechaza). Responde 401 sin permiso válido, 403 cuenta o par bloqueados, 404 un archivo
+  que no tiene («todavía no disponible»), 451 un archivo bloqueado, 429 con `Retry-After` al pasar el tope de la cuenta
+  en la hora;
+- **subir** (el autor, después de publicar): `POST /v1/library/models` y `.../revisions` devuelven `uploads`, un
+  permiso por archivo (`op: "upload"`, 24 h; nuevos con `POST /v1/library/models/<id>/uploads`).
+  `GET /v1/seed/upload/<sha256>` dice qué pedazos tiene (para retomar) y `PUT /v1/seed/upload/<sha256>/<n>` recibe el
+  pedazo `n` (1 MiB). Con el último comprueba el SHA-256 y las reglas de 3 octies con ClamAV: 201 y desde ahí lo sirve,
+  o 422 y lo borra. También 409 (pedazo equivocado), 413 (más grande), 429 (tope de subida por hora,
+  `TISMA_SEED_UPLOAD_MB_PER_HOUR`, 2000), 507 (sin lugar en `TISMA_SEED_GB`, lo dice en su registro).
+
 **Con el paquete, sin compilar nada:** el paquete trae `tisma-relay\` junto a `tisma-cloud.exe` (Windows y Linux, lo
 compila la CI), y el servicio del maestro corre el intermediario y el sembrador como corre su nodo: arrancan con él y
 vuelven a arrancar si se caen. Vienen apagados; se prenden en la ventana (Configuración) o con

@@ -18,11 +18,15 @@ import (
 var CertPrefix = []byte("tisma-library-key/1\n")
 
 // Ticket is the payload the master signs with the library key: base64url(payload) "." base64url(signature).
+// A relay ticket (8 sexies) has no op; an upload ticket (8 nonies) has op "upload", the file and its size.
 type Ticket struct {
 	Account      string `json:"account"`
 	PeerID       string `json:"peer_id"`
 	Expires      int64  `json:"expires"`
 	CapMBPerHour int64  `json:"cap_mb_per_hour"`
+	Op           string `json:"op"`
+	SHA256       string `json:"sha256"`
+	Size         int64  `json:"size"`
 }
 
 func b64url(text string) ([]byte, error) {
@@ -30,8 +34,45 @@ func b64url(text string) ([]byte, error) {
 }
 
 // ParseTicket checks the ticket's signature with the library key, that it is of the peer that presents it and that
-// it has not ended.
+// it has not ended. A ticket without a peer (made for HTTPS, 8 octies) or an upload ticket is not one for the relay.
 func ParseTicket(text string, libraryKey ed25519.PublicKey, from peer.ID, now time.Time) (*Ticket, error) {
+	t, err := signedTicket(text, libraryKey, now)
+	if err != nil {
+		return nil, err
+	}
+	if t.Op != "" {
+		return nil, errors.New("not a relay ticket")
+	}
+	if t.PeerID == "" || t.PeerID != from.String() {
+		return nil, errors.New("the ticket is of another peer")
+	}
+	if t.CapMBPerHour <= 0 {
+		return nil, errors.New("the ticket gives no traffic")
+	}
+	return t, nil
+}
+
+// ParseBearer checks a ticket presented over HTTPS to the seeder (8 octies, 8 nonies): signed by the library key, not
+// ended, and of the use asked ("" to download, "upload" to upload). It is not tied to a peer: whoever holds it may
+// use it while it lasts, within its account's cap.
+func ParseBearer(text string, libraryKey ed25519.PublicKey, op string, now time.Time) (*Ticket, error) {
+	t, err := signedTicket(text, libraryKey, now)
+	if err != nil {
+		return nil, err
+	}
+	if t.Op != op {
+		return nil, errors.New("a ticket of another use")
+	}
+	if op == "" && t.CapMBPerHour <= 0 {
+		return nil, errors.New("the ticket gives no traffic")
+	}
+	if op == "upload" && (!sha256Hex.MatchString(t.SHA256) || t.Size <= 0) {
+		return nil, errors.New("not an upload ticket")
+	}
+	return t, nil
+}
+
+func signedTicket(text string, libraryKey ed25519.PublicKey, now time.Time) (*Ticket, error) {
 	parts := strings.Split(strings.TrimSpace(text), ".")
 	if len(parts) != 2 {
 		return nil, errors.New("not a ticket")
@@ -48,17 +89,11 @@ func ParseTicket(text string, libraryKey ed25519.PublicKey, from peer.ID, now ti
 		return nil, errors.New("not signed by the library's key")
 	}
 	var t Ticket
-	if err := json.Unmarshal(payload, &t); err != nil || t.Account == "" || t.PeerID == "" {
+	if err := json.Unmarshal(payload, &t); err != nil || t.Account == "" {
 		return nil, errors.New("not a ticket")
-	}
-	if t.PeerID != from.String() {
-		return nil, errors.New("the ticket is of another peer")
 	}
 	if now.Unix() >= t.Expires {
 		return nil, errors.New("the ticket has ended")
-	}
-	if t.CapMBPerHour <= 0 {
-		return nil, errors.New("the ticket gives no traffic")
 	}
 	return &t, nil
 }

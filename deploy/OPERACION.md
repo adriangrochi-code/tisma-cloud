@@ -59,6 +59,15 @@ El puerto del correo es 587 con STARTTLS; otro: `TISMA_SMTP_PORT` y `TISMA_SMTP_
   tisma-cloud config TISMA_LIBRARY_RELAYS /ip4/TU-IP-PÚBLICA/tcp/4001/p2p/...   # la de la línea del registro
   ```
 
+  Mientras las apps no tengan red de pares, los modelos se bajan y se suben por HTTPS desde el sembrador
+  (`p2p_library.md` 8 octies y 8 nonies): en el túnel de Cloudflare, la regla de `/v1/seed/` hacia
+  `http://localhost:18100` va **antes** de la que manda todo al maestro (ya está en
+  `deploy/cloudflared-config.example.yml`; un `config.yml` de antes del 16-11-2026 no la tiene, ver
+  `deploy/cloudflare-tunnel-windows.md`). Sin esa regla, desde afuera no se baja ni se sube ningún modelo. El sembrador
+  guarda todos los modelos publicados mientras entren en `TISMA_SEED_GB` (50); si no entran, lo dice en el registro
+  («does not fit in TISMA_SEED_GB») y hay que darle más lugar. Cada cuenta sube hasta
+  `TISMA_SEED_UPLOAD_MB_PER_HOUR` (2000) por hora.
+
   El sembrador necesita ClamAV instalado aparte (en Windows, el instalador de clamav.net y `freshclam` para las
   firmas; `TISMA_CLAMAV` con la ruta de `clamdscan` o `clamscan` si no está en el PATH). En el router, 4001 y 4002
   (TCP y UDP).

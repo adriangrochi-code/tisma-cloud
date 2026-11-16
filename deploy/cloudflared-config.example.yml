@@ -10,6 +10,11 @@ ingress:
   - hostname: tismaservidores.net
     path: ^/(admin|v1/admin|v1/node/join)(/.*)?$
     service: http_status:404
+  # The library's files go to the seeder, not to the master (p2p_library.md 8 octies and 8 nonies): it listens on
+  # TISMA_SEED_HTTP (127.0.0.1:18100). Before the master's rule below, which would take them otherwise.
+  - hostname: tismaservidores.net
+    path: ^/v1/seed/
+    service: http://localhost:18100
   # Everything else goes to the master on this machine.
   - hostname: tismaservidores.net
     service: http://localhost:8000

@@ -253,6 +253,18 @@ func seedMain() {
 	log.Printf("tisma-relay seed %s in %s", h.ID(), dir)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Over HTTPS while there are no peers (8 octies, 8 nonies): on the local machine, behind the tunnel's /v1/seed/.
+	if listen := env("TISMA_SEED_HTTP", "127.0.0.1:18100"); listen != "off" {
+		web := &http.Server{Addr: listen, ReadHeaderTimeout: 20 * time.Second, Handler: &SeedHTTP{S: s, Key: libraryKey,
+			UploadBytes: envInt("TISMA_SEED_UPLOAD_MB_PER_HOUR", 2000) << 20}}
+		go func() {
+			log.Printf("the library over HTTPS (/v1/seed/) on %s", listen)
+			if err := web.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("TISMA_SEED_HTTP %s: %v", listen, err)
+			}
+		}()
+		go func() { <-ctx.Done(); _ = web.Close() }()
+	}
 	for {
 		if whole, err := s.Cycle(ctx); err != nil {
 			log.Printf("seeding: %v", err)

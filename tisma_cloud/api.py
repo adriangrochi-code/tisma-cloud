@@ -1318,10 +1318,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if source is not None:
                 source.published_model = model_id
             library.bump(s, "index")
-            return library.model_entry(row)
+            # The author uploads the files to the seeder with these (8 nonies): there are no peers yet to take them from.
+            return {**library.model_entry(row), "uploads": upload_tickets(u, json.loads(row.files))}
 
     # ---- the peers of the library (peers.py): relay tickets, announcements and who shares a model
     relays = [r.strip() for r in cfg.library_relays.split(",") if r.strip()]
+
+    def upload_tickets(user: User, files: list[dict]) -> list[dict]:
+        account = library.account_id(user.id)
+        return [peers.upload_ticket(services.library.key, account, f["sha256"], int(f["size"])) for f in files]
 
     def peer_allowed(s, user: User, peer_key: str, request: Request) -> None:  # noqa: ANN001
         if not library.owns_key(s, user, peer_key):
@@ -1335,12 +1340,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(403, "Blocked in the library")
 
     @app.post("/v1/library/relay-ticket")
-    def library_relay_ticket(user: UserDep, request: Request, body: dict = Body(...)) -> dict:
-        peer_key = str(body.get("peer_key", ""))
+    def library_relay_ticket(user: UserDep, request: Request, body: dict = Body(default={})) -> dict:
+        """A ticket for the relay (8 sexies) with the account's peer key, or, without it, one to download from the
+        seeder over HTTPS (8 octies, peer_key optional): the relay refuses that one."""
+        peer_key = str((body or {}).get("peer_key", "") or "")
         with db.session() as s:
-            peer_allowed(s, user, peer_key, request)
+            if peer_key:
+                peer_allowed(s, user, peer_key, request)
+            else:
+                try:
+                    address = str(ipaddress.ip_address(client_key(request)))
+                except ValueError:
+                    address = client_key(request)
+                if library.blocked(s, "account", library.account_id(user.id)) or library.blocked(s, "address", address):
+                    raise HTTPException(403, "Blocked in the library")
             cap = library.settings_view(s)["relay_mb_per_hour_per_account"]
-        made = peers.ticket(services.library.key, library.account_id(user.id), library.unb64(peer_key, 32), cap)
+        made = peers.ticket(services.library.key, library.account_id(user.id),
+                            library.unb64(peer_key, 32) if peer_key else None, cap)
         return {**made, "relays": relays}
 
     @app.post("/v1/library/peers/announce")
@@ -1570,6 +1586,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                              .order_by(LibraryModel.published_at.desc())).scalars().all()
             return {"models": [{**library.model_entry(m), "removed": m.removed_at is not None,
                                 "removed_reason": m.removed_reason} for m in rows]}
+
+    @app.post("/v1/library/models/{model_id}/uploads")
+    def library_upload_tickets(user: UserDep, model_id: str, request: Request) -> dict:
+        """New upload tickets for the files of an author's model (8 nonies), when the ones of the publication ended:
+        only its own, not removed nor blocked."""
+        with db.session() as s:
+            last = s.execute(select(LibraryModel).where(LibraryModel.model_id == model_id)
+                             .order_by(LibraryModel.revision.desc())).scalars().first()
+            if last is None or last.user_id != user.id:
+                raise HTTPException(404, "No such model")
+            if last.removed_at is not None:
+                raise HTTPException(403, "The model was removed from the library")
+            u = s.get(User, user.id)
+            try:
+                address = str(ipaddress.ip_address(client_key(request)))
+            except ValueError:
+                address = client_key(request)
+            files = json.loads(last.files)
+            if (library.blocked(s, "account", library.account_id(u.id)) or library.blocked(s, "model", model_id)
+                    or library.blocked(s, "address", address)
+                    or any(library.blocked(s, "file", f["sha256"]) for f in files)):
+                raise HTTPException(403, "Blocked in the library")
+            return {"id": model_id, "revision": last.revision, "uploads": upload_tickets(u, files)}
 
     @app.delete("/v1/library/models/{model_id}")
     def library_unpublish(user: UserDep, model_id: str) -> dict:

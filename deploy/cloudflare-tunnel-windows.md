@@ -87,7 +87,13 @@ Comprobar las reglas:
 cloudflared tunnel --config "$dir\config.yml" ingress validate
 cloudflared tunnel --config "$dir\config.yml" ingress rule https://tismaservidores.net/admin      # http_status:404
 cloudflared tunnel --config "$dir\config.yml" ingress rule https://tismaservidores.net/v1/health  # http://localhost:8000
+cloudflared tunnel --config "$dir\config.yml" ingress rule https://tismaservidores.net/v1/seed/x/pieces  # http://localhost:18100
 ```
+
+La regla de `/v1/seed/` manda los archivos de la biblioteca al sembrador (no al maestro): las apps los bajan y los
+autores los suben por ahí mientras no haya red de pares. Si el sembrador usa otro puerto (`TISMA_SEED_HTTP`), cambiar
+el `18100`. Un `config.yml` de antes del 16-11-2026 no la tiene: agregar esas tres líneas (`hostname`, `path`,
+`service`) antes de la regla que manda todo al maestro, y reiniciar el servicio de `cloudflared`.
 
 La configuración ya **cierra** `/admin`, `/v1/admin` y `/v1/node/join`: desde internet responden «no existe». La
 administración y el alta de nodos quedan solo para la red local, igual que antes. El maestro también las niega desde

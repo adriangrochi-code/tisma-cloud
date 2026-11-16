@@ -47,12 +47,26 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def ticket(key: LibraryKey, account: str, public_key: bytes, cap_mb_per_hour: int, now: float | None = None) -> dict:
-    """A relay ticket: base64url(payload) "." base64url(Ed25519 signature of the payload's bytes, library key)."""
+def ticket(key: LibraryKey, account: str, public_key: bytes | None, cap_mb_per_hour: int,
+           now: float | None = None) -> dict:
+    """A relay ticket: base64url(payload) "." base64url(Ed25519 signature of the payload's bytes, library key).
+    Without a peer key its peer_id is empty: it serves only to download from the seeder over HTTPS (8 octies); the
+    relay refuses it, as it cannot tie it to a peer."""
     expires = int((now or time.time()) + TICKET_TTL_S)
-    payload = canonical({"account": account, "peer_id": peer_id(public_key), "expires": expires,
-                         "cap_mb_per_hour": cap_mb_per_hour})
+    payload = canonical({"account": account, "peer_id": peer_id(public_key) if public_key else "",
+                         "expires": expires, "cap_mb_per_hour": cap_mb_per_hour})
     return {"ticket": _b64url(payload) + "." + _b64url(key.sign(payload)), "expires": expires}
+
+
+UPLOAD_TICKET_TTL_S = 24 * 3600
+
+
+def upload_ticket(key: LibraryKey, account: str, sha256: str, size: int, now: float | None = None) -> dict:
+    """A ticket to upload one file of a model to the seeder (8 nonies): op «upload», so that it does not download nor
+    open the relay, and a relay ticket does not upload."""
+    expires = int((now or time.time()) + UPLOAD_TICKET_TTL_S)
+    payload = canonical({"op": "upload", "account": account, "sha256": sha256, "size": size, "expires": expires})
+    return {"sha256": sha256, "ticket": _b64url(payload) + "." + _b64url(key.sign(payload)), "expires": expires}
 
 
 def announcement_bytes(body: dict) -> bytes:

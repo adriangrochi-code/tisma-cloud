@@ -145,9 +145,13 @@ type Seeder struct {
 	CapBytes int64    // upload per hour
 
 	mu       sync.Mutex
-	servable map[string]bool // files of models in the index, not blocked
-	blocked  map[string]bool // files blocked (or of blocked models or accounts)
-	reported map[string]bool // revisions told to the master ("id/rev")
+	servable map[string]bool      // files of models in the index, not blocked
+	blocked  map[string]bool      // files blocked (or of blocked models or accounts)
+	accounts map[string]bool      // accounts blocked (8 octies: their tickets are refused)
+	peers    map[string]bool      // peer ids blocked
+	uploaded map[string]time.Time // files uploaded by their authors (8 nonies), kept until the index lists them
+	left     map[string]bool      // models that do not fit in MaxBytes, said once
+	reported map[string]bool      // revisions told to the master ("id/rev")
 	window   time.Time
 	sentHour int64
 	now      func() time.Time
@@ -217,6 +221,12 @@ func (s *Seeder) refresh() ([]indexModel, error) {
 	for _, p := range bl.Peers {
 		blockedPeers[p] = true
 	}
+	blockedPeerIDs := map[string]bool{}
+	for _, p := range bl.Peers {
+		if id, err := peerIDOf(p); err == nil {
+			blockedPeerIDs[id] = true
+		}
+	}
 	blocked, servable := map[string]bool{}, map[string]bool{}
 	for _, f := range bl.Files {
 		blocked[f.SHA256] = true
@@ -242,7 +252,15 @@ func (s *Seeder) refresh() ([]indexModel, error) {
 	}
 	sort.SliceStable(keep, func(i, j int) bool { return keep[i].Published > keep[j].Published })
 	s.mu.Lock()
-	s.servable, s.blocked = servable, blocked
+	// A file an author uploaded a moment ago is served from then on, even before this index lists its model.
+	for sha, when := range s.uploaded {
+		if blocked[sha] || s.clock().Sub(when) > uploadKeep {
+			delete(s.uploaded, sha)
+		} else {
+			servable[sha] = true
+		}
+	}
+	s.servable, s.blocked, s.accounts, s.peers = servable, blocked, blockedAccounts, blockedPeerIDs
 	if s.reported == nil {
 		s.reported = map[string]bool{}
 	}
@@ -267,6 +285,18 @@ func (s *Seeder) Cycle(ctx context.Context) ([]string, error) {
 	var used int64
 	for _, m := range models {
 		if s.MaxBytes > 0 && used+m.Size > s.MaxBytes {
+			// Said once per model: the owner gives the seeder more room (TISMA_SEED_GB) to keep every model.
+			s.mu.Lock()
+			if s.left == nil {
+				s.left = map[string]bool{}
+			}
+			first := !s.left[m.ID]
+			s.left[m.ID] = true
+			s.mu.Unlock()
+			if first {
+				log.Printf("WARNING: the library does not fit in TISMA_SEED_GB (%d GB): model %s (%d MB) is left out; "+
+					"give the seeder more room", s.MaxBytes>>30, m.ID, m.Size>>20)
+			}
 			continue
 		}
 		used += m.Size
@@ -415,4 +445,47 @@ func peerKeyOf(key crypto.PrivKey) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+// How long a file uploaded by its author is kept and served before the index lists its model.
+const uploadKeep = 24 * time.Hour
+
+// peerIDOf is the libp2p peer id of a library peer key (base64 of a raw Ed25519 public key), as peers.peer_id.
+func peerIDOf(peerKey string) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(peerKey)
+	if err != nil {
+		return "", err
+	}
+	pub, err := crypto.UnmarshalEd25519PublicKey(raw)
+	if err != nil {
+		return "", err
+	}
+	id, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// BlockedAccount: the account, or the peer of a ticket, is in the signed blocklist.
+func (s *Seeder) BlockedAccount(account, peerID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.accounts[account] || (peerID != "" && s.peers[peerID])
+}
+
+// Uploaded: a file an author uploaded and that passed the checks is served from now on, and kept by Cycle.
+func (s *Seeder) Uploaded(sha string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.uploaded == nil {
+		s.uploaded = map[string]time.Time{}
+	}
+	if s.servable == nil {
+		s.servable = map[string]bool{}
+	}
+	s.uploaded[sha] = s.clock()
+	if !s.blocked[sha] {
+		s.servable[sha] = true
+	}
 }

@@ -840,3 +840,61 @@ def test_the_seeder_marks_a_revision_checked_or_reports_it(client, f):
     with f.db.session() as s:
         report = s.execute(select(LibraryReport).where(LibraryReport.model_id == second["id"])).scalar_one()
         assert "EICAR" in report.reason and report.user_id is not None
+
+
+def _signed_payload(client, ticket: str) -> dict:
+    """A ticket's payload, after checking its signature with the library key."""
+    payload_b64, sig_b64 = ticket.split(".")
+    pad = lambda t: base64.urlsafe_b64decode(t + "=" * (-len(t) % 4))  # noqa: E731
+    key = library.unb64(client.get("/v1/library/key").json()["public_key"], 32)
+    assert library.verify(key, pad(sig_b64), pad(payload_b64))
+    return json.loads(pad(payload_b64))
+
+
+def test_a_ticket_to_download_over_https_needs_no_peer_key(client, f):
+    """p2p_library.md 8 octies: without peer_key the ticket has an empty peer_id (the seeder over HTTPS takes it, the
+    relay does not); a blocked account gets none."""
+    import time
+
+    admin = f.user("root@x.com", admin=True)
+    app = App(client, f.user("lucia@x.com"))
+    r = client.post("/v1/library/relay-ticket", headers=app.headers)
+    assert r.status_code == 200, r.text
+    payload = _signed_payload(client, r.json()["ticket"])
+    assert payload["peer_id"] == "" and payload["cap_mb_per_hour"] == 500 and payload["expires"] > time.time()
+    assert client.post("/v1/library/relay-ticket", headers=app.headers, json={}).status_code == 200
+    account = payload["account"]
+    assert client.post("/v1/admin/library/blocks", headers=admin,
+                       json={"kind": "account", "value": account, "reason": "spam"}).status_code == 201
+    assert client.post("/v1/library/relay-ticket", headers=app.headers).status_code == 403
+
+
+def test_publishing_gives_the_tickets_to_upload_the_files_to_the_seeder(client, f):
+    """p2p_library.md 8 nonies: one upload ticket per file, op «upload», 24 h; new ones for the author only."""
+    import time
+
+    app = App(client, f.user("lucia@x.com"))
+    app.bind()
+    files = [{"path": "pieza.3mf", "role": "project", "size": 2048, "sha256": hashlib.sha256(b"pieza").hexdigest()},
+             {"path": "foto.jpg", "role": "photo", "size": 999, "sha256": hashlib.sha256(b"foto").hexdigest()}]
+    model = app.publish(files=files)
+    assert sorted(u["sha256"] for u in model["uploads"]) == sorted(x["sha256"] for x in files)
+    by_sha = {x["sha256"]: x for x in files}
+    for upload in model["uploads"]:
+        file = by_sha[upload["sha256"]]
+        payload = _signed_payload(client, upload["ticket"])
+        assert payload["op"] == "upload" and payload["sha256"] == file["sha256"] and payload["size"] == file["size"]
+        assert payload["account"] == model["author"]["account"]
+        assert 23 * 3600 < payload["expires"] - time.time() <= 24 * 3600
+    # A revision brings its own.
+    files2 = [{"path": "pieza.3mf", "role": "project", "size": 4096, "sha256": hashlib.sha256(b"v2").hexdigest()}]
+    r = client.post(f"/v1/library/models/{model['id']}/revisions", headers=app.headers, json=app.body(files2))
+    assert r.status_code == 201 and [u["sha256"] for u in r.json()["uploads"]] == [files2[0]["sha256"]]
+    # New tickets when they end: the author's newest revision only.
+    again = client.post(f"/v1/library/models/{model['id']}/uploads", headers=app.headers)
+    assert again.status_code == 200 and again.json()["revision"] == 2
+    assert [u["sha256"] for u in again.json()["uploads"]] == [files2[0]["sha256"]]
+    other = App(client, f.user("ana@x.com"))
+    assert client.post(f"/v1/library/models/{model['id']}/uploads", headers=other.headers).status_code == 404
+    client.delete(f"/v1/library/models/{model['id']}", headers=app.headers)
+    assert client.post(f"/v1/library/models/{model['id']}/uploads", headers=app.headers).status_code == 403
