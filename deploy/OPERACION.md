@@ -165,6 +165,7 @@ trabajos que estaban corriendo vuelven a la cola y los toma un nodo cuando haya 
 | Nadie puede confirmar su cuenta | Diagnóstico del maestro: «Correo de los códigos» (`TISMA_SMTP_*` en `.env`) |
 | La biblioteca no responde (503) | Diagnóstico: «Biblioteca entre usuarios» (la clave sin certificar) |
 | El sembrador no revisa modelos | Diagnóstico: «Sembrador de la biblioteca» (ClamAV, `TISMA_SEED_TOKEN`) |
+| Las apps no bajan ni suben modelos | Diagnóstico: «Biblioteca por HTTPS» (el sembrador en marcha, y la regla de `/v1/seed/` en el túnel) |
 
 ### El nodo no vuelve
 

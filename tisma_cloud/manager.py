@@ -1032,7 +1032,46 @@ class Manager:
             if not shutil.which(clam):
                 seed.append(f"no se encuentra {clam} (ClamAV, aparte: TISMA_CLAMAV)")
             out.append(Check("Sembrador de la biblioteca", not seed, "; ".join(seed) or f"{relay}, ClamAV {clam}"))
+            if self.status().running:
+                out.append(self._seed_https_check(env))
         return out
+
+    @staticmethod
+    def _probe_seed(url: str) -> tuple[int, str]:
+        """What answers GET <url>/v1/seed/<a file>/pieces without a ticket: (status, text), (0, why) when nothing."""
+        import httpx
+
+        try:
+            r = httpx.get(f"{url.rstrip('/')}/v1/seed/{'0' * 64}/pieces", timeout=6., trust_env=False)
+            return r.status_code, r.text
+        except Exception as e:  # noqa: BLE001 (said, never raised)
+            return 0, str(e)
+
+    def _seed_https_check(self, env: dict) -> Check:
+        """The library over HTTPS (p2p_library.md 8 octies, 8 nonies): the seeder answers on TISMA_SEED_HTTP, and from
+        the public address /v1/seed/ reaches it through the tunnel (its rule before the master's), not the master."""
+        name = "Biblioteca por HTTPS"
+        listen = os.environ.get("TISMA_SEED_HTTP") or env.get("TISMA_SEED_HTTP") or "127.0.0.1:18100"
+        if listen == "off":
+            return Check(name, None, "Apagada (TISMA_SEED_HTTP=off): las apps no pueden bajar ni subir modelos hasta "
+                                     "que haya red de pares")
+        # The seeder refuses a request without a ticket naming the ticket it wants; the master knows no /v1/seed/.
+        seeder = "relay-ticket"
+        code, text = self._probe_seed(f"http://{listen}")
+        if code != 401 or seeder not in text:
+            return Check(name, False, f"El sembrador no atiende en {listen} (¿arrancó? «tisma-cloud logs» lo dice)")
+        public = os.environ.get("TISMA_PUBLIC_URL") or env.get("TISMA_PUBLIC_URL", "")
+        if not public:
+            return Check(name, None, f"El sembrador atiende en {listen}. Sin TISMA_PUBLIC_URL no se comprueba la regla "
+                                     f"de /v1/seed/ del túnel (deploy/cloudflared-config.example.yml)")
+        code, text = self._probe_seed(public)
+        if code == 401 and seeder in text:
+            return Check(name, True, f"{public}/v1/seed/ llega al sembrador")
+        if code == 0:
+            return Check(name, None, f"No se pudo comprobar {public}/v1/seed/ desde esta máquina ({text[:120]})")
+        return Check(name, False, f"{public}/v1/seed/ no llega al sembrador (respondió {code}): falta en el túnel la "
+                                  f"regla «path: ^/v1/seed/» hacia http://localhost:{listen.rsplit(':', 1)[-1]}, antes "
+                                  f"de la que manda todo al maestro (deploy/cloudflare-tunnel-windows.md)")
 
     def _library_check(self) -> Check:
         """The library shared between users answers only with its key certified by the owner (library.py)."""

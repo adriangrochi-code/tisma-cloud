@@ -502,3 +502,29 @@ def test_a_pid_file_left_by_a_cut_does_not_stop_the_service_from_starting(tmp_pa
     assert manager_module._process_start(other.pid) is None or not manager_module._pid_alive(other.pid)
     started = manager_module._process_start(os.getpid())
     assert started is not None and 0 <= time.time() - started < 3600
+
+
+def test_the_diagnosis_says_whether_the_library_over_https_reaches_the_seeder(tmp_path, monkeypatch):
+    """p2p_library.md 8 octies: the seeder answers on TISMA_SEED_HTTP, and the tunnel sends /v1/seed/ to it; without
+    that rule the master answers it (404) and nobody outside downloads nor uploads a model."""
+    m = Manager(tmp_path)
+    m.set_role("master")
+    seeder = (401, '{"ok":false,"detail":"A ticket of POST /v1/library/relay-ticket is needed"}')
+    master = (404, '{"detail":"Not Found"}')
+    answers = {}
+    monkeypatch.setattr(Manager, "_probe_seed", staticmethod(lambda url: answers.get(url, (0, "refused"))))
+
+    def check(env):
+        return m._seed_https_check(env)
+
+    c = check({})
+    assert c.ok is False and "no atiende en 127.0.0.1:18100" in c.detail
+    answers["http://127.0.0.1:18100"] = seeder
+    assert check({}).ok is None and "Sin TISMA_PUBLIC_URL" in check({}).detail
+    env = {"TISMA_PUBLIC_URL": "https://tismaservidores.net"}
+    answers["https://tismaservidores.net"] = master
+    c = check(env)
+    assert c.ok is False and "path: ^/v1/seed/" in c.detail and "http://localhost:18100" in c.detail
+    answers["https://tismaservidores.net"] = seeder
+    assert check(env).ok is True
+    assert check({"TISMA_SEED_HTTP": "off"}).ok is None
