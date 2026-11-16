@@ -402,6 +402,69 @@ jobs:
           tc autostart off
           tc firewall off
           if (Get-NetFirewallRule -DisplayName "Tisma Cloud" -ErrorAction SilentlyContinue) { throw "rule left" }
+      # The path of a tester with two PCs (11-16), on one runner: the master and a node in folders of their own, the node
+      # reaching the master by the machine's network address, asking to join, accepted, computing a real job; then cut
+      # at once (killed, its tisma-cloud.pid left behind), started again by the scheduled task as at boot, and back
+      # with no one touching it: a second job is computed by it.
+      - name: Windows, a node cut off and started again by itself (join, accept, job, hard kill, autostart, job)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = (Resolve-Path dist/tisma-cloud.exe).Path
+          $m = Join-Path $PWD "two-pc-master"
+          $n = Join-Path $PWD "two-pc-node"
+          function tm { & $exe --home $m @args; if ($LASTEXITCODE -ne 0) { throw "master: tisma-cloud $args failed ($LASTEXITCODE)" } }
+          function tn { & $exe --home $n @args; if ($LASTEXITCODE -ne 0) { throw "node: tisma-cloud $args failed ($LASTEXITCODE)" } }
+          $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1).IPAddress
+          $url = "http://${ip}:18993"
+          try {
+            tm role master
+            tm config port 18993
+            tm config master_computes off
+            tm firewall on
+            tm admin plan-set beta --hours 5 --concurrent 2 --classes all --public
+            tm admin user-add tester@tisma.test --plan beta | Out-Null
+            tm admin user-set tester@tisma.test --paid-until 2099-01-01 | Out-Null
+            $token = [regex]::Match((& $exe --home $m admin user-token tester@tisma.test | Out-String), 'tu_[A-Za-z0-9_-]+').Value
+            tm start
+            tn role node
+            tn config master_url $url
+            tn start
+            $request = ""
+            for ($i = 0; $i -lt 60 -and -not $request; $i++) {
+              Start-Sleep 1
+              $request = [regex]::Match((& $exe --home $m admin node-requests | Out-String), '[0-9a-f]{8}-[0-9a-f-]{27}').Value
+            }
+            if (-not $request) { throw "the node did not ask to join $url" }
+            tm admin node-accept $request
+            $joined = $false
+            for ($i = 0; $i -lt 60 -and -not $joined; $i++) { Start-Sleep 1; $joined = (Get-Content "$n/node.toml" -Raw) -match 'token = "tn_' }
+            if (-not $joined) { throw "the node did not get its token" }
+            python deploy/smoke.py --url $url --local --token $token --project tests/data/box_project.3mf --timeout 600
+            if ($LASTEXITCODE -ne 0) { throw "the first job was not computed by the node" }
+            # Cut at once: no «stop», the pid file stays.
+            $nodePid = [int](Get-Content "$n/tisma-cloud.pid" -TotalCount 1)
+            taskkill /PID $nodePid /T /F | Out-Null
+            Start-Sleep 2
+            if (-not (Test-Path "$n/tisma-cloud.pid")) { throw "the cut should leave the pid file" }
+            # As at boot: the scheduled task starts it, as SYSTEM.
+            tn autostart on
+            tn start
+            tn status
+            python deploy/smoke.py --url $url --local --token $token --project tests/data/box_project.3mf --timeout 600
+            if ($LASTEXITCODE -ne 0) { throw "the node did not come back by itself: the second job was not computed" }
+            & $exe --home $n check
+          } catch {
+            Write-Host "---- master"; & $exe --home $m logs 60
+            Write-Host "---- node"; & $exe --home $n logs 60
+            throw
+          } finally {
+            & $exe --home $n stop
+            & $exe --home $n autostart off
+            & $exe --home $m stop
+            & $exe --home $m firewall off
+          }
       - name: Tests on Windows (service and system)
         if: matrix.name == 'windows'
         run: |
