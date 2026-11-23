@@ -912,9 +912,10 @@ def sign_bind(client, headers, key: Ed25519PrivateKey, account: str, public: str
 def test_a_peer_key_is_bound_with_the_proof_that_the_app_holds_it(client, f):
     owner = f.user("duena@x.com")
     app = App(client, owner)
-    account = app.bind()["account"]            # during the transition, unsigned: unverified
+    # The app learns its account id from GET /v1/me, and binds its key signed at once.
+    account = client.get("/v1/me", headers=owner).json()["library_account"]
     r = sign_bind(client, owner, app.key, account)
-    assert r.status_code == 200 and r.json()["verified"] is True
+    assert r.status_code == 200 and r.json() == {"ok": True, "account": account, "verified": True}
     # An unsigned request of the same account does not take the proof back.
     assert client.post("/v1/library/peer-key", headers=owner, json={"peer_key": app.public}).json()["verified"] is True
     # A signature over another account's text, or by another key, is refused (400).

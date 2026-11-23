@@ -1907,6 +1907,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"email": u.email, **acc.as_dict(), "remote_printers": remote.printer_allowance(u, acc.paid),
                     "extra_printers": u.extra_printers, "extra_printer_cents": u.plan.extra_printer_cents,
                     "has_password": bool(u.password_hash), "library_name": u.library_name,
+                    # The account's id in the library: what an app signs with its key before binding it
+                    # (p2p_library.md 3 bis bis, «tisma-peer-key\n» + this + «\n» + the key).
+                    "library_account": library.account_id(u.id),
                     "subscription": stores.subscription_view(s, u),
                     # What the app passes to its store with a purchase (cloud.md 5c): obfuscatedAccountId of Google
                     # Play, appAccountToken of StoreKit (a UUID); random, nothing personal in it.
