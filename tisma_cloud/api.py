@@ -2075,6 +2075,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             user = s.execute(select(User).where(User.email_index == crypto.index(email))).scalar_one_or_none()
             if user is not None and user.enabled and codes.check(s, user, "reset", body.code):
                 user.password_hash = hash_password(body.password)
+                if not user.email_verified:
+                    # A Google account linked before the address was confirmed (an address Google does not vouch
+                    # for) was never the mailbox owner's: it does not open the account any more.
+                    user.google_sub = None
                 # The code reached the inbox: the address is theirs. The sessions of the devices are closed.
                 user.email_verified = True
                 s.execute(ApiToken.__table__.delete().where(ApiToken.user_id == user.id))

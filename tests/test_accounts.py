@@ -233,3 +233,33 @@ def test_a_confirmed_account_keeps_its_password_when_linked_to_google(gweb):
     gweb.post("/v1/auth/verify", json={"email": "ana@gmail.com", "code": code_of(gweb, "ana@gmail.com")})
     assert gweb.post("/v1/auth/google", json={"id_token": google_token("ana@gmail.com", sub="g-ana")}).status_code == 200
     assert gweb.post("/v1/auth/login", json={"email": "ana@gmail.com", "password": "una clave larga"}).status_code == 200
+
+
+def test_a_google_link_nobody_confirmed_does_not_survive_a_new_password_by_code(gweb):
+    """A Google account on an address Google does not vouch for (a shared address a former employee made a Google
+    account with) creates the Tisma account but cannot confirm it. The owner of the mailbox later chooses a password
+    with a code: the account is theirs alone, the Google link that was never confirmed no longer opens it."""
+    r = gweb.post("/v1/auth/google", json={"id_token": google_token("ventas@taller.uy", sub="g-former")})
+    assert r.json() == {"verification_required": True, "email": "ventas@taller.uy"}
+    gweb.app.state.services.limiter._hits.clear()
+    assert gweb.post("/v1/auth/password/forgot", json={"email": "ventas@taller.uy"}).status_code == 200
+    r = gweb.post("/v1/auth/password/reset", json={"email": "ventas@taller.uy", "password": "clave del dueño",
+                                                   "code": code_of(gweb, "ventas@taller.uy", "contraseña")})
+    assert r.status_code == 200
+    r = gweb.post("/v1/auth/google", json={"id_token": google_token("ventas@taller.uy", sub="g-former")})
+    assert r.status_code == 409 and "token" not in r.json()
+    assert gweb.post("/v1/auth/login", json={"email": "ventas@taller.uy", "password": "clave del dueño"}
+                     ).status_code == 200
+
+
+def test_a_confirmed_google_link_survives_a_new_password(gweb):
+    gweb.post("/v1/auth/google", json={"id_token": google_token("pepe@correo.uy", sub="g-pepe")})
+    assert gweb.post("/v1/auth/verify", json={"email": "pepe@correo.uy",
+                                              "code": code_of(gweb, "pepe@correo.uy")}).status_code == 200
+    gweb.app.state.services.limiter._hits.clear()
+    assert gweb.post("/v1/auth/password/forgot", json={"email": "pepe@correo.uy"}).status_code == 200
+    r = gweb.post("/v1/auth/password/reset", json={"email": "pepe@correo.uy", "password": "una clave nueva",
+                                                   "code": code_of(gweb, "pepe@correo.uy", "contraseña")})
+    assert r.status_code == 200
+    assert gweb.post("/v1/auth/google", json={"id_token": google_token("pepe@correo.uy", sub="g-pepe")}
+                     ).status_code == 200
