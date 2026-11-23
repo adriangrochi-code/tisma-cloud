@@ -286,6 +286,23 @@ def test_a_google_link_nobody_confirmed_does_not_survive_a_new_password_by_code(
                      ).status_code == 200
 
 
+def test_an_old_google_link_nobody_confirmed_does_not_survive_a_late_confirmation(gweb):
+    from datetime import timedelta
+
+    from tisma_cloud.models import User, utcnow
+
+    services = gweb.app.state.services
+    gweb.post("/v1/auth/google", json={"id_token": google_token("ventas@taller.uy", sub="g-former")})
+    with services.db.session() as s:
+        s.query(User).filter(User.email_verified.is_(False)).one().created_at = utcnow() - timedelta(days=2)
+    services.limiter._hits.clear()
+    assert gweb.post("/v1/auth/resend", json={"email": "ventas@taller.uy"}).status_code == 200
+    assert gweb.post("/v1/auth/verify", json={"email": "ventas@taller.uy",
+                                              "code": code_of(gweb, "ventas@taller.uy")}).status_code == 200
+    r = gweb.post("/v1/auth/google", json={"id_token": google_token("ventas@taller.uy", sub="g-former")})
+    assert r.status_code == 409 and "token" not in r.json()
+
+
 def test_a_confirmed_google_link_survives_a_new_password(gweb):
     gweb.post("/v1/auth/google", json={"id_token": google_token("pepe@correo.uy", sub="g-pepe")})
     assert gweb.post("/v1/auth/verify", json={"email": "pepe@correo.uy",

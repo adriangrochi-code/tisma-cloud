@@ -2036,11 +2036,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with db.session() as s:
             user = s.execute(select(User).where(User.email_index == crypto.index(email))).scalar_one_or_none()
             if user is not None and user.enabled and codes.check(s, user, "verify", body.code):
-                if user.password_hash and utcnow() - user.created_at > REGISTRATION_PASSWORD_TRUST:
+                if utcnow() - user.created_at > REGISTRATION_PASSWORD_TRUST:
                     # Registered long ago and never confirmed: the owner of the address, confirming it now with a
-                    # code asked again, may not be who chose that password («pre-account hijacking»). It no longer
-                    # opens the account; a new one is chosen with "Forgot my password".
+                    # code asked again, may not be who chose that password or that Google account («pre-account
+                    # hijacking»). They no longer open the account; a password is chosen with "Forgot my password".
                     user.password_hash = ""
+                    user.google_sub = None
                 user.email_verified = True
                 token = open_session(s, user, body.device)
         if token is None:
