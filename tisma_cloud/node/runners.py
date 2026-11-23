@@ -167,6 +167,11 @@ def _run_engine(cfg: NodeConfig, command: str, project: Path, out: Path, extra: 
         cmd.append("--no-gpu")
     code, err = _run(cmd, cfg, ENGINE_PROGRESS, progress, cancelled, work)
     summary = _engine_summary(summary_path)
+    # A profile with binary G-code (gcode.binary, the Prusa printers of the pack): asked «-o plate.gcode», the engine
+    # writes plate.bgcode (gcode_extras.md rule 9, X8b). That is the result.
+    binary = out.with_suffix(".bgcode")
+    if out.suffix == ".gcode" and not out.exists() and binary.exists():
+        binary.rename(out)
     if code != 0 or not out.exists() or out.stat().st_size == 0:
         what = {"slice": "Slicing", "orient": "The orientation"}.get(command, "The analysis")
         details = {k: str(summary[k])[:1000] for k in ("code", "error_es") if summary.get(k)}
@@ -178,6 +183,8 @@ def _run_engine(cfg: NodeConfig, command: str, project: Path, out: Path, extra: 
 
 
 def _binary_suffix(out: Path) -> Path:
+    """A binary G-code (it begins with «GCDE», libbgcode's specification) is sent as .bgcode: a Prusa printer and
+    OctoPrint tell it by its name, and one named .gcode does not open."""
     with open(out, "rb") as f:
         binary = f.read(4) == b"GCDE"
     return out.rename(out.with_suffix(".bgcode")) if binary else out

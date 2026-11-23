@@ -72,7 +72,13 @@ if command == "analyze" and get("--mode") == "resin-structure":
 for p in (0, 50, 100):
     print(f"progress {p}", flush=True)
     time.sleep(float(os.environ.get("FAKE_DELAY", "0")))
-if command == "slice":
+if command == "slice" and b'"gcode.binary": true' in settings:
+    # As the engine does with a binary profile (gcode_extras.md rule 9, X8b): «-o x.gcode» writes x.bgcode, and says so.
+    sys.stderr.write("binary G-code: written as .bgcode\\n")
+    open(out[:-len(".gcode")] + ".bgcode", "wb").write(b"GCDE" + bytes([1, 0, 0, 0, 1, 0]) + b"blocks")
+    json.dump({"print_time": "1h 2m", "print_time_s": 3720, "layers": 120, "names": names, "args": args},
+              open(summary, "w"))
+elif command == "slice":
     open(out, "w").write("G1 X1\\n")
     json.dump({"print_time": "10m 8s", "print_time_s": 608, "filament_mm": 921.48, "filament_g": 2.75,
                "layers": 50, "names": names, "args": args}, open(summary, "w"))
@@ -305,6 +311,40 @@ def test_engine_slices(client, f, engine_cfg):
     assert client.get(f"/v1/jobs/{job['id']}/result", headers=user).content.startswith(b"G1 X1")
     assert list(engine_cfg.work_dir.iterdir()) == []
     assert agent.run_once() is None
+
+
+@posix_only
+def test_a_prusa_mk4s_job_gives_a_bgcode(client, f, engine_cfg):
+    """QA, 23-11: the Prusa printers of the new pack have binary G-code on (gcode.binary). The engine writes .bgcode
+    (gcode_extras.md X8b) and the person downloads it as .bgcode: a binary named .gcode does not open in the printer."""
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), engine_cfg)
+    mk4s = {"Metadata/tisma_project.json": json.dumps({"format": "tisma-project", "version": 1,
+                                                       "settings": {"printer": "Prusa MK4S", "gcode.binary": True}})}
+    job = f.submit(user, data=make_3mf(extra=mk4s))
+    assert agent.run_once() == "done"
+    view = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert view["status"] == "done" and view["result_filename"] == "part.bgcode", view
+    r = client.get(f"/v1/jobs/{job['id']}/result", headers=user)
+    assert r.content.startswith(b"GCDE") and 'filename="part.bgcode"' in r.headers["content-disposition"]
+    # Without the binary profile, text G-code named .gcode as before.
+    job = f.submit(user, data=make_3mf(extra=ENGINE_PROJECT))
+    assert agent.run_once() == "done"
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["result_filename"] == "part.gcode"
+
+
+def test_a_binary_sent_as_gcode_by_an_older_node_is_served_as_bgcode(client, f):
+    user = f.user()
+    node = f.node("n", "slice")
+    job = f.submit(user)
+    assert client.post("/v1/node/claim", headers=node, json={}).json()["job"]["id"] == job["id"]
+    r = client.post(f"/v1/node/jobs/{job['id']}/result", headers=node,
+                    files={"file": ("plate.gcode", b"GCDE" + bytes([1, 0, 0, 0, 1, 0]) + b"blocks")},
+                    data={"summary": "{}"})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["result_filename"] == "part.bgcode"
+    got = client.get(f"/v1/jobs/{job['id']}/result", headers=user)
+    assert got.content.startswith(b"GCDE") and 'filename="part.bgcode"' in got.headers["content-disposition"]
 
 
 @posix_only

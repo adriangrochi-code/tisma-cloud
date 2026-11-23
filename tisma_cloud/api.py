@@ -510,6 +510,15 @@ def job_view(job: Job) -> dict[str, Any]:
     }
 
 
+def is_binary_gcode(path: Path) -> bool:
+    """A binary G-code begins with «GCDE» (libbgcode, doc/specifications.md)."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"GCDE"
+    except OSError:
+        return False
+
+
 # A node silent longer than this (more than two heartbeats) and then heard again has reconnected [s].
 RECONNECT_GAP_S = 35
 
@@ -2814,6 +2823,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path = services.storage.result_path(job.id, ext)
             try:
                 services.storage.save_stream(file.file, path, cfg.max_result_mb << 20)
+                # A binary G-code sent as .gcode (a node of an older version): kept and served as .bgcode, the name a
+                # Prusa printer opens (gcode_extras.md rule 9, X8b).
+                if ext == ".gcode" and is_binary_gcode(path):
+                    ext = ".bgcode"
+                    path = path.replace(services.storage.result_path(job.id, ext))
                 # A node is ours, but what it gives the users is checked too (with ClamAV, when set).
                 inspected(path, "result", lambda: path.unlink(missing_ok=True))
             except TooLarge:
