@@ -2466,31 +2466,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             estimate = estimate_seconds(plan, triangles)
         except JobError as ex:
             raise HTTPException(422, str(ex)) from None
-        with db.session() as s:
+        def admitted(s) -> User:  # noqa: ANN001
             u = s.get(User, user.id)
             try:
                 scheduler.admit(s, u, cfg.grace_days, plan.job_class)
             except scheduler.Refused as ex:
                 raise HTTPException(ex.status, str(ex)) from None
-            now = utcnow()
-            job = Job(user_id=u.id, kind=plan.kind, job_class=plan.job_class, params=json.dumps(plan.params),
-                      priority=u.plan.priority, input_name=safe_filename(file.filename or "", "project.3mf"),
-                      created_at=now, order_at=now + timedelta(seconds=min(estimate, cfg.queue_size_wait_max_s)))
-            s.add(job)
-            s.flush()
-            try:
-                file.file.seek(0)
-                services.storage.save_stream(file.file, services.storage.input_path(job.id), max_bytes)
-            except TooLarge:
-                services.storage.remove_job(job.id)
-                raise HTTPException(413, f"The project is larger than {cfg.max_upload_mb} MB") from None
-            except OSError:
-                services.storage.remove_job(job.id)
-                raise
-            # Checked before it is queued (the job is not kept when it is refused).
-            inspected(services.storage.input_path(job.id), "project", lambda: services.storage.remove_job(job.id))
-            view = job_view(job)
-            log.info("Job %s received: %s of account %s", job.id, plan.kind, u.id)
+            return u
+
+        # Refused before any file is written (no hours left, too many at once).
+        with db.session() as s:
+            admitted(s)
+        # The project is written and checked for viruses outside any transaction: the database (SQLite: one writer)
+        # is not held while a large file is copied and scanned.
+        job_id = str(uuid.uuid4())
+        try:
+            file.file.seek(0)
+            services.storage.save_stream(file.file, services.storage.input_path(job_id), max_bytes)
+        except TooLarge:
+            services.storage.remove_job(job_id)
+            raise HTTPException(413, f"The project is larger than {cfg.max_upload_mb} MB") from None
+        except OSError:
+            services.storage.remove_job(job_id)
+            raise
+        # Checked before it is queued (the job is not kept when it is refused).
+        inspected(services.storage.input_path(job_id), "project", lambda: services.storage.remove_job(job_id))
+        try:
+            with db.session() as s:
+                # Again: the account may have filled its places meanwhile.
+                u = admitted(s)
+                now = utcnow()
+                job = Job(id=job_id, user_id=u.id, kind=plan.kind, job_class=plan.job_class,
+                          params=json.dumps(plan.params), priority=u.plan.priority,
+                          input_name=safe_filename(file.filename or "", "project.3mf"), created_at=now,
+                          order_at=now + timedelta(seconds=min(estimate, cfg.queue_size_wait_max_s)))
+                s.add(job)
+                s.flush()
+                view = job_view(job)
+        except BaseException:
+            services.storage.remove_job(job_id)
+            raise
+        log.info("Job %s received: %s of account %s", job_id, plan.kind, user.id)
         # After the commit: a node woken before it would not see the job.
         services.wakeup.notify(JOBS)
         return view
@@ -2843,6 +2859,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 refused = HTTPException(413, "The result is too large")
                 scheduler.fail(s, job, f"The result is larger than {cfg.max_result_mb} MB")
             except HTTPException as ex:
+                if ex.status_code == 503:
+                    # ClamAV did not answer: nothing is wrong with the result. The job is left as it was (the
+                    # transaction is rolled back) and the node sends it again (503 is in its retry list).
+                    raise
                 refused = ex
                 scheduler.fail(s, job, "The result was refused: " + str(ex.detail))
             else:

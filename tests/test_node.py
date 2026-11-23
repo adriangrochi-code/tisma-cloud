@@ -161,12 +161,145 @@ def test_result_is_sent_again_while_the_master_is_busy(client, f, engine_cfg, mo
     monkeypatch.setattr(agent_mod, "RESULT_RETRY_S", 30.)
     assert agent.run_once() == "done"
     assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
-    # Busy for longer than RESULT_RETRY_S: then it is reported, not left running.
+    # Busy for longer than RESULT_RETRY_S: reported as the node's trouble, not left running, and not failed for the
+    # person: the job goes back to the queue (QA, 23-11).
     job = f.submit(user)
     answers = iter([503] * 1000)
     monkeypatch.setattr(agent_mod, "RESULT_RETRY_S", 0.)
     assert agent.run_once() == "failed"
-    assert "could not be sent" in client.get(f"/v1/jobs/{job['id']}", headers=user).json()["error"]
+    seen = client.get(f"/v1/jobs/{job['id']}", headers=user).json()
+    assert seen["status"] == "queued" and not seen.get("error")
+    assert agent._running == {}
+
+
+def test_a_plain_500_is_retried_and_a_404_after_a_cut_counts_as_delivered(client, f, engine_cfg, monkeypatch):
+    """QA 23-11: a 500 of the master is sent again; a try cut off after the master took the result, then a 404 (the
+    job is done), is a result delivered, not a failure."""
+    from tisma_cloud.node import agent as agent_mod
+
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), engine_cfg)
+    job = f.submit(user)
+    real_post = client.post
+    calls = []
+
+    def first_500_then_cut_after_delivery(url, *args, **kwargs):
+        if url.endswith("/result"):
+            calls.append(url)
+            if len(calls) == 1:
+                return httpx.Response(500, request=httpx.Request("POST", url))
+            if len(calls) == 2:
+                real_post(url, *args, **kwargs)   # the master took it, the answer is lost
+                raise httpx.ReadTimeout("cut", request=httpx.Request("POST", url))
+        return real_post(url, *args, **kwargs)
+
+    monkeypatch.setattr(client, "post", first_500_then_cut_after_delivery)
+    monkeypatch.setattr(agent_mod.Agent, "_send_wait", 0., raising=False)
+    monkeypatch.setattr(agent.client, "post", first_500_then_cut_after_delivery)
+    monkeypatch.setattr(agent._stop, "wait", lambda seconds=None: False)
+    assert agent.run_once() == "done"
+    assert len(calls) == 3
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
+
+
+def test_a_work_folder_that_cannot_be_made_does_not_leave_the_job_running(client, f, engine_cfg, monkeypatch):
+    """QA 23-11: the folder was made outside the try; an OSError there killed the slot and the job stayed «running»
+    for ever (the heartbeat kept naming it)."""
+    from pathlib import Path
+
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), engine_cfg)
+    job = f.submit(user)
+    real_mkdir = Path.mkdir
+
+    def refuse(self, *args, **kwargs):
+        if self.name == job["id"]:
+            raise PermissionError(13, "Permission denied")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", refuse)
+    assert agent.run_once() == "failed"
+    assert agent._running == {}
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "queued"
+
+
+def test_an_answer_not_understood_does_not_kill_the_slots_nor_end_the_node_cleanly(engine_cfg, monkeypatch):
+    """QA 23-11: a 200 that is not JSON raised ValueError and killed the slot and heartbeat threads; with all slots
+    dead the node ended with 0 and nothing started it again."""
+    from tisma_cloud.node import agent as agent_mod
+
+    calls = {"n": 0}
+
+    class Garbled:
+        headers: dict = {}
+
+        def post(self, url, *args, **kwargs):
+            calls["n"] += 1
+            return httpx.Response(200, content=b"<html>proxy</html>", request=httpx.Request("POST", url))
+
+    agent = agent_mod.Agent(engine_cfg, client=Garbled())
+    waits = []
+
+    def wait(seconds=None):
+        waits.append(seconds)
+        if len(waits) > 3:
+            agent._stop.set()
+        return agent._stop.is_set()
+
+    monkeypatch.setattr(agent._stop, "wait", wait)
+    agent._slot(0)   # returns only because it was stopped, after retrying
+    assert calls["n"] >= 3 and waits[:3] == [2., 4., 8.]
+    # All slots ending without a stop: the program ends with an error (its supervisor starts it again).
+    agent2 = agent_mod.Agent(engine_cfg, client=Garbled())
+    monkeypatch.setattr(agent2, "_slot", lambda index: None)
+    monkeypatch.setattr(agent2, "_heartbeats", lambda: None)
+    monkeypatch.setattr(agent2, "check_scans_soon", lambda force=False: None)
+    agent2.run_forever()
+    assert agent2.failed
+
+
+def test_the_scan_check_does_not_hold_the_heartbeat(engine_cfg, monkeypatch):
+    """QA 23-11: tisma_scan --check (up to 180 s) ran on the heartbeat thread; past node_timeout_s (90) the master
+    gave the node's jobs to others while they were still running."""
+    import threading
+    import time as time_mod
+
+    from tisma_cloud.node import agent as agent_mod
+
+    release = threading.Event()
+    monkeypatch.setattr(agent_mod, "scan_readiness", lambda cfg: (release.wait(5), {"ready": False, "problems": []})[1])
+    posts = []
+
+    class Client:
+        headers: dict = {}
+
+        def post(self, url, *args, **kwargs):
+            posts.append(url)
+            return httpx.Response(200, json={"cancel": []}, request=httpx.Request("POST", url))
+
+    agent = agent_mod.Agent(engine_cfg, client=Client())
+    start = time_mod.monotonic()
+    agent.heartbeat()
+    assert time_mod.monotonic() - start < 1 and posts == ["/v1/node/heartbeat"]
+    agent.heartbeat()   # a second one while the check runs does not start another
+    release.set()
+
+
+def test_garbled_progress_answers_do_not_fail_the_job(client, f, engine_cfg, monkeypatch):
+    """QA 23-11: a progress answer that is not JSON raised in progress() and the whole job was sent back."""
+    user = f.user()
+    agent = agent_for(client, f.node("n", "slice"), engine_cfg)
+    job = f.submit(user)
+    real_post = agent.client.post
+
+    def garbled_progress(url, *args, **kwargs):
+        if url.endswith("/progress"):
+            return httpx.Response(200, content=b"not json", request=httpx.Request("POST", url))
+        return real_post(url, *args, **kwargs)
+
+    monkeypatch.setattr(agent.client, "post", garbled_progress)
+    assert agent.run_once() == "done"
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
 
 
 @posix_only
@@ -680,3 +813,69 @@ def test_real_engine_keeps_the_contract_of_its_other_commands(client, f, tmp_pat
         else:
             problems.append(f"{kind}: {view['status']}")
     assert not problems, problems
+
+
+def test_a_virus_scanner_that_does_not_answer_does_not_lose_a_result(client, f, engine_cfg, monkeypatch):
+    """QA 23-11: ClamAV down for a moment (503) failed the job and its result was lost. The job is left as it was
+    and the node sends the result again."""
+    from tisma_cloud.threats import ScanUnavailable
+
+    user = f.user()
+    node = f.node("n", "slice")
+    job = f.submit(user)
+    services = client.app.state.services
+    claimed = client.post("/v1/node/claim", headers=node, json={}).json()["job"]
+    assert claimed["id"] == job["id"]
+    real = services.inspect
+
+    def down(path, kind, *args, **kwargs):
+        if kind == "result":
+            raise ScanUnavailable("clamd: connection refused")
+        return real(path, kind, *args, **kwargs)
+
+    monkeypatch.setattr(services, "inspect", down)
+    send = lambda: client.post(f"/v1/node/jobs/{job['id']}/result", headers=node,  # noqa: E731
+                               files={"file": ("plate.gcode", b"G1 X1\n", "text/plain")}, data={"summary": "{}"})
+    r = send()
+    assert r.status_code == 503 and r.headers["retry-after"]
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "running"
+    monkeypatch.setattr(services, "inspect", real)
+    assert send().status_code == 200
+    assert client.get(f"/v1/jobs/{job['id']}", headers=user).json()["status"] == "done"
+
+
+def test_a_project_is_written_and_checked_before_the_job_is_queued(client, f, monkeypatch):
+    """QA 23-11: the project was copied and scanned inside the transaction, holding SQLite's only writer. While it
+    is checked there is no job row yet; a refused project leaves neither a job nor a file."""
+    from sqlalchemy import func, select, update
+
+    from tisma_cloud.models import Job, User
+
+    user = f.user()
+    services = client.app.state.services
+    real = services.inspect
+    rows_while_checked = []
+
+    def count(path, kind, *args, **kwargs):
+        # Another request writes meanwhile (with SQLite it waited for the whole copy and scan, or failed «locked»).
+        with services.db.session() as s:
+            rows_while_checked.append(s.execute(select(func.count()).select_from(Job)).scalar_one())
+            s.execute(update(User).where(User.id == -1).values(is_admin=False))
+        return real(path, kind, *args, **kwargs)
+
+    monkeypatch.setattr(services, "inspect", count)
+    job = f.submit(user)
+    assert rows_while_checked == [0]
+    assert services.storage.input_path(job["id"]).is_file()
+
+    from tisma_cloud.threats import Threat
+
+    def infected(path, kind, *args, **kwargs):
+        raise Threat("Eicar-Test-Signature", "virus")
+
+    monkeypatch.setattr(services, "inspect", infected)
+    before = set(p.name for p in services.storage.input_path("x").parent.parent.iterdir())
+    f.submit(user, expect=422)
+    with services.db.session() as s:
+        assert s.execute(select(func.count()).select_from(Job)).scalar_one() == 1
+    assert set(p.name for p in services.storage.input_path("x").parent.parent.iterdir()) == before

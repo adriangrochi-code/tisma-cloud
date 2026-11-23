@@ -714,3 +714,20 @@ def test_a_node_that_ends_at_each_start_says_why(tmp_path):
     with open(m.log_path, "a", encoding="utf-8") as log:
         log.write("2026-11-23T19:09:30Z [nodo] INFO Node with 1 slot(s) (1 for analyses) working for http://m\n")
     assert m.failing() == ""
+
+
+def test_two_starts_at_the_same_moment_run_one_service(tmp_path, monkeypatch, capsys):
+    """QA 23-11: the pid file was written without a lock, so two supervisors started at once could both run. The
+    second one cannot take the folder's lock and ends; the lock goes with the process that held it."""
+    m = Manager(tmp_path)
+    m.set_role("node")
+    held = Manager(tmp_path)._lock_service()
+    assert held is not None
+    monkeypatch.setattr(manager_module.system, "is_terminal", lambda stream: True)
+    assert m.run() == 0
+    assert "otro arranque de esta carpeta tiene su candado" in capsys.readouterr().out
+    assert not m.pid_path.exists()
+    held.close()
+    again = m._lock_service()
+    assert again is not None
+    again.close()

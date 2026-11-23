@@ -49,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
         agent = Agent(cfg, state_path=state_path)
         agent.run_forever()
+        if agent.failed:
+            return 1
         if not agent.unknown_token:
             return 0
         if args.no_join:

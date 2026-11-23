@@ -1576,6 +1576,12 @@ class Manager:
             os.dup2(crash.fileno(), 2)
             sys.stdout = sys.stderr = eventlog.Writer(log, "servicio")
         if not child:
+            self._service_lock = self._lock_service()
+            if self._service_lock is None:
+                # Two starts at the same moment (two clicks, the task and a start by hand): only one gets the lock.
+                print("ya está en marcha (otro arranque de esta carpeta tiene su candado): este arranque no hace "
+                      "nada", flush=True)
+                return 0
             other = self._read_pid()
             if other is not None and other != os.getpid() and _pid_alive(other):
                 # A second start of the same folder (the task at boot and a start by hand, two clicks): it would run
@@ -1631,6 +1637,26 @@ class Manager:
                     print(f"[tisma-cloud] {SERVICE_NAMES[name]} no arranca: falta tisma-relay junto al programa",
                           flush=True)
         return out
+
+    def _lock_service(self):  # noqa: ANN202 (an open file, or None)
+        """An exclusive lock on tisma-cloud.lock for the life of the supervisor, or None when another one holds it.
+        The system releases it when the process ends, also when it is killed: no stale lock after a cut."""
+        path = self.home / "tisma-cloud.lock"
+        handle = open(path, "a+")  # noqa: SIM115 (kept open while the service runs)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return None
+        return handle
 
     def _launched_by(self) -> str:
         """Who started this run of the service, for the log: a start by hand (the command or the window's button,

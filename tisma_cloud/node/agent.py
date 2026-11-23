@@ -32,7 +32,7 @@ HEARTBEAT_S = 15
 # The first wait before asking the master again after losing it; doubled each time up to 60 s.
 RETRY_FIRST_S = 2.
 # A result is sent again while the master answers these (busy, restarting) or is out of reach, for this long [s].
-RETRY_STATUS = (429, 502, 503, 504, 507)
+RETRY_STATUS = (429, 500, 502, 503, 504, 507)
 RESULT_RETRY_S = 900.
 # How often a node asks tisma_scan --check again (a COLMAP installed meanwhile, a card removed) [s].
 SCAN_CHECK_S = 600.
@@ -53,6 +53,11 @@ def machine_info(cfg: NodeConfig) -> dict:
     return info
 
 
+class ResultNotDelivered(Exception):
+    """The result could not be given to the master (busy, full or out of reach for RESULT_RETRY_S): the node's
+    trouble, not the person's. Reported as an error of the node, so the job goes back to the queue."""
+
+
 class Agent:
     def __init__(self, cfg: NodeConfig, client: httpx.Client | None = None, state_path: Path | None = None) -> None:
         self.cfg = cfg
@@ -71,11 +76,14 @@ class Agent:
         # 3D scans: taken only while tisma_scan --check says this machine has everything (runners.scan_readiness).
         self.scan_ready = False
         self._scan_checked = 0.
+        self._scan_checking = False
         # Taken by a slot while it may claim, or runs, a structural analysis.
         self._fea = threading.BoundedSemaphore(max(1, cfg.fea_slots))
         self._stop = threading.Event()
         # The master does not know the token (the node was removed): the agent stops and the node asks to join again.
         self.unknown_token = False
+        # The agent ended by itself, not by a stop or a removed token (run_forever).
+        self.failed = False
         cfg.work_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- master
@@ -131,8 +139,29 @@ class Agent:
         self.info["scan"] = state
         return self.scan_ready
 
+    def check_scans_soon(self, force: bool = False) -> None:
+        """check_scans in a thread of its own: tisma_scan --check may take minutes, and the heartbeat must not wait
+        for it (the master gives the node's jobs to others after node_timeout_s without one)."""
+        if not force and time.monotonic() - self._scan_checked < SCAN_CHECK_S:
+            return
+        with self._lock:
+            if self._scan_checking:
+                return
+            self._scan_checking = True
+
+        def work() -> None:
+            try:
+                self.check_scans(force)
+            except Exception:  # noqa: BLE001 (the node goes on without scans)
+                log.exception("3D scans: the check failed")
+            finally:
+                with self._lock:
+                    self._scan_checking = False
+
+        threading.Thread(target=work, daemon=True).start()
+
     def heartbeat(self) -> None:
-        self.check_scans()
+        self.check_scans_soon()
         with self._lock:
             running = list(self._running)
         r = self.client.post("/v1/node/heartbeat", json={"running": running, "info": self.info,
@@ -153,8 +182,6 @@ class Agent:
         with self._lock:
             self._running[job_id] = cancel
         work = self.cfg.work_dir / job_id
-        shutil.rmtree(work, ignore_errors=True)
-        work.mkdir(parents=True)
         last = {"t": 0., "p": -1}
 
         def progress(p: int) -> None:
@@ -166,10 +193,14 @@ class Agent:
                 r = self.client.post(f"/v1/node/jobs/{job_id}/progress", json={"progress": p}, timeout=30.)
                 if r.status_code == 404 or (r.status_code == 200 and r.json().get("cancel")):
                     cancel.set()
-            except HTTPError:
-                pass
+            except (*HTTPError, ValueError, AttributeError):
+                pass   # a lost or garbled answer about progress does not stop the job
 
         try:
+            # Inside the try: a folder that cannot be made (a full disk, rights) fails this job as the node's trouble,
+            # and the job is never left counted as running.
+            shutil.rmtree(work, ignore_errors=True)
+            work.mkdir(parents=True, exist_ok=True)
             project = work / "input.3mf"
             with self.client.stream("GET", f"/v1/node/jobs/{job_id}/input", timeout=300.) as r:
                 r.raise_for_status()
@@ -195,6 +226,10 @@ class Agent:
             self._report_failure(job_id, _without_paths(str(ex), work), details=ex.details)
             log.info("Job %s failed: %s", job_id, ex)
             return "failed"
+        except ResultNotDelivered as ex:
+            log.warning("Job %s: %s; it goes back to the queue", job_id, ex)
+            self._report_failure(job_id, f"Error of the computing server: {ex}", node_error=True)
+            return "failed"
         except Exception as ex:  # noqa: BLE001 (a node error must not stop the node)
             # The node's own trouble (a full disk, an error of this program), not the person's: the job goes back to
             # the queue for another node (up to the master's limit of attempts).
@@ -211,12 +246,18 @@ class Agent:
         reach, as long as RESULT_RETRY_S: a computed job is not failed for a moment of the master."""
         deadline = time.monotonic() + RESULT_RETRY_S
         wait = 2.
+        # A try that may have reached the master (cut off, or answered busy after reading it).
+        tried = False
         while True:
             try:
                 with open(outcome.result, "rb") as f:
                     r = self.client.post(f"/v1/node/jobs/{job_id}/result",
                                          files={"file": (outcome.result.name, f, "application/octet-stream")},
                                          data={"summary": json.dumps(outcome.summary)}, timeout=600.)
+                if tried and r.status_code in (404, 409):
+                    # The job is not this node's to finish any more: the try that was cut off had delivered it.
+                    log.info("Job %s: the master already had its result", job_id)
+                    return
                 if r.status_code not in RETRY_STATUS:
                     r.raise_for_status()
                     return
@@ -225,8 +266,9 @@ class Agent:
                 reason = f"the master answered {r.status_code}"
             except TransportError as ex:
                 pause, reason = wait, f"the master is out of reach ({ex})"
+            tried = True
             if time.monotonic() + pause > deadline or self._stop.is_set():
-                raise JobFailed(f"The result could not be sent: {reason}")
+                raise ResultNotDelivered(f"the result could not be sent: {reason}")
             log.warning("Job %s: %s; sending the result again in %.0f s", job_id, reason, pause)
             self._stop.wait(pause)
             wait = min(wait * 2, 60.)
@@ -314,6 +356,10 @@ class Agent:
                             self.cut_off(ex))
                 self._stop.wait(backoff)
                 backoff = min(backoff * 2, 60.)
+            except Exception:  # noqa: BLE001 (an answer not understood, a bug: the slot lives on)
+                log.exception("Slot %d: unexpected error, again in %.0f s", index, backoff)
+                self._stop.wait(backoff)
+                backoff = min(backoff * 2, 60.)
 
     def _token_refused(self) -> None:
         if not self.unknown_token:
@@ -336,11 +382,13 @@ class Agent:
                 log.warning("Heartbeat failed: %s (%s)", ex, why)
             except HTTPError as ex:
                 log.warning("Heartbeat failed: %s (%s)", ex, self.cut_off(ex))
+            except Exception:  # noqa: BLE001 (the heartbeat lives on)
+                log.exception("Heartbeat failed: unexpected error")
 
     def run_forever(self) -> None:
         log.info("Node with %d slot(s) (%d for analyses) working for %s", self.cfg.slots, self.cfg.fea_slots,
                  self.cfg.master_url)
-        self.check_scans(force=True)
+        self.check_scans_soon(force=True)
         threads = [threading.Thread(target=self._heartbeats, daemon=True)]
         threads += [threading.Thread(target=self._slot, args=(i,), daemon=True) for i in range(self.cfg.slots)]
         for t in threads:
@@ -348,6 +396,11 @@ class Agent:
         try:
             while any(t.is_alive() for t in threads[1:]):
                 time.sleep(1)
+            if not self._stop.is_set():
+                # Every slot ended without being asked to: the node program must end with an error, so that its
+                # supervisor (or systemd) starts it again, not as a clean stop.
+                self.failed = True
+                log.error("All the slots of the node ended: the node program ends to be started again")
         except KeyboardInterrupt:
             self._stop.set()
             with self._lock:
