@@ -249,7 +249,7 @@ func TestAnUploadThatIsNotTheTicketsOrNotSafeIsDropped(t *testing.T) {
 	if s.Store.Has(sha) {
 		t.Fatal("kept")
 	}
-	if _, err := os.Stat(filepath.Join(s.Store.Dir, "uploads", sha+".part")); !os.IsNotExist(err) {
+	if left, _ := filepath.Glob(filepath.Join(s.Store.Dir, "uploads", sha+"*")); len(left) != 0 {
 		t.Fatal("its pieces were not deleted")
 	}
 	// The antivirus finds something (3 octies): refused and deleted.
@@ -348,5 +348,31 @@ func TestTicketsOfTheMastersCodeForHTTPS(t *testing.T) {
 	}
 	if _, err := ParseBearer(down, lib, "", time.Unix(4102444800, 0)); err == nil {
 		t.Fatal("an ended ticket")
+	}
+}
+
+// Two accounts with an upload ticket of one file (anyone may publish a model that lists a file already in the index):
+// pieces sent by one never stand in for the other's, so nobody can spoil another author's upload with junk.
+func TestAnotherAccountCannotSpoilAnUpload(t *testing.T) {
+	s, _, srv, priv := seedServer(t)
+	data := noisyProject(t, 2500000) // three pieces
+	sum := sha256.Sum256(data)
+	sha := hex.EncodeToString(sum[:])
+	base := "/v1/seed/upload/" + sha
+	author, other := uploadTicket(t, priv, "ua_author", data), uploadTicket(t, priv, "ua_other", data)
+	if code, _, _ := call(t, srv, "PUT", base+"/0", author, data[:PieceSize]); code != 200 {
+		t.Fatalf("the author's first piece: %d", code)
+	}
+	junk := make([]byte, len(data)-2*PieceSize)
+	if code, _, _ := call(t, srv, "PUT", base+"/2", other, junk); code != 200 {
+		t.Fatalf("the other account's piece: %d", code)
+	}
+	code, _, body := call(t, srv, "GET", base, author, nil)
+	if code != 200 || !bytes.Contains(body, []byte(`"have":[0]`)) {
+		t.Fatalf("the author's state: %d %s", code, body)
+	}
+	code, body = uploadAll(t, srv, author, data)
+	if code != 201 || !s.Store.Has(sha) {
+		t.Fatalf("the author's upload: %d %s", code, body)
 	}
 }

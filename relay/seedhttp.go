@@ -33,7 +33,7 @@ type SeedHTTP struct {
 	window time.Time
 	down   map[string]int64 // bytes downloaded this hour, by account
 	up     map[string]int64 // bytes uploaded this hour, by account
-	busy   map[string]bool  // uploads being checked (one at a time per file)
+	busy   map[string]bool  // uploads being checked (one at a time per file and account)
 }
 
 func (h *SeedHTTP) clock() time.Time {
@@ -159,8 +159,10 @@ func (h *SeedHTTP) download(w http.ResponseWriter, bearer, sha string, piece int
 
 // ---- uploads (8 nonies)
 
-// upload is a file being uploaded: <dir>/uploads/<sha256>.part with its bytes at their places, and .have with one
-// byte per piece (1: received), so that an upload cut by a restart goes on.
+// upload is a file being uploaded: <dir>/uploads/<sha256>-<account>.part with its bytes at their places, and .have
+// with one byte per piece (1: received), so that an upload cut by a restart goes on. Each account has its own: any
+// account may get an upload ticket of a file another author is uploading (a model that lists it), and its pieces must
+// not stand in for the author's.
 type upload struct {
 	part, have string
 	size       int64
@@ -169,7 +171,9 @@ type upload struct {
 
 func (h *SeedHTTP) uploadOf(t *Ticket) upload {
 	dir := filepath.Join(h.S.Store.Dir, "uploads")
-	return upload{part: filepath.Join(dir, t.SHA256+".part"), have: filepath.Join(dir, t.SHA256+".have"),
+	account := sha256.Sum256([]byte(t.Account))
+	name := t.SHA256 + "-" + hex.EncodeToString(account[:8])
+	return upload{part: filepath.Join(dir, name+".part"), have: filepath.Join(dir, name+".have"),
 		size: t.Size, pieces: int((t.Size + PieceSize - 1) / PieceSize)}
 }
 
@@ -275,17 +279,17 @@ func (h *SeedHTTP) uploadPiece(w http.ResponseWriter, r *http.Request, bearer, s
 	if h.busy == nil {
 		h.busy = map[string]bool{}
 	}
-	if h.busy[sha] {
+	if h.busy[u.part] {
 		h.mu.Unlock()
 		w.Header().Set("Retry-After", "5")
 		refuseHTTP(w, http.StatusTooManyRequests, "This file is being checked: ask again in a moment")
 		return
 	}
-	h.busy[sha] = true
+	h.busy[u.part] = true
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
-		delete(h.busy, sha)
+		delete(h.busy, u.part)
 		h.mu.Unlock()
 	}()
 	have := u.received()
