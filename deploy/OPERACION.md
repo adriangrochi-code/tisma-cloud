@@ -154,11 +154,31 @@ arrancar. El CI lo prueba desde la versión del 24-10-2026 (`deploy/upgrade_dril
 `tisma-cloud stop` en cada máquina. Para que no vuelva a arrancar con la máquina: `tisma-cloud autostart off`. Los
 trabajos que estaban corriendo vuelven a la cola y los toma un nodo cuando haya uno.
 
+### El registro
+
+`logs\tisma-cloud.log`, en la carpeta del servicio de cada máquina, tiene una línea por cada cosa que pasa, con la hora
+en UTC y la parte que la escribió: `[servicio]` (cada arranque, reinicio y parada, y quién lo pidió: el botón de la
+ventana, el comando, la tarea programada o systemd al iniciar la máquina), `[maestro]` (cada nodo que se conecta o
+vuelve, cada trabajo recibido, dado a un nodo, entregado o fallido), `[nodo]` (cada conexión al maestro, cada reintento
+con su espera y su error exacto, por ejemplo «tismaservidores.net no existe en el DNS», y cada trabajo),
+`[nodo del maestro]`, `[intermediario]` y `[sembrador]`. Por ejemplo:
+
+```
+2026-11-23T19:10:47Z [servicio] inicio pedido por el botón «Reiniciar» de la ventana (reinicio)
+2026-11-23T19:10:49Z [maestro] INFO Node n1 connected again (last heard 11 s before)
+2026-11-23T19:11:12Z [maestro] INFO Job fd595681-... done: result delivered by node n2
+```
+
+Al llegar a 10 MB pasa a `tisma-cloud.log.1` (se guardan 5: 60 MB como mucho). No tiene claves, contraseñas ni tokens
+(se reemplazan por `***`). Se abre con «Abrir registro» en la ventana (Registro y consola) y en el panel (abajo de todo),
+o con `tisma-cloud logs 200`. Si el servicio mismo se cae, Python deja el detalle en `logs\tisma-cloud-fallos.log`.
+
 ## Si algo falla
 
 | Qué pasa | Qué mirar |
 |---|---|
-| El servicio no arranca | `tisma-cloud logs 100`; `tisma-cloud check` |
+| El servicio no arranca | Lo dice al iniciar («No arrancó: …»); `tisma-cloud logs 100`; `tisma-cloud check` |
+| El maestro dice «No responde: el puerto N está ocupado» | Otro programa (u otro Tisma Cloud que quedó) usa el puerto: cerralo o `tisma-cloud config port N` |
 | Los nodos no llegan al maestro | `tisma-cloud firewall on` en el maestro; `master_url` del nodo (`tisma-cloud config`) |
 | Un nodo no toma trabajos | Diagnóstico del nodo: «Programa tisma-engine»; menos de 2 GB libres lo pausan |
 | Un proyecto de otro laminador sale con otros ajustes | Diagnóstico del nodo: «Tablas de traducción» |

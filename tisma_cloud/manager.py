@@ -25,13 +25,14 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from . import system
+from . import __version__, eventlog, system
 
 ROLES = ("master", "node")
 ROLE_NAMES = {"master": "maestro (servidor central)", "node": "nodo de cómputo"}
@@ -70,6 +71,16 @@ LIBRARY_START_DELAY_S = 8.
 # The master's own node too (it asked before the master answered: «master not reachable» at every start).
 NODE_START_DELAY_S = 4.
 # The processes of the service, in its messages.
+# The component of each child's lines in the log (the main one: «maestro» or «nodo», by the role).
+CHILD_COMPONENTS = {"node": "nodo del maestro", "relay": "intermediario", "seed": "sembrador"}
+# A start of the master or the node that went well (its log), after which an older failure does not count.
+STARTED_WELL = ("Uvicorn running on", "Application startup complete", "Connected to the master", "Node with ")
+# Lines of the supervisor that say nothing about why a start failed.
+ROUTINE_LINES = ("servicio en marcha", " arranca (pid", "servicio detenido", " pedido por ", " pedida por ",
+                 "ya está en marcha")
+ROLE_LABELS = {"master": "maestro", "node": "nodo"}
+# Who asked for a start through the Windows task (the task does not pass it): «botón» or «comando», and when.
+START_REQUEST = "start-request.txt"
 SERVICE_NAMES = {"main": "el servicio", "node": "el nodo del maestro", "relay": "el intermediario de la biblioteca",
                  "seed": "el sembrador de la biblioteca"}
 # Settings of a node: key, label, type, secret.
@@ -845,13 +856,16 @@ class Manager:
             detail = (f"En marcha (pid {pid}), puerto {self.port()}" if healthy else
                       f"Arrancando (pid {pid}), puerto {self.port()}")
             if not healthy:
-                problem = self.master_failing()
+                problem = self.failing()
                 if problem:
                     detail = f"No responde (pid {pid}): {problem}"
         else:
             detail = f"En marcha (pid {pid}), maestro {self.read_node().get('master_url')}"
             state = self.node_connection()
-            if state and state.get("message"):
+            problem = self.failing()
+            if problem:
+                detail = f"No funciona (pid {pid}): {problem}"
+            elif state and state.get("message"):
                 # What the node itself saw at its last request: connected, or why not (node/connection.py).
                 detail = f"En marcha (pid {pid}). {state['message']}"
         return Status(role, running, pid if running else None, healthy, detail)
@@ -884,11 +898,24 @@ class Manager:
         self._save_settings(data)
         return note
 
-    def start(self, wait_s: float = 20.) -> Status:
+    def event(self, message: str, component: str = "servicio") -> None:
+        """A line in the log of the service from this process (a command, the window)."""
+        eventlog.event(self.log_path, component, message)
+
+    def start(self, wait_s: float = 20., by: str = "comando") -> Status:
+        """Starts the service; «by» says who asked (comando, botón, arreglo), for the log."""
         if not self.role():
             raise RuntimeError("Elegí primero el rol: maestro o nodo")
-        if self.status().running:
-            return self.status()
+        current = self.status()
+        if current.running:
+            self.event(f"inicio pedido por {by}: ya estaba en marcha (pid {current.pid})")
+            return current
+        self.event(f"inicio pedido por {by}")
+        st = self._start(wait_s, by)
+        self.event(f"inicio pedido por {by}: {st.detail}")
+        return st
+
+    def _start(self, wait_s: float, by: str) -> Status:
         note = self.autostart_by_default()
         if note:
             print(note, file=sys.stderr)
@@ -900,17 +927,21 @@ class Manager:
             # Right after a stop or a cut the Task Scheduler may still count its last run as running: with
             # IgnoreNew it would ignore this one and nothing would start («Reiniciar» left it stopped).
             if system.task_running(TASK_NAME):
+                self.event("la tarea de Windows seguía contada como en marcha: se termina antes de iniciarla")
                 system.end_task(TASK_NAME)
+            with contextlib.suppress(OSError):
+                (self.home / START_REQUEST).write_text(f"{by}\n{time.time():.0f}\n", encoding="utf-8")
             try:
                 system.run_task(TASK_NAME)
                 direct = False
             except RuntimeError as e:
                 # No rights over the task (a window not run as administrator): started here instead, as this user.
                 print(f"La tarea de Windows no arrancó ({e}): se inicia como este usuario", file=sys.stderr)
+                self.event(f"la tarea de Windows no arrancó ({e}): se inicia como este usuario")
         if direct:
             kwargs: dict = {"cwd": str(self.home), "stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                             "stderr": subprocess.DEVNULL, "close_fds": True}
-            env = system.own_env(TISMA_HOME=str(self.home))
+            env = system.own_env(TISMA_HOME=str(self.home), TISMA_STARTED_BY=by)
             if os.name == "nt":
                 flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED, NEW_PROCESS_GROUP, NO_WINDOW
                 try:
@@ -932,20 +963,28 @@ class Manager:
             return replace(st, detail="No arrancó" + (f": {why}" if why else " (ver «tisma-cloud logs»)"))
         return st
 
-    def master_failing(self) -> str:
-        """Why the master of a running service does not answer, when its last start failed (the supervisor starts it
-        again and again): said for a person, or "" while it is only starting."""
-        lines = self.logs(30)
-        for i in range(len(lines) - 1, -1, -1):
-            if "Uvicorn running on" in lines[i] or "Application startup complete" in lines[i]:
+    def failing(self) -> str:
+        """Why the master or the node of a running service does not work, when its last start failed (the supervisor
+        starts it again and again): said for a person, or "" while it works or is only starting."""
+        main = ROLE_LABELS.get(self.role(), "")
+        lines = [eventlog.parse(x) for x in self.logs(40)]
+        ended = False
+        for component, text in reversed(lines):
+            if component in (main, "") and any(word in text for word in STARTED_WELL):
                 return ""   # its last start went well
-            if lines[i].startswith("ERROR:"):
-                text = lines[i].removeprefix("ERROR:").strip()
+            if component == "servicio" and text.startswith(f"{main} terminó con el código"):
+                ended = True
+                continue
+            if component not in (main, ""):
+                continue
+            if text.startswith("ERROR:") or (ended and text.strip() and not text.startswith(
+                    (" ", "INFO", "Traceback", "^", "File "))):
+                text = text.removeprefix("ERROR:").removeprefix("Error:").strip()
                 if "address already in use" in text.lower() or "10048" in text:
                     return (f"el puerto {self.port()} está ocupado por otro programa (¿otro Tisma Cloud que quedó "
                             f"en marcha?). Cerralo, o cambiá el puerto: «tisma-cloud config port N»")
                 return text[:300]
-        return ""
+        return "termina al arrancar y vuelve a intentarlo (ver «tisma-cloud logs»)" if ended else ""
 
     def start_failure(self, log_from: int = 0) -> str:
         """The last line the log wrote since log_from (its size before the start) that tells why the service ended
@@ -955,16 +994,36 @@ class Manager:
         with open(self.log_path, "rb") as f:
             f.seek(max(log_from, f.seek(0, os.SEEK_END) - 50_000))
             lines = f.read().decode("utf-8", errors="replace").splitlines()
-        for line in reversed(lines):
-            if line.strip() and not line.startswith((" ", "INFO:", "Traceback", "^")):
-                return line.strip()[:300]
+        parsed = [eventlog.parse(x) for x in lines]
+        # What a part of the service said (an error, a refusal) first; the supervisor's own lines (it started a part,
+        # one ended with a code) only when there is nothing else.
+        for own in (False, True):
+            for component, text in reversed(parsed):
+                if (component == "servicio") != own or not text.strip():
+                    continue
+                if text.startswith((" ", "INFO:", "Traceback", "^", "File ")) or any(
+                        word in text for word in ROUTINE_LINES):
+                    continue
+                return text.strip()[:300]
         return ""
 
-    def stop(self, wait_s: float = 15.) -> Status:
+    def stop(self, wait_s: float = 15., by: str = "comando") -> Status:
+        """Stops the service; «by» says who asked, for the log."""
         pid = self._read_pid()
         if pid is None or not _pid_alive(pid):
             self.pid_path.unlink(missing_ok=True)
+            self.event(f"detención pedida por {by}: ya estaba detenido")
             return self.status()
+        self.event(f"detención pedida por {by} (pid {pid})")
+        try:
+            st = self._stop(pid, wait_s)
+        except RuntimeError as e:
+            self.event(f"detención pedida por {by}: falló: {e}")
+            raise
+        self.event(f"detención pedida por {by}: {st.detail}")
+        return st
+
+    def _stop(self, pid: int, wait_s: float) -> Status:
         if os.name == "nt":
             # The supervisor and the master or node it runs.
             r = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True,
@@ -1014,9 +1073,10 @@ class Manager:
         self.pid_path.unlink(missing_ok=True)
         return self.status()
 
-    def restart(self) -> Status:
-        self.stop()
-        return self.start()
+    def restart(self, by: str = "comando") -> Status:
+        self.event(f"reinicio pedido por {by}")
+        self.stop(by=f"{by} (reinicio)")
+        return self.start(by=f"{by} (reinicio)")
 
     def logs(self, lines: int = 40) -> list[str]:
         if not self.log_path.is_file():
@@ -1453,7 +1513,7 @@ class Manager:
     def fix(self, key: str) -> str:
         """Fixes one item of the diagnosis (Check.fix). Returns what was done."""
         if key == "start":
-            return self.start().detail
+            return self.start(by="arreglo del diagnóstico").detail
         if key == "autostart":
             self.set_autostart(True)
             return "Inicio con la máquina activado"
@@ -1499,12 +1559,22 @@ class Manager:
             print("No role: tisma-cloud role master|node", file=sys.stderr)
             return 1
         os.chdir(self.home)
-        if not system.is_terminal(sys.stdout):
-            self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            log = open(self.log_path, "a", buffering=1, encoding="utf-8")
-            os.dup2(log.fileno(), 1)
-            os.dup2(log.fileno(), 2)
-            sys.stdout = sys.stderr = log
+        log = None
+        if child:
+            # A child of the supervisor: its output goes to the supervisor (a pipe), which writes it in the log with
+            # the date and the component; lines go as they are written, in UTF-8 (Windows' code page is not).
+            for stream in (sys.stdout, sys.stderr):
+                with contextlib.suppress(AttributeError, ValueError, OSError):
+                    stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        elif not system.is_terminal(sys.stdout):
+            log = eventlog.RotatingLog(self.log_path)
+            # Only what Python itself writes when the supervisor crashes goes past the log's writer: to a file of its
+            # own (the log is renamed when it rotates, which Windows refuses while a handle of it stays open).
+            crash = open(self.log_path.with_name("tisma-cloud-fallos.log"), "a", buffering=1,  # noqa: SIM115
+                         encoding="utf-8")
+            os.dup2(crash.fileno(), 1)
+            os.dup2(crash.fileno(), 2)
+            sys.stdout = sys.stderr = eventlog.Writer(log, "servicio")
         if not child:
             other = self._read_pid()
             if other is not None and other != os.getpid() and _pid_alive(other):
@@ -1513,9 +1583,12 @@ class Manager:
                 print(f"[tisma-cloud] ya está en marcha (pid {other}): este arranque no hace nada", flush=True)
                 return 0
             self._write_pid()
+            print(f"servicio en marcha (pid {os.getpid()}, versión {__version__}, "
+                  f"{ROLE_LABELS.get(role, role)}), lanzado por {self._launched_by()}", flush=True)
             try:
-                return self._supervise()
+                return self._supervise(log)
             finally:
+                print("servicio detenido", flush=True)
                 if self._read_pid() == os.getpid():
                     self.pid_path.unlink(missing_ok=True)
         from .node.__main__ import main as node_main
@@ -1559,7 +1632,27 @@ class Manager:
                           flush=True)
         return out
 
-    def _supervise(self) -> int:
+    def _launched_by(self) -> str:
+        """Who started this run of the service, for the log: a start by hand (the command or the window's button,
+        which say so), systemd or the Windows task at boot, or a console."""
+        by = os.environ.pop("TISMA_STARTED_BY", "")
+        request = self.home / START_REQUEST
+        try:
+            asked, when = request.read_text(encoding="utf-8").split("\n")[:2]
+            request.unlink(missing_ok=True)
+            if time.time() - float(when) < 120:
+                by = by or f"{asked} (por la tarea programada)"
+        except (OSError, ValueError):
+            pass
+        if by:
+            return by
+        if os.environ.get("INVOCATION_ID"):
+            return "systemd (inicio con la máquina o reinicio del servicio)"
+        if os.name == "nt" and not system.is_terminal(sys.__stdout__ or sys.stdout):
+            return "la tarea programada de Windows (inicio con la máquina, o reintento tras un fallo)"
+        return "la consola («tisma-cloud run»)"
+
+    def _supervise(self, log: eventlog.RotatingLog | None = None) -> int:
         """Runs the role in a child process (and the node of the master in another one when it computes too, and the
         library's relay and seeder when they are on) and starts each one again when it stops with an error (after 5 s,
         doubling up to a minute while it keeps failing). A clean exit of the master or the node ends the service."""
@@ -1568,6 +1661,9 @@ class Manager:
         # The children use the unpacked files of the executable of the supervisor (they end with it), not a copy each.
         env = dict(os.environ)
         env.pop("PYINSTALLER_RESET_ENVIRONMENT", None)
+        env.update(TISMA_SUPERVISED="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+        components = {name: CHILD_COMPONENTS.get(name) or ("maestro" if self.role() == "master" else "nodo")
+                      for name in commands}
         running: dict[str, subprocess.Popen] = {}
         started: dict[str, float] = {}
         delay = {name: 5. for name in commands}
@@ -1602,9 +1698,23 @@ class Manager:
                 proc = running.get(name)
                 if proc is None:
                     if now >= restart_at[name]:
-                        running[name] = subprocess.Popen(cmd, cwd=str(self.home), stdin=subprocess.DEVNULL,
-                                                         env={**env, **child_env[name]},
-                                                         creationflags=0x08000000 if os.name == "nt" else 0)  # no window
+                        pipe = subprocess.PIPE if log else None
+                        try:
+                            proc = subprocess.Popen(cmd, cwd=str(self.home), stdin=subprocess.DEVNULL, stdout=pipe,
+                                                    stderr=subprocess.STDOUT if log else None,
+                                                    env={**env, **child_env[name]},
+                                                    creationflags=0x08000000 if os.name == "nt" else 0)  # no window
+                        except OSError as e:
+                            print(f"{components[name]} no pudo arrancar ({e}); se intenta de nuevo en "
+                                  f"{delay[name]:.0f} s", flush=True)
+                            restart_at[name] = now + delay[name]
+                            delay[name] = min(delay[name] * 2, 60.)
+                            continue
+                        running[name] = proc
+                        if log:
+                            threading.Thread(target=eventlog.pump, args=(proc.stdout, log, components[name]),
+                                             daemon=True).start()
+                        print(f"{components[name]} arranca (pid {proc.pid})", flush=True)
                         started[name] = now
                     continue
                 code = proc.poll()
@@ -1616,9 +1726,8 @@ class Manager:
                     return 0
                 if now - started[name] > 300:
                     delay[name] = 5.
-                what = SERVICE_NAMES.get(name, name)
-                print(f"[tisma-cloud] {time.strftime('%Y-%m-%d %H:%M:%S')}: {what} terminó con el código {code}; "
-                      f"arranca de nuevo en {delay[name]:.0f} s", flush=True)
+                print(f"{components[name]} terminó con el código {code}; arranca de nuevo en {delay[name]:.0f} s",
+                      flush=True)
                 restart_at[name] = now + delay[name]
                 delay[name] = min(delay[name] * 2, 60.)
             time.sleep(0.5)

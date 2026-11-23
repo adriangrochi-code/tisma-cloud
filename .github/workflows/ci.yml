@@ -410,6 +410,12 @@ jobs:
             tc restart
             if (-not (healthy)) { tc logs 40; throw "restart $i: the master does not answer" }
           }
+          # The log (the owner, 23-11): each request with who asked, the start by the task, the master's own lines,
+          # all with the UTC date and the component.
+          $log = (& $exe --home $svc logs 300) -join "`n"
+          foreach ($want in @("\[servicio\] reinicio pedido por comando", "lanzado por", "\[maestro\] INFO:", "\[servicio\] maestro arranca")) {
+            if ($log -notmatch "\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ $want") { throw "the log lacks «$want»: $log" }
+          }
           & $exe --home $svc run
           if ($LASTEXITCODE -ne 0) { throw "a second run of the folder failed ($LASTEXITCODE)" }
           $log = (& $exe --home $svc logs 5) -join "`n"

@@ -689,12 +689,28 @@ def test_a_master_whose_port_is_taken_says_so(tmp_path):
         "ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 18981): [errno 98] address "
         "already in use\n"
         "INFO:     Waiting for application shutdown.\n"
-        "[tisma-cloud] 2026-11-23 18:59:16: el servicio terminó con el código 3; arranca de nuevo en 20 s\n",
+        "2026-11-23T18:59:16Z [servicio] maestro terminó con el código 3; arranca de nuevo en 20 s\n",
         encoding="utf-8")
-    assert m.master_failing().startswith("el puerto 18981 está ocupado por otro programa")
+    assert m.failing().startswith("el puerto 18981 está ocupado por otro programa")
     with open(m.log_path, "a", encoding="utf-8") as log:
         log.write("INFO:     Started server process [10]\nINFO:     Application startup complete.\n")
-    assert m.master_failing() == ""
+    assert m.failing() == ""
     with open(m.log_path, "a", encoding="utf-8") as log:
         log.write("ERROR:    Traceback of something else\n")
-    assert m.master_failing() == "Traceback of something else"
+    assert m.failing() == "Traceback of something else"
+
+
+def test_a_node_that_ends_at_each_start_says_why(tmp_path):
+    """A node whose program ends at once (no tisma-engine, a broken node.toml) was «En marcha» while its supervisor
+    started it again and again."""
+    m = Manager(tmp_path)
+    m.set_role("node")
+    m.log_path.parent.mkdir(parents=True, exist_ok=True)
+    m.log_path.write_text(
+        "2026-11-23T19:09:22Z [servicio] nodo arranca (pid 2567)\n"
+        "2026-11-23T19:09:22Z [nodo] Error: 'tisma_engine' is missing in node.toml\n"
+        "2026-11-23T19:09:22Z [servicio] nodo terminó con el código 1; arranca de nuevo en 5 s\n", encoding="utf-8")
+    assert m.failing() == "'tisma_engine' is missing in node.toml"
+    with open(m.log_path, "a", encoding="utf-8") as log:
+        log.write("2026-11-23T19:09:30Z [nodo] INFO Node with 1 slot(s) (1 for analyses) working for http://m\n")
+    assert m.failing() == ""

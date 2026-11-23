@@ -8,6 +8,7 @@ so the window never waits for them."""
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import threading
 from datetime import date
@@ -937,9 +938,14 @@ class App:
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("Tisma Cloud", f"No se pudo guardar: {e}", parent=self.root)
             return
-        if self.data.get("running") and messagebox.askyesno("Tisma Cloud", "Guardado. ¿Reiniciar el servicio ahora?",
-                                                            parent=self.root):
-            self.service("restart")
+        # A saved change (the address of the master, its token) takes effect when the service starts: offered at
+        # once, also when it is stopped (a tester, 13-11: after changing the master the node «no te deja ni inicia»).
+        if self.data.get("running"):
+            if messagebox.askyesno("Tisma Cloud", "Guardado. ¿Reiniciar el servicio ahora?", parent=self.root):
+                self.service("restart", by="«Guardar» de la ventana")
+        elif self.m.role() and messagebox.askyesno("Tisma Cloud", "Guardado. ¿Iniciar el servicio ahora?",
+                                                   parent=self.root):
+            self.service("start", by="«Guardar» de la ventana")
 
     # ---- diagnosis: what the machine needs to serve
     def build_checks(self) -> None:
@@ -1084,10 +1090,34 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     # ---- log and console of the master
+    def open_log(self) -> None:
+        """The whole log in the program of the system for text files (the Notepad on Windows)."""
+        path = self.m.log_path
+        if not path.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        self.open_path(path)
+
+    def open_path(self, path) -> None:  # noqa: ANN001
+        try:
+            if os.name == "nt":
+                os.startfile(str(path))  # noqa: S606 (a file of the service, opened by the person)
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, AttributeError) as e:
+            messagebox.showinfo("Tisma Cloud", f"No se pudo abrir {path} ({e}). Está en esa carpeta; también lo "
+                                f"muestra «tisma-cloud logs».", parent=self.root)
+
     def build_log(self) -> None:
         page = self.pages["log"]
-        box = self.section(page, "Registro del servicio")
+        box = self.section(page, "Registro del servicio", "Cada arranque, conexión, reintento y trabajo, en hora UTC")
         box.pack(fill="both", expand=True)
+        bar = tk.Frame(box.inner, bg=CARD)
+        bar.pack(fill="x", pady=(0, 6))
+        ttk.Button(bar, text="Abrir registro", command=self.open_log).pack(side="left")
+        ttk.Button(bar, text="Abrir la carpeta", command=lambda: self.open_path(self.m.log_path.parent)).pack(
+            side="left", padx=6)
         self.log = scrolledtext.ScrolledText(box.inner, height=12, font=self.f_mono, state="disabled", bg=CONSOLE,
                                              fg="#E6E1F0", insertbackground="white", relief="flat", borderwidth=8)
         self.log.pack(fill="both", expand=True)
@@ -1186,7 +1216,8 @@ class App:
         # One refresh: the periodic one is already scheduled.
         self.refresh(reschedule=False)
 
-    def service(self, action: str) -> None:
+    def service(self, action: str, by: str = "") -> None:
+        by = by or f"el botón «{ {'start': 'Iniciar', 'stop': 'Detener', 'restart': 'Reiniciar'}[action]}» de la ventana"
         for b in self.buttons.values():
             b.state(["disabled"])
         self.status_text.config(text={"start": "Iniciando…", "stop": "Deteniendo…", "restart": "Reiniciando…"}[action])
@@ -1194,7 +1225,7 @@ class App:
         def work() -> None:
             error = None
             try:
-                getattr(self.m, action)()
+                getattr(self.m, action)(by=by)
             except Exception as e:  # noqa: BLE001
                 error = str(e)
             self.root.after(0, lambda: self.after_service(error))

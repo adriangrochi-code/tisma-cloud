@@ -31,6 +31,12 @@ ReadTimeout = _both("ReadTimeout")
 
 STATE_FILE = "node-state.json"
 
+# getaddrinfo: the name does not exist (NXDOMAIN, or a name with no address): POSIX EAI_NONAME, EAI_NODATA; Windows
+# WSAHOST_NOT_FOUND, WSANO_DATA. And the DNS could not be asked now (no network yet, a DNS that does not answer):
+# EAI_AGAIN; Windows WSATRY_AGAIN.
+DNS_NO_NAME = {getattr(socket, "EAI_NONAME", -2), getattr(socket, "EAI_NODATA", -5), 11001, 11004}
+DNS_NOT_NOW = {getattr(socket, "EAI_AGAIN", -3), 11002}
+
 # Error numbers of an unreachable network or machine (POSIX and Windows' WSAENETUNREACH, WSAEHOSTUNREACH).
 UNREACHABLE = {errno.ENETUNREACH, errno.EHOSTUNREACH, 10051, 10065}
 
@@ -60,7 +66,13 @@ def explain(ex: BaseException, master_url: str) -> str:
             return (f"El certificado HTTPS de {host} no es válido para este nodo: revisá la dirección del maestro, o "
                     f"«verify_tls» si el maestro usa uno propio")
         if isinstance(cause, socket.gaierror):
-            return f"No se encuentra «{host}»: revisá la dirección del maestro (master_url)"
+            if cause.errno in DNS_NO_NAME:
+                return (f"{host} no existe en el DNS: revisá el dominio (o la dirección del maestro, master_url) "
+                        f"[{cause}]")
+            if cause.errno in DNS_NOT_NOW:
+                return (f"No se pudo consultar el DNS por {host}: esta máquina no tiene red todavía, o su DNS no "
+                        f"responde; se vuelve a intentar [{cause}]")
+            return f"No se encuentra «{host}» en el DNS: revisá la dirección del maestro (master_url) [{cause}]"
         if isinstance(cause, ConnectionRefusedError):
             return (f"Nada atiende en {where}: el maestro está detenido, o su puerto es otro (en el maestro: "
                     f"«tisma-cloud status» dice el puerto)")

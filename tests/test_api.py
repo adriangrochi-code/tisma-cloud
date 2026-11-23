@@ -738,3 +738,19 @@ def test_a_node_running_more_than_64_jobs(client, f):
     assert hb.status_code == 200 and hb.json()["cancel"] == []
     with f.db.session() as s:
         assert all(s.get(Job, i).status == "running" for i in ids)
+
+
+def test_the_panel_reads_the_log_of_the_service_only_for_admins(client, f, tmp_path, monkeypatch):
+    """The panel's «Abrir registro»: the last lines of logs/tisma-cloud.log, without secrets, for an administrator."""
+    log = tmp_path / "tisma-cloud.log"
+    monkeypatch.setenv("TISMA_LOG_FILE", str(log))
+    admin = f.user("root@x.com", admin=True)
+    person = f.user("ana@x.com")
+    assert client.get("/v1/admin/log", headers=admin).json()["lines"] == []
+    log.write_text("".join(f"2026-11-23T19:00:{i:02d}Z [nodo] line {i}\n" for i in range(50)) +
+                   "2026-11-23T19:01:00Z [nodo] old line with Bearer abcdefghijklmnopq\n", encoding="utf-8")
+    body = client.get("/v1/admin/log?lines=3", headers=admin).json()
+    assert body["lines"][:2] == ["2026-11-23T19:00:48Z [nodo] line 48", "2026-11-23T19:00:49Z [nodo] line 49"]
+    assert "abcdefghijklmnopq" not in body["lines"][2]
+    assert client.get("/v1/admin/log", headers=person).status_code == 403
+    assert client.get("/v1/admin/log").status_code == 401

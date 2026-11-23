@@ -189,6 +189,15 @@
       <button type="button" id="lb-add">Bloquear</button>
     </div>
     <div class="table-wrap"><table id="library-blocks"></table></div>
+
+    <h2>Registro del servicio</h2>
+    <p class="muted">Cada arranque, reinicio y parada (y quién lo pidió), cada conexión de los nodos, cada reintento y cada
+      trabajo, en hora UTC. Sin claves ni tokens. El archivo completo es logs/tisma-cloud.log en la carpeta del servicio.</p>
+    <p><button type="button" id="log-open">Abrir registro</button>
+      <select id="log-lines"><option value="300">Últimas 300 líneas</option><option value="2000">Últimas 2000</option></select>
+      <input id="log-filter" placeholder="Filtrar (ej. nodo, ERROR, DNS)">
+      <span class="muted" id="log-file"></span></p>
+    <pre id="log-view" class="hidden" style="max-height:32em;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
   </main>
 </div>
 
@@ -242,6 +251,22 @@ function duration(sec) {
   return `${Math.floor(sec / 60)} min ${Math.round(sec % 60)} s`;
 }
 
+let logLines = [];
+function showLog() {
+  const words = $("log-filter").value.trim().toLowerCase();
+  const view = $("log-view");
+  view.textContent = logLines.filter(x => !words || x.toLowerCase().includes(words)).join("\n") || "(vacío)";
+  view.classList.remove("hidden");
+  view.scrollTop = view.scrollHeight;
+}
+async function openLog() {
+  try {
+    const body = await api(`/v1/admin/log?lines=${$("log-lines").value}`);
+    logLines = body.lines || [];
+    $("log-file").textContent = body.file || "";
+    showLog();
+  } catch (e) { if (e.message !== "auth") alert(e.message); }
+}
 async function api(path, options = {}) {
   const r = await fetch(path, { ...options, headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) } });
   if (r.status === 401 || r.status === 403) { logout(r.status === 403 ? "Esta cuenta no es de administrador." : "La sesión terminó."); throw new Error("auth"); }
@@ -283,6 +308,9 @@ $("login").addEventListener("submit", async (ev) => {
   } catch (e) { $("login-error").textContent = "El servidor no responde."; }
 });
 $("logout").addEventListener("click", () => logout());
+$("log-open").addEventListener("click", openLog);
+$("log-lines").addEventListener("change", openLog);
+$("log-filter").addEventListener("input", () => { if (logLines.length) showLog(); });
 
 // ---- servers
 function draftOf(node) { return drafts[node.name] || node.priorities.slice(); }

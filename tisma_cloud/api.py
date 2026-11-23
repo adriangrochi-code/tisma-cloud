@@ -33,8 +33,8 @@ from sqlalchemy import bindparam, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import object_session
 
-from . import (__version__, alerts, apple, backup, billing, capacity, codes, crypto, google_play, library, microsoft,
-               pairing, peers, remote, reports, scans, scheduler, stores, triage)
+from . import (__version__, alerts, apple, backup, billing, capacity, codes, crypto, eventlog, google_play, library,
+               microsoft, pairing, peers, remote, reports, scans, scheduler, stores, triage)
 from .google_auth import GoogleError, GoogleVerifier
 from .mail import code_message, exists_message, mailer_for, reward_message
 from .db import Database
@@ -262,6 +262,7 @@ class Services:
             for job_id in ended:
                 self.storage.remove_input(job_id)
         if requeued:
+            log.info("%d job(s) back to the queue: their node stopped answering", requeued)
             self.wakeup.notify(JOBS)
 
     def _sweep_old_files(self) -> None:
@@ -1066,6 +1067,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if node.last_seen is not None and (node.id not in nodes_back
                                                or now - node.last_seen > timedelta(seconds=RECONNECT_GAP_S)):
                 node.reconnected_at = now
+                log.info("Node %s connected again (last heard %.0f s before)", node.name,
+                         (now - node.last_seen).total_seconds())
+            elif node.last_seen is None and node.id not in nodes_back:
+                log.info("Node %s connected for the first time", node.name)
             nodes_back.add(node.id)
             node.last_seen = now
         if not limiter.allow(f"node:{node.id}", cfg.node_requests_per_minute):
@@ -2485,6 +2490,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Checked before it is queued (the job is not kept when it is refused).
             inspected(services.storage.input_path(job.id), "project", lambda: services.storage.remove_job(job.id))
             view = job_view(job)
+            log.info("Job %s received: %s of account %s", job.id, plan.kind, u.id)
         # After the commit: a node woken before it would not see the job.
         services.wakeup.notify(JOBS)
         return view
@@ -2739,6 +2745,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job = await services.wakeup.poll(JOBS, lambda: run_in_threadpool(try_claim, node.id, body.exclude), wait_s)
         if job is None:
             return Response(status_code=204)
+        log.info("Job %s given to node %s", job.get("id"), node.name)
         return {"job": job, "priorities": node.priority_list}
 
     @app.get("/v1/node/whoami")
@@ -2779,6 +2786,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             elif settled and "running" in body.model_fields_set:
                 requeued = scheduler.requeue_orphans(s, node.id, body.running, cfg.max_attempts, ORPHAN_GRACE_S)
         if requeued:
+            log.info("%d job(s) of node %s back to the queue: the node does not run them any more (it restarted)",
+                     requeued, node.name)
             services.wakeup.notify(JOBS)
         return {"cancel": sorted(set(cancel)), "priorities": node.priority_list}
 
@@ -2842,7 +2851,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             services.storage.remove_input(job.id)
         # Raised once the session is committed: the job stays failed.
         if refused is not None:
+            log.warning("Job %s failed: the result of node %s was refused (%s)", job_id, node.name, refused.detail)
             raise refused
+        log.info("Job %s done: result delivered by node %s", job_id, node.name)
         return {"ok": True}
 
     @app.post("/v1/node/jobs/{job_id}/fail")
@@ -2861,6 +2872,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return {"ok": True, "requeued": True}
             else:
                 scheduler.fail(s, job, body.error, body.details)
+                log.info("Job %s failed on node %s: %s", job.id, node.name, body.error[:300])
             services.storage.remove_input(job.id)
             return {"ok": True}
 
@@ -3152,6 +3164,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     # ---- administrator
+    @app.get("/v1/admin/log")
+    def admin_log(_admin: AdminDep, lines: int = 300) -> dict:
+        """The last lines of the service's log (logs/tisma-cloud.log in the folder the master runs in): the panel's
+        «Abrir registro». Already without secrets (eventlog.redact)."""
+        path = Path(os.environ.get("TISMA_LOG_FILE") or Path.cwd() / "logs" / "tisma-cloud.log")
+        lines = max(1, min(lines, 5000))
+        if not path.is_file():
+            return {"lines": [], "file": str(path)}
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - lines * 400))
+            text = f.read().decode("utf-8", errors="replace")
+        return {"lines": [eventlog.redact(x) for x in text.splitlines()[-lines:]], "file": str(path)}
+
     # ---- the review of the library (rule 7): the reports, removing a model, and the blocks
     @app.get("/v1/admin/library/reports")
     def admin_library_reports(_admin: AdminDep, done: bool = False) -> dict:

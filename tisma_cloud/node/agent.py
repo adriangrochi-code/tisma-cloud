@@ -62,6 +62,9 @@ class Agent:
         self.client.headers["Authorization"] = f"Bearer {cfg.token}"
         self.info = machine_info(cfg)
         self._lock = threading.Lock()
+        # The link with the master for the log: None before the first answer, then True or False.
+        self._link: bool | None = None
+        self._cut_since = 0.
         self._running: dict[str, threading.Event] = {}
         # This run of the node program: the master tells two programs with one token apart (twins.py).
         self.instance = uuid.uuid4().hex
@@ -77,12 +80,25 @@ class Agent:
 
     # ---- master
     def connected(self) -> None:
+        with self._lock:
+            was, since = self._link, self._cut_since
+            self._link, self._cut_since = True, 0.
+        if was is not True:
+            # In the log once per change: the first connection, and each one back after a cut.
+            if was is None:
+                log.info("Connected to the master %s", self.cfg.master_url)
+            else:
+                log.info("Connected to the master %s again, after %.0f s without it", self.cfg.master_url,
+                         time.monotonic() - since)
         if self.state is not None:
             self.state.write(True, f"Conectado al maestro {self.cfg.master_url}")
 
     def cut_off(self, ex: BaseException) -> str:
         """Notes why the master was not reached; returns it said for a person."""
         why = explain(ex, self.cfg.master_url)
+        with self._lock:
+            if self._link is not False:
+                self._link, self._cut_since = False, time.monotonic()
         if self.state is not None:
             self.state.write(False, why)
         return why
@@ -132,6 +148,7 @@ class Agent:
     def process(self, job: dict) -> str:
         """Runs a claimed job; returns its final state (done, failed, cancelled)."""
         job_id = job["id"]
+        log.info("Job %s received: %s", job_id, job.get("kind", "?"))
         cancel = threading.Event()
         with self._lock:
             self._running[job_id] = cancel
@@ -167,7 +184,8 @@ class Agent:
             params["threads"] = int(job.get("cpu_cores") or 0)
             outcome = runner(self.cfg, params, project, work, progress, cancel.is_set)
             self._send_result(job_id, outcome)
-            log.info("Job %s done", job_id)
+            log.info("Job %s done: result delivered (%s, %d KB)", job_id, outcome.result.name,
+                     outcome.result.stat().st_size >> 10)
             return "done"
         except JobCancelled:
             self._report_failure(job_id, "Cancelled", cancelled=True)
@@ -223,7 +241,7 @@ class Agent:
         try:
             self.client.post(f"/v1/node/jobs/{job_id}/fail", json=body, timeout=30.)
         except HTTPError:
-            log.warning("Could not report the end of job %s", job_id)
+            log.warning("Could not report the end of job %s to the master", job_id)
 
     def run_once(self, wait: int = 0) -> str | None:
         job = self.claim(wait)

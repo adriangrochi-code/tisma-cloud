@@ -102,6 +102,10 @@ def serve_master(host: str, port: int) -> int:
     from .settings import Settings
 
     logging.getLogger("uvicorn.access").addFilter(_NoHealthChecks())
+    # The master's own events (jobs received, given, delivered, failed; nodes connected or back) in the log, not only
+    # its warnings: one line each, the service puts the date and the component in front.
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
+    logging.getLogger("tisma_cloud").setLevel(logging.INFO)
 
     # The port, for the public address made when TISMA_PUBLIC_URL is empty (publicip.py).
     os.environ["TISMA_PORT"] = str(port)

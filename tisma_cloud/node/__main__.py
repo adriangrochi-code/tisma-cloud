@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import logging
 from pathlib import Path
 
@@ -20,7 +21,10 @@ def main(argv: list[str] | None = None) -> int:
     # The node of the master has its token made by the master itself: it never asks to join.
     parser.add_argument("--no-join", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # Run by the service, its supervisor puts the date (UTC) and the component in front of each line of the log.
+    supervised = os.environ.get("TISMA_SUPERVISED") == "1"
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s" if supervised else
+                        "%(asctime)s %(levelname)s %(message)s")
     # One line per request is too much for a service that polls.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     config_path = Path(args.config)
