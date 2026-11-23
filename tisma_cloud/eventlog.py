@@ -59,7 +59,9 @@ class RotatingLog:
     tisma-cloud.log.1 (the older ones move up to .5, the oldest goes). On Windows a file open in another process
     cannot be renamed: then it is tried again at the next line."""
 
-    def __init__(self, path: Path, max_bytes: int = MAX_BYTES, backups: int = BACKUPS) -> None:
+    def __init__(self, path: Path, max_bytes: int = MAX_BYTES, backups: int = BACKUPS, echo=None) -> None:  # noqa: ANN001
+        """echo: a console where each line is shown too («tisma-cloud run» in a terminal), or None."""
+        self.echo = echo
         self.path = path
         self.max_bytes = max_bytes
         self.backups = backups
@@ -72,6 +74,12 @@ class RotatingLog:
 
     def write_line(self, text: str) -> None:
         with self.lock:
+            if self.echo is not None:
+                try:
+                    self.echo.write(text + "\n")
+                    self.echo.flush()
+                except (OSError, ValueError, UnicodeError):
+                    pass
             try:
                 self.file.write(text + "\n")
                 if self.file.tell() >= self.max_bytes:

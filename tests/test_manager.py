@@ -620,11 +620,16 @@ def test_a_second_start_of_the_same_folder_does_nothing(tmp_path, monkeypatch, c
     try:
         time.sleep(0.5)
         m.pid_path.write_text(f"{first.pid}\n{manager_module._process_start(first.pid):.2f}\n")
-        # As in a console (its output not sent to the log: the test's own stdout stays).
+        # As in a console: each line of the log is shown there too.
         monkeypatch.setattr(manager_module.system, "is_terminal", lambda stream: True)
+        # run() puts the log's writer in sys.stdout and sys.stderr: put back after the test.
+        monkeypatch.setattr(sys, "stdout", sys.stdout)
+        monkeypatch.setattr(sys, "stderr", sys.stderr)
         assert m.run() == 0
         assert m._read_pid() == first.pid   # its pid file kept
         assert f"ya está en marcha (pid {first.pid})" in capsys.readouterr().out
+        # And in the log file, also with a console (the Windows task's runs have one no one sees: CI 23-11).
+        assert f"[servicio] ya está en marcha (pid {first.pid})" in m.log_path.read_text(encoding="utf-8")
     finally:
         first.kill()
         first.wait()
@@ -724,6 +729,9 @@ def test_two_starts_at_the_same_moment_run_one_service(tmp_path, monkeypatch, ca
     held = Manager(tmp_path)._lock_service()
     assert held is not None
     monkeypatch.setattr(manager_module.system, "is_terminal", lambda stream: True)
+    # run() puts the log's writer in sys.stdout and sys.stderr: put back after the test.
+    monkeypatch.setattr(sys, "stdout", sys.stdout)
+    monkeypatch.setattr(sys, "stderr", sys.stderr)
     assert m.run() == 0
     assert "otro arranque de esta carpeta tiene su candado" in capsys.readouterr().out
     assert not m.pid_path.exists()

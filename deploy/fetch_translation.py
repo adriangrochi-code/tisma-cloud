@@ -23,6 +23,7 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path, PurePosixPath
 
 import httpx
@@ -32,10 +33,20 @@ BASE = f"https://github.com/{REPO}/releases/latest/download"
 MAX_TABLE = 20 << 20  # bytes of one table
 
 
-def fetch(client: httpx.Client, url: str) -> bytes:
-    r = client.get(url)
-    r.raise_for_status()
-    return r.content
+def fetch(client: httpx.Client, url: str, tries: int = 4) -> bytes:
+    """The file at url. GitHub answers 5xx now and then (503 «Backend.max_conn reached», CI 23-11): asked again
+    after 2, 4 and 8 s before giving up."""
+    for attempt in range(tries):
+        try:
+            r = client.get(url)
+            if r.status_code < 500 or attempt == tries - 1:
+                r.raise_for_status()
+                return r.content
+        except httpx.TransportError:
+            if attempt == tries - 1:
+                raise
+        time.sleep(2 << attempt)
+    raise RuntimeError("unreachable")
 
 
 def tables(index: dict) -> dict[str, str]:

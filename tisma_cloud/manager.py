@@ -1566,14 +1566,19 @@ class Manager:
             for stream in (sys.stdout, sys.stderr):
                 with contextlib.suppress(AttributeError, ValueError, OSError):
                     stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-        elif not system.is_terminal(sys.stdout):
-            log = eventlog.RotatingLog(self.log_path)
-            # Only what Python itself writes when the supervisor crashes goes past the log's writer: to a file of its
-            # own (the log is renamed when it rotates, which Windows refuses while a handle of it stays open).
-            crash = open(self.log_path.with_name("tisma-cloud-fallos.log"), "a", buffering=1,  # noqa: SIM115
-                         encoding="utf-8")
-            os.dup2(crash.fileno(), 1)
-            os.dup2(crash.fileno(), 2)
+        else:
+            # The log is always written, also with a console: Windows gives the service started by its scheduled task
+            # a console no one sees, so «is there a console» does not tell a person watching (the log of the task's
+            # runs was empty, Windows CI 23-11). In a terminal each line is shown there too.
+            console = sys.stdout if system.is_terminal(sys.stdout) else None
+            log = eventlog.RotatingLog(self.log_path, echo=console)
+            if console is None:
+                # Only what Python itself writes when the supervisor crashes goes past the log's writer: to a file of
+                # its own (the log is renamed when it rotates, which Windows refuses while a handle of it is open).
+                crash = open(self.log_path.with_name("tisma-cloud-fallos.log"), "a", buffering=1,  # noqa: SIM115
+                             encoding="utf-8")
+                os.dup2(crash.fileno(), 1)
+                os.dup2(crash.fileno(), 2)
             sys.stdout = sys.stderr = eventlog.Writer(log, "servicio")
         if not child:
             self._service_lock = self._lock_service()
@@ -1674,7 +1679,9 @@ class Manager:
             return by
         if os.environ.get("INVOCATION_ID"):
             return "systemd (inicio con la máquina o reinicio del servicio)"
-        if os.name == "nt" and not system.is_terminal(sys.__stdout__ or sys.stdout):
+        # The Windows task runs as SYSTEM, whose user name is the machine's account (NAME$); it has a console too.
+        user = os.environ.get("USERNAME", "")
+        if os.name == "nt" and (user.endswith("$") or user.upper() == "SYSTEM"):
             return "la tarea programada de Windows (inicio con la máquina, o reintento tras un fallo)"
         return "la consola («tisma-cloud run»)"
 
