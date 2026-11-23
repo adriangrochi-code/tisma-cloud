@@ -68,6 +68,40 @@ def test_resend_and_forgot_do_not_tell_who_has_an_account(web):
     assert web.post("/v1/auth/resend", json={"email": "b@correo.uy"}).status_code == 429
 
 
+def test_an_old_registration_by_someone_else_does_not_keep_its_password(web):
+    """Pre-account hijacking with our own codes: someone registers the victim's address with a password of theirs and
+    cannot confirm it. Days later the victim tries to register (the address «has an account»), asks for the code again
+    and confirms it. The password chosen days ago by someone else must not open the victim's account."""
+    from datetime import timedelta
+
+    from tisma_cloud.models import User, utcnow
+
+    services = web.app.state.services
+    web.post("/v1/auth/register", json={"email": "victima@correo.uy", "password": "clave del atacante"})
+    with services.db.session() as s:
+        s.query(User).filter(User.email_verified.is_(False)).one().created_at = utcnow() - timedelta(days=2)
+    services.limiter._hits.clear()
+    web.post("/v1/auth/register", json={"email": "victima@correo.uy", "password": "clave de la victima"})
+    services.limiter._hits.clear()
+    assert web.post("/v1/auth/resend", json={"email": "victima@correo.uy"}).status_code == 200
+    r = web.post("/v1/auth/verify", json={"email": "victima@correo.uy", "code": code_of(web, "victima@correo.uy",
+                                                                                         "confirmar")})
+    assert r.status_code == 200
+    assert web.post("/v1/auth/login", json={"email": "victima@correo.uy",
+                                            "password": "clave del atacante"}).status_code == 401
+    me = web.get("/v1/me", headers={"Authorization": f"Bearer {r.json()['token']}"}).json()
+    assert me["has_password"] is False
+
+
+def test_a_code_asked_again_soon_after_registering_keeps_the_password(web):
+    web.post("/v1/auth/register", json={"email": "lenta@correo.uy", "password": "una clave larga"})
+    web.app.state.services.limiter._hits.clear()
+    assert web.post("/v1/auth/resend", json={"email": "lenta@correo.uy"}).status_code == 200
+    assert web.post("/v1/auth/verify", json={"email": "lenta@correo.uy",
+                                             "code": code_of(web, "lenta@correo.uy")}).status_code == 200
+    assert web.post("/v1/auth/login", json={"email": "lenta@correo.uy", "password": "una clave larga"}).status_code == 200
+
+
 def test_new_password_with_a_code(web):
     web.post("/v1/auth/register", json={"email": "c@correo.uy", "password": "una clave larga"})
     first = web.post("/v1/auth/verify", json={"email": "c@correo.uy", "code": code_of(web, "c@correo.uy")}).json()["token"]

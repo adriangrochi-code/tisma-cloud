@@ -68,6 +68,9 @@ JOIN_PER_MINUTE = 30
 # to one address.
 LOGIN_FAILURES_PER_HOUR = 20
 CODES_PER_DAY = 10
+# A password chosen when registering is kept when the address is confirmed within this time; later, the one who
+# confirms may not be who chose it (someone registered the address of another person first).
+REGISTRATION_PASSWORD_TRUST = timedelta(hours=1)
 # Free space a scan leaves on the master's disk once it is there (results, the database, the copies) [bytes].
 SCAN_ROOM_LEFT = 2 << 30
 # The library (library.py): models published and reports sent by one account in a day.
@@ -2033,6 +2036,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with db.session() as s:
             user = s.execute(select(User).where(User.email_index == crypto.index(email))).scalar_one_or_none()
             if user is not None and user.enabled and codes.check(s, user, "verify", body.code):
+                if user.password_hash and utcnow() - user.created_at > REGISTRATION_PASSWORD_TRUST:
+                    # Registered long ago and never confirmed: the owner of the address, confirming it now with a
+                    # code asked again, may not be who chose that password («pre-account hijacking»). It no longer
+                    # opens the account; a new one is chosen with "Forgot my password".
+                    user.password_hash = ""
                 user.email_verified = True
                 token = open_session(s, user, body.device)
         if token is None:
