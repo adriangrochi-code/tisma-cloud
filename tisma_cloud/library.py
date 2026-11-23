@@ -23,7 +23,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
@@ -574,21 +574,68 @@ class Signed:
             return cached[7] if cached else None
 
 
-def bind_peer_key(session: Session, user: User, public_key_b64: str, most: int = 10) -> None:
+# =====================================================================================================================
+# ===== Peer keys: the app's Ed25519 key bound to an account (rule 5; proof of possession, 3 bis bis) =====
+# =====================================================================================================================
+
+# The last day a key may be bound without its signature (p2p_library.md 3 bis bis: the transition ends on
+# 15-12-2026, UTC). From then on a request without a signature is refused (400).
+PEER_KEY_UNSIGNED_UNTIL = date(2026, 12, 14)
+
+
+class BadPeerKeySignature(LibraryError):
+    """The signature is missing (after the transition) or is not the key's over the expected text: HTTP 400."""
+
+
+def peer_key_message(account: str, public_key_b64: str) -> bytes:
+    """The bytes an app signs to prove it holds its key: "tisma-peer-key\n" + account id ("ua_...") + "\n" + the key
+    exactly as sent (base64 text). The account id in it stops a signature made for one account from serving another."""
+    return f"tisma-peer-key\n{account}\n{public_key_b64}".encode()
+
+
+def bind_peer_key(session: Session, user: User, public_key_b64: str, most: int = 10, signature_b64: str = "",
+                  today: date | None = None) -> bool:
     """Ties an app's key to the account (rule 5): a key belongs to one account only, and an account has at most `most`
-    apps (the oldest key is let go to bind a new one: a phone replaced keeps no slot)."""
-    unb64(public_key_b64, 32)
-    row = session.execute(select(LibraryPeerKey).where(LibraryPeerKey.public_key == public_key_b64)).scalar_one_or_none()
-    if row is not None and row.user_id != user.id:
-        raise LibraryError("This key is of another account")
+    apps (the oldest key is let go to bind a new one: a phone replaced keeps no slot).
+
+    signature_b64: the key's Ed25519 signature over peer_key_message() (3 bis bis). With it the binding is verified;
+    a verified binding takes the key from another account that bound it without a signature (that account never
+    proved it held it: a squatter). Without it (only until PEER_KEY_UNSIGNED_UNTIL) the binding is unverified and
+    never replaces nor removes a verified one. Returns whether the binding is verified.
+
+    Raises BadPeerKeySignature (a bad signature, or none after the transition) and LibraryError (not a key, a key
+    of another account, a blocked app)."""
+    key = unb64(public_key_b64, 32)
+    if signature_b64:
+        try:
+            signature = unb64(signature_b64, 64)
+        except LibraryError:
+            raise BadPeerKeySignature("'signature' is not an Ed25519 signature in base64") from None
+        if not verify(key, signature, peer_key_message(account_id(user.id), public_key_b64)):
+            raise BadPeerKeySignature("The signature is not this key's over the expected text")
+    elif (today or datetime.now(timezone.utc).date()) > PEER_KEY_UNSIGNED_UNTIL:
+        raise BadPeerKeySignature("'signature' is required")
+    verified = bool(signature_b64)
     if blocked(session, "peer", public_key_b64):
         raise LibraryError("This app is blocked in the library")
-    if row is None:
-        keys = session.execute(select(LibraryPeerKey).where(LibraryPeerKey.user_id == user.id)
-                               .order_by(LibraryPeerKey.created_at, LibraryPeerKey.id)).scalars().all()
-        for old in keys[:max(0, len(keys) - most + 1)]:
-            session.delete(old)
-        session.add(LibraryPeerKey(user_id=user.id, public_key=public_key_b64))
+    row = session.execute(select(LibraryPeerKey).where(LibraryPeerKey.public_key == public_key_b64)).scalar_one_or_none()
+    if row is not None and row.user_id != user.id:
+        if not (verified and not row.verified):
+            raise LibraryError("This key is of another account")
+        # Proved now by its holder: the unverified binding of the other account goes.
+        session.delete(row)
+        session.flush()
+        row = None
+    if row is not None:
+        # The same account again: a signature upgrades the binding; an unsigned request never downgrades it.
+        row.verified = row.verified or verified
+        return row.verified
+    keys = session.execute(select(LibraryPeerKey).where(LibraryPeerKey.user_id == user.id)
+                           .order_by(LibraryPeerKey.created_at, LibraryPeerKey.id)).scalars().all()
+    for old in keys[:max(0, len(keys) - most + 1)]:
+        session.delete(old)
+    session.add(LibraryPeerKey(user_id=user.id, public_key=public_key_b64, verified=verified))
+    return verified
 
 
 def owns_key(session: Session, user: User, public_key_b64: str) -> bool:

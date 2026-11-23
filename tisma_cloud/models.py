@@ -467,6 +467,9 @@ class LibraryPeerKey(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     # 32 bytes in base64.
     public_key: Mapped[str] = mapped_column(String(64), unique=True)
+    # The app proved it holds the private key (its signature, p2p_library.md 3 bis bis). False: bound without one,
+    # during the transition; such a binding never replaces a verified one, and a verified one takes its key.
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

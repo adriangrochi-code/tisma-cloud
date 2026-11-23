@@ -1273,13 +1273,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/library/peer-key")
     def library_peer_key(user: UserDep, body: dict = Body(...)) -> dict:
+        """Binds an app's key to the account (p2p_library.md 3 bis bis): {"peer_key", "signature"}, the signature
+        proving the app holds the key. "public_key" is the field's former name, still read."""
+        key = str(body.get("peer_key") or body.get("public_key") or "")
         with db.session() as s:
             try:
-                library.bind_peer_key(s, s.get(User, user.id), str(body.get("public_key", "")),
-                                      LIBRARY_PEER_KEYS_PER_ACCOUNT)
+                verified = library.bind_peer_key(s, s.get(User, user.id), key, LIBRARY_PEER_KEYS_PER_ACCOUNT,
+                                                 str(body.get("signature") or ""))
+            except library.BadPeerKeySignature as ex:
+                raise HTTPException(400, str(ex)) from None
             except library.LibraryError as ex:
                 raise HTTPException(422 if "base64" in str(ex) or "bytes" in str(ex) else 409, str(ex)) from None
-        return {"ok": True, "account": library.account_id(user.id)}
+        return {"ok": True, "account": library.account_id(user.id), "verified": verified}
 
     def publish(user: User, body: dict, model_id: str | None) -> dict:
         if not services.daily.allow(f"library-publish:{user.id}", LIBRARY_PUBLISH_PER_DAY):

@@ -898,3 +898,58 @@ def test_publishing_gives_the_tickets_to_upload_the_files_to_the_seeder(client, 
     assert client.post(f"/v1/library/models/{model['id']}/uploads", headers=other.headers).status_code == 404
     client.delete(f"/v1/library/models/{model['id']}", headers=app.headers)
     assert client.post(f"/v1/library/models/{model['id']}/uploads", headers=app.headers).status_code == 403
+
+
+# ===== Peer keys: proof of possession (p2p_library.md 3 bis bis, 23-11-2026) =====
+
+def sign_bind(client, headers, key: Ed25519PrivateKey, account: str, public: str | None = None,
+              field: str = "peer_key"):
+    public = public or library.b64(library.public_bytes(key.public_key()))
+    signature = library.b64(key.sign(library.peer_key_message(account, public)))
+    return client.post("/v1/library/peer-key", headers=headers, json={field: public, "signature": signature})
+
+
+def test_a_peer_key_is_bound_with_the_proof_that_the_app_holds_it(client, f):
+    owner = f.user("duena@x.com")
+    app = App(client, owner)
+    account = app.bind()["account"]            # during the transition, unsigned: unverified
+    r = sign_bind(client, owner, app.key, account)
+    assert r.status_code == 200 and r.json()["verified"] is True
+    # An unsigned request of the same account does not take the proof back.
+    assert client.post("/v1/library/peer-key", headers=owner, json={"peer_key": app.public}).json()["verified"] is True
+    # A signature over another account's text, or by another key, is refused (400).
+    other = Ed25519PrivateKey.generate()
+    assert sign_bind(client, owner, other, account, public=app.public).status_code == 400
+    assert sign_bind(client, owner, app.key, "ua_otra").status_code == 400
+    bad = client.post("/v1/library/peer-key", headers=owner, json={"peer_key": app.public, "signature": "x"})
+    assert bad.status_code == 400
+    # The former field name is still read.
+    assert sign_bind(client, owner, app.key, account, field="public_key").status_code == 200
+
+
+def test_a_key_squatted_without_proof_goes_to_the_account_that_proves_it(client, f):
+    """Before: an account could bind another user's public key (read in the index) first, and keep it."""
+    owner, squatter = f.user("duena@x.com"), f.user("okupa@x.com")
+    key = Ed25519PrivateKey.generate()
+    public = library.b64(library.public_bytes(key.public_key()))
+    assert client.post("/v1/library/peer-key", headers=squatter, json={"peer_key": public}).status_code == 200
+    # The real holder proves it: the unverified binding of the other account goes.
+    account = client.post("/v1/library/peer-key", headers=owner, json={"peer_key": "A" * 43 + "="}).json()["account"]
+    r = sign_bind(client, owner, key, account, public=public)
+    assert r.status_code == 200 and r.json()["verified"] is True
+    # An unverified binding never takes a verified one.
+    assert client.post("/v1/library/peer-key", headers=squatter, json={"peer_key": public}).status_code == 409
+
+
+def test_after_the_transition_a_key_without_its_signature_is_refused(client, f):
+    from datetime import date
+
+    from tisma_cloud.models import User
+
+    f.user("tarde@x.com")
+    key = library.b64(library.public_bytes(Ed25519PrivateKey.generate().public_key()))
+    with client.app.state.services.db.session() as s:
+        user = s.query(User).one()
+        assert library.bind_peer_key(s, user, key, today=date(2026, 12, 14)) is False
+        with pytest.raises(library.BadPeerKeySignature):
+            library.bind_peer_key(s, user, key, today=date(2026, 12, 15))
