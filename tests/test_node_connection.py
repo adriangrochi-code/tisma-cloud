@@ -171,3 +171,37 @@ def test_the_master_says_why_each_node_does_not_work(client, f):
     nodes = {n["name"]: n for n in client.get("/v1/admin/nodes", headers=admin).json()["nodes"]}
     assert "Nunca se conectó" in nodes["nuevo"]["problem"]
     assert "Sin señal hace 30 min" in nodes["viejo"]["problem"]
+
+
+def test_the_master_notes_when_a_node_came_back_by_itself(client, f, settings, tmp_path):
+    """After a silence, or after the master itself restarted, a node's first request is a reconnection: the panel and
+    the window say «Reconectado hace N s». Its first connection ever is not one."""
+    from datetime import timedelta
+
+    from fastapi.testclient import TestClient
+
+    from tisma_cloud.api import create_app
+    from tisma_cloud.models import Node, utcnow
+    from tisma_cloud.node_problems import reconnected_text
+
+    admin = f.user("root@x.com", admin=True)
+    node = f.node("n", "slice")
+    beat = lambda c: c.post("/v1/node/heartbeat", headers=node, json={"running": []})  # noqa: E731
+    assert beat(client).status_code == 200
+    view = lambda c: c.get("/v1/admin/nodes", headers=admin).json()["nodes"][0]  # noqa: E731
+    assert view(client)["reconnected_at"] is None
+    beat(client)
+    assert view(client)["reconnected_at"] is None
+    # Silent for a minute (the node was cut), then heard again.
+    with f.db.session() as s:
+        s.query(Node).update({"last_seen": utcnow() - timedelta(minutes=1)})
+    beat(client)
+    first = view(client)["reconnected_at"]
+    assert first and reconnected_text(first).startswith("Reconectado hace ")
+    # The master restarted (another process on the same database): the node's next request is a reconnection.
+    with f.db.session() as s:
+        s.query(Node).update({"reconnected_at": None})
+    with TestClient(create_app(settings), client=("192.168.1.20", 50000)) as restarted:
+        assert beat(restarted).status_code == 200
+        assert view(restarted)["reconnected_at"] is not None
+    assert reconnected_text("") == "" and reconnected_text("2000-01-01T00:00:00") == ""

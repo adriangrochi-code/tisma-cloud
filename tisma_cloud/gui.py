@@ -17,6 +17,7 @@ import tkinter.font as tkfont
 
 from .manager import JOB_CLASS_NAMES, MASTER_FIELDS, NODE_FIELDS, ROLE_NAMES, Manager
 from .node.config import auto_slots, memory_gb
+from .node_problems import reconnected_text
 
 # The violet of Tisma, ink and surfaces. The status colours are only for states and always come with a word.
 VIOLET = "#7A24C9"
@@ -607,8 +608,9 @@ class App:
         rows = []
         for n in self.node_list:
             state, _color = self.node_state(n)
-            # Why it does not work, for a person (node_problems.py), never a bare «sin señal».
-            why = n.get("problem") or "–"
+            # Why it does not work, for a person (node_problems.py), never a bare «sin señal»; else when it came back
+            # by itself in the last 15 minutes.
+            why = n.get("problem") or reconnected_text(n.get("reconnected_at") or "") or "–"
             rows.append((n["name"], (state, " → ".join(JOB_CLASS_NAMES.get(p, p) for p in n["priorities"]),
                                      self.machine_text(n.get("info") or {}) or "–", why),
                          "muted" if state == "deshabilitado" else "bad" if n.get("problem") else ""))

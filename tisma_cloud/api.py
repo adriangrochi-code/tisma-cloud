@@ -510,6 +510,10 @@ def job_view(job: Job) -> dict[str, Any]:
     }
 
 
+# A node silent longer than this (more than two heartbeats) and then heard again has reconnected [s].
+RECONNECT_GAP_S = 35
+
+
 def node_view(node: Node, running: int = 0, timeout_s: int = 90, twins: bool = False) -> dict[str, Any]:
     from .node_problems import node_problem
 
@@ -521,6 +525,7 @@ def node_view(node: Node, running: int = 0, timeout_s: int = 90, twins: bool = F
         "enabled": node.enabled,
         "info": node.info_dict,
         "last_seen": node.last_seen.isoformat() + "Z" if node.last_seen else None,
+        "reconnected_at": node.reconnected_at.isoformat() + "Z" if node.reconnected_at else None,
         # Seen recently: the node is waiting for jobs or running them (it claims or beats every few seconds).
         "online": online,
         "running": running,
@@ -1035,6 +1040,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(403, "Only for administrators")
         return user
 
+    # The nodes seen since this master started: the first request of each one after a restart of the master is a
+    # reconnection, as is one after a silence.
+    nodes_back: set[int] = set()
+
     def current_node(authorization: Annotated[str | None, Header()] = None) -> Node:
         token = bearer(authorization)
         with db.session() as s:
@@ -1044,7 +1053,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # A disabled node waits (an unknown token makes the machine ask to join again).
             if not node.enabled:
                 raise HTTPException(403, "This node is disabled")
-            node.last_seen = utcnow()
+            now = utcnow()
+            if node.last_seen is not None and (node.id not in nodes_back
+                                               or now - node.last_seen > timedelta(seconds=RECONNECT_GAP_S)):
+                node.reconnected_at = now
+            nodes_back.add(node.id)
+            node.last_seen = now
         if not limiter.allow(f"node:{node.id}", cfg.node_requests_per_minute):
             raise HTTPException(429, "Too many requests", headers={"Retry-After": "10"})
         return node

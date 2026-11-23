@@ -4,7 +4,7 @@ machine (node/connection.py); here, what the master can tell."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from . import __version__
 
@@ -28,3 +28,17 @@ def node_problem(enabled: bool, last_seen: datetime | None, online: bool, now: d
     if version and master_version and version != master_version:
         return f"Tiene la versión {version} y este maestro la {master_version}: actualizalo."
     return ""
+
+
+def reconnected_text(iso: str, now: datetime | None = None) -> str:
+    """«Reconectado hace N s» for a node back by itself in the last 15 minutes (the master's window), or ""."""
+    if not iso:
+        return ""
+    try:
+        when = datetime.fromisoformat(iso.removesuffix("Z"))
+    except ValueError:
+        return ""
+    seconds = int(((now or datetime.now(timezone.utc).replace(tzinfo=None)) - when).total_seconds())
+    if not 0 <= seconds < 15 * 60:
+        return ""
+    return f"Reconectado hace {seconds} s" if seconds < 60 else f"Reconectado hace {seconds // 60} min"

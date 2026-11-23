@@ -254,6 +254,8 @@ class Node(Base):
     # What the node reports about itself (processor, graphics card, memory, slots), JSON.
     info: Mapped[str] = mapped_column(Text, default="{}")
     last_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # When it came back after a silence, or after the master itself started (api.current_node): «reconectado hace…».
+    reconnected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     @property

@@ -210,7 +210,12 @@ def _pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    return True
+    # A process that ended and was not reaped yet (a zombie) still answers: it is not running. Right after a service
+    # was killed, «start» took it for one still running and did not start it.
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return True
 
 
 # How far the start of a process may differ from the one written in tisma-cloud.pid (clock ticks, rounding) [s].
@@ -639,6 +644,8 @@ class Manager:
                 nodes.append({"name": n.name, "priorities": n.priority_list, "enabled": n.enabled, "info": n.info_dict,
                               "online": online,
                               "last_seen": n.last_seen.isoformat(timespec="seconds") if n.last_seen else "",
+                              "reconnected_at": n.reconnected_at.isoformat(timespec="seconds")
+                              if n.reconnected_at else "",
                               "running": running.get(n.id, 0),
                               # Why it does not work, for a person (node_problems.py; the twins are known only by the
                               # master's process, so the window says the rest).
@@ -844,11 +851,37 @@ class Manager:
                 detail = f"En marcha (pid {pid}). {state['message']}"
         return Status(role, running, pid if running else None, healthy, detail)
 
+    def autostart_by_default(self) -> str:
+        """At the first start of this folder, the service is made to start with the machine (the owner, 23-11: a
+        master or a node restarted comes back by itself), unless it was decided before (autostart on or off) or
+        TISMA_NO_AUTOSTART is set (tests, CI). Returns what was done, said for a person, or ""."""
+        if self._settings().get("autostart_decided") or os.environ.get("TISMA_NO_AUTOSTART"):
+            return ""
+        note = ""
+        if not self.autostart_enabled():
+            if os.name != "nt" and not (shutil.which("systemctl") and Path("/run/systemd/system").is_dir()):
+                note = ("Esta máquina no usa systemd: el servicio no arranca solo con ella (en otra: «tisma-cloud "
+                        "autostart on»)")
+            else:
+                try:
+                    self.set_autostart(True)
+                    note = "Inicio con la máquina activado («tisma-cloud autostart off» lo apaga)"
+                except Exception as e:  # noqa: BLE001 (the service starts anyway; said)
+                    note = (f"No se pudo activar el inicio con la máquina ({e}): «tisma-cloud autostart on» "
+                            f"{'como administrador' if os.name == 'nt' else 'con permisos'}")
+        data = self._settings()
+        data["autostart_decided"] = True
+        self._save_settings(data)
+        return note
+
     def start(self, wait_s: float = 20.) -> Status:
         if not self.role():
             raise RuntimeError("Elegí primero el rol: maestro o nodo")
         if self.status().running:
             return self.status()
+        note = self.autostart_by_default()
+        if note:
+            print(note, file=sys.stderr)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         if os.name == "nt" and self.autostart_enabled():
             # The scheduled task runs apart from the session (an SSH session closes its processes when it ends).
@@ -958,6 +991,9 @@ class Manager:
     def set_autostart(self, enabled: bool) -> None:
         """Windows: a scheduled task at the start of the machine (as SYSTEM, no time limit, started again if it fails;
         needs an administrator). Linux: a systemd service (of the system as root, of the user otherwise)."""
+        data = self._settings()
+        data["autostart_decided"] = True
+        self._save_settings(data)
         cmd = run_command(self.home)
         if os.name == "nt":
             if enabled:

@@ -29,6 +29,8 @@ from .runners import RUNNERS, JobCancelled, JobFailed, scan_readiness
 log = logging.getLogger("tisma_cloud.node")
 
 HEARTBEAT_S = 15
+# The first wait before asking the master again after losing it; doubled each time up to 60 s.
+RETRY_FIRST_S = 2.
 # A result is sent again while the master answers these (busy, restarting) or is out of reach, for this long [s].
 RETRY_STATUS = (429, 502, 503, 504, 507)
 RESULT_RETRY_S = 900.
@@ -265,14 +267,15 @@ class Agent:
         return full
 
     def _slot(self, index: int) -> None:
-        backoff = 1.
+        # Lost the master (or not there yet at start): tried again after 2, 4, 8… up to 60 s.
+        backoff = RETRY_FIRST_S
         while not self._stop.is_set():
             if self.disk_full():
                 self._stop.wait(DISK_WAIT_S)
                 continue
             try:
                 job, holds = self.claim_for_slot()
-                backoff = 1.
+                backoff = RETRY_FIRST_S
                 try:
                     if job:
                         self.process(job)
@@ -301,7 +304,10 @@ class Agent:
         self._stop.set()
 
     def _heartbeats(self) -> None:
-        while not self._stop.wait(HEARTBEAT_S):
+        # The first one at once: the master sees the node (and what it does not run any more) as soon as it starts.
+        first = True
+        while first or not self._stop.wait(HEARTBEAT_S):
+            first = False
             try:
                 self.heartbeat()
             except HTTPStatusError as ex:

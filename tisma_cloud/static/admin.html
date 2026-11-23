@@ -322,7 +322,10 @@ function renderNode(node, jobs) {
     : null;
   return el("div", { class: "card" },
     el("h3", {}, node.name, el("span", { class: "pill " + state[0] }, state[1])),
-    el("div", { class: "info" }, facts || "Todavía no informó sus datos", el("br"), `Última señal ${ago(node.last_seen)}`),
+    el("div", { class: "info" }, facts || "Todavía no informó sus datos", el("br"), `Última señal ${ago(node.last_seen)}`,
+      // Back by itself after a restart of the master or of the node, or a cut (the last 15 minutes).
+      node.reconnected_at && Date.now() - Date.parse(node.reconnected_at) < 15 * 60 * 1000
+        ? ` · Reconectado ${ago(node.reconnected_at)}` : ""),
     // Why it does not work, said for a person (node_problems.py on the master): never a bare «Sin señal».
     node.problem ? el("div", { class: "info", style: "color:var(--bad, #c0392b)" }, node.problem) : null,
     scanLine,

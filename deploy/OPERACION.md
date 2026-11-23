@@ -19,7 +19,7 @@ Todas salen del mismo paquete: el artefacto `tisma-cloud-windows` (o `-linux`) d
 tisma-cloud role master            # una vez; en un nodo: role node
 tisma-cloud start                  # arranca el servicio en segundo plano
 tisma-cloud status                 # en marcha o detenido, rol y puerto
-tisma-cloud autostart on           # que arranque solo con la máquina
+tisma-cloud autostart on           # que arranque solo con la máquina (el primer start ya lo activa)
 tisma-cloud firewall on            # solo el maestro, en Windows: el puerto para los nodos de la red local
 tisma-cloud check                  # el Diagnóstico; con --fix arregla lo que se puede
 ```
@@ -169,8 +169,12 @@ trabajos que estaban corriendo vuelven a la cola y los toma un nodo cuando haya 
 
 ### El nodo no vuelve
 
-Después de apagar la PC del nodo de golpe, un corte de luz o de red, el nodo vuelve solo: con «Inicio con la máquina»
-arranca al prender la PC y se reconecta apenas llega al maestro, sin tocar nada. Si no vuelve:
+Después de apagar la PC del nodo de golpe, un corte de luz o de red, o un reinicio del maestro, el nodo vuelve solo:
+arranca con la máquina (el primer `start` de cada carpeta activa «Inicio con la máquina»; `tisma-cloud autostart off`
+lo apaga) y se reconecta apenas llega al maestro, probando de nuevo a los 2, 4, 8… hasta 60 s. El trabajo que
+calculaba vuelve a la cola y lo termina un nodo; si fue el maestro el que se reinició, el nodo lo sigue y lo entrega al
+volver. En el maestro, Nodos dice «Reconectado hace N s» (y `tisma-cloud admin node-list`, «reconnected»). El CI lo
+prueba en cada cambio (`deploy/reconnect_drill.py`). Si no vuelve:
 
 1. **En la PC del nodo**, `tisma-cloud status` dice qué vio el nodo la última vez, y `tisma-cloud check` (o la ventana)
    lo prueba en el momento:

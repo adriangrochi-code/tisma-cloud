@@ -315,7 +315,8 @@ def main(argv: list[str] | None = None) -> int:
             ).all())
             for n in s.execute(select(Node).order_by(Node.name)).scalars():
                 seen = n.last_seen.isoformat(timespec="seconds") if n.last_seen else "never"
-                print(f"{n.name:20} {n.priorities:40} running {running.get(n.id, 0)}  last seen {seen}"
+                back = f"  reconnected {n.reconnected_at.isoformat(timespec='seconds')}" if n.reconnected_at else ""
+                print(f"{n.name:20} {n.priorities:40} running {running.get(n.id, 0)}  last seen {seen}{back}"
                       f"{'' if n.enabled else '  disabled'}")
         elif args.command == "node-del":
             try:

@@ -21,6 +21,8 @@ cmd=${1:?usage: ci_master.sh start|stop PACKAGE_DIR [PORT] [OUT_FILE]}
 pkg=$(cd "${2:?the unpacked tisma-cloud-linux package}" && pwd)
 exe="$pkg/tisma-cloud"
 export TISMA_HOME="$(dirname "$pkg")/ci-master"
+# A CI runner: the service is not made to start with the machine.
+export TISMA_NO_AUTOSTART=1
 mkdir -p "$TISMA_HOME"
 chmod +x "$exe" "$pkg"/tisma-engine/* "$pkg"/tisma-relay/* 2>/dev/null || true
 

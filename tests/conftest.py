@@ -41,6 +41,12 @@ def make_3mf(triangles: int = 12, config: str | None = None, extra: dict[str, st
 
 
 @pytest.fixture(autouse=True)
+def no_autostart(monkeypatch):
+    """A service started by a test is not made to start with the machine running the tests."""
+    monkeypatch.setenv("TISMA_NO_AUTOSTART", "1")
+
+
+@pytest.fixture(autouse=True)
 def fast_passwords(monkeypatch):
     """Passwords hashed with lighter parameters in the tests (the real ones take half a second each);
     test_privacy.py checks the real ones."""

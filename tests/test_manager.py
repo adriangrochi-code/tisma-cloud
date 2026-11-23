@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import socket
 import sys
 from pathlib import Path
@@ -528,3 +529,54 @@ def test_the_diagnosis_says_whether_the_library_over_https_reaches_the_seeder(tm
     answers["https://tismaservidores.net"] = seeder
     assert check(env).ok is True
     assert check({"TISMA_SEED_HTTP": "off"}).ok is None
+
+
+def test_a_folder_is_made_to_start_with_the_machine_at_its_first_start(tmp_path, monkeypatch):
+    """The owner (23-11): a master or a node restarted comes back by itself. The first start of a folder turns on the
+    start with the machine, once: an «autostart off» is kept; without systemd or without rights it is said, and the
+    service starts anyway."""
+    m = Manager(tmp_path)
+    m.set_role("node")
+    calls = []
+    monkeypatch.setattr(Manager, "autostart_enabled", lambda self: False)
+
+    def enable(self, on):
+        calls.append(on)
+        data = self._settings()
+        data["autostart_decided"] = True
+        self._save_settings(data)
+
+    monkeypatch.setattr(Manager, "set_autostart", enable)
+    monkeypatch.setattr(manager_module.shutil, "which", lambda name: "/usr/bin/systemctl")
+    monkeypatch.setattr(manager_module.Path, "is_dir", lambda self: True)
+    # The tests set TISMA_NO_AUTOSTART: nothing happens with it.
+    assert m.autostart_by_default() == "" and calls == []
+    monkeypatch.delenv("TISMA_NO_AUTOSTART")
+    assert m.autostart_by_default().startswith("Inicio con la máquina activado") and calls == [True]
+    assert m.autostart_by_default() == "" and calls == [True]   # once per folder
+
+    # A folder whose owner said «off» before its first start: kept off.
+    other = Manager(tmp_path / "b")
+    other.set_role("master")
+    other.set_autostart(False)
+    assert other.autostart_by_default() == "" and calls == [True, False]
+
+    # Without systemd: said, nothing tried.
+    plain = Manager(tmp_path / "c")
+    plain.set_role("node")
+    monkeypatch.setattr(manager_module.shutil, "which", lambda name: None)
+    if os.name != "nt":
+        assert "no usa systemd" in plain.autostart_by_default()
+        assert calls == [True, False]
+
+    # It fails (no rights): said, and not tried again at every start.
+    failing = Manager(tmp_path / "d")
+    failing.set_role("node")
+    monkeypatch.setattr(manager_module.shutil, "which", lambda name: "/usr/bin/systemctl")
+
+    def refuse(self, on):
+        raise PermissionError("acceso denegado")
+
+    monkeypatch.setattr(Manager, "set_autostart", refuse)
+    assert "No se pudo activar el inicio con la máquina (acceso denegado)" in failing.autostart_by_default()
+    assert failing.autostart_by_default() == ""
