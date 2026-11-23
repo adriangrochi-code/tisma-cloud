@@ -404,10 +404,25 @@ jobs:
           tc logs 15
           if (-not $back) { throw "the master was not started again" }
           & $exe --home $svc check
+          # «Reiniciar» with the task on (the owner, 23-11: errors when it restarts): each time back and answering,
+          # one supervisor only (a second start of the folder does nothing).
+          for ($i = 1; $i -le 3; $i++) {
+            tc restart
+            if (-not (healthy)) { tc logs 40; throw "restart $i: the master does not answer" }
+          }
+          & $exe --home $svc run
+          if ($LASTEXITCODE -ne 0) { throw "a second run of the folder failed ($LASTEXITCODE)" }
+          $log = (& $exe --home $svc logs 5) -join "`n"
+          if ($log -notmatch "ya est") { throw "a second run of the folder did not see the first: $log" }
+          if (-not (healthy)) { throw "a second run of the folder stopped the first" }
           tc stop
           & $exe --home $svc status
           if ($LASTEXITCODE -ne 3) { throw "still running" }
           if (healthy) { throw "the master still answers" }
+          # Stopped stays stopped: the Task Scheduler does not start it again (RestartOnFailure is every minute).
+          Start-Sleep 75
+          & $exe --home $svc status
+          if ($LASTEXITCODE -ne 3 -or (healthy)) { tc logs 30; throw "it came back by itself after stop" }
           tc autostart off
           tc firewall off
           if (Get-NetFirewallRule -DisplayName "Tisma Cloud" -ErrorAction SilentlyContinue) { throw "rule left" }

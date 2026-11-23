@@ -606,3 +606,95 @@ def test_the_start_with_the_machine_of_another_folder_is_not_this_one(tmp_path, 
     note = b.autostart_by_default()
     assert "ya es de otra carpeta" in note and str(a.home) in note
     assert b.autostart_by_default() == ""   # said once
+
+
+def test_a_second_start_of_the_same_folder_does_nothing(tmp_path, monkeypatch, capsys):
+    """The task at boot and a start by hand, or two clicks: a second supervisor would run a second master on the same
+    port (failing and started again forever) and a twin of the node. It sees the first one running and ends."""
+    import subprocess
+    import time
+
+    m = Manager(tmp_path)
+    m.set_role("node")
+    first = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        time.sleep(0.5)
+        m.pid_path.write_text(f"{first.pid}\n{manager_module._process_start(first.pid):.2f}\n")
+        # As in a console (its output not sent to the log: the test's own stdout stays).
+        monkeypatch.setattr(manager_module.system, "is_terminal", lambda stream: True)
+        assert m.run() == 0
+        assert m._read_pid() == first.pid   # its pid file kept
+        assert f"ya está en marcha (pid {first.pid})" in capsys.readouterr().out
+    finally:
+        first.kill()
+        first.wait()
+
+
+def test_a_start_that_fails_says_why(tmp_path, monkeypatch):
+    """«Iniciar» or «Reiniciar» that ends in nothing says the reason the log wrote at that start, not a bare
+    «Detenido» (nor an older line of the log)."""
+    m = Manager(tmp_path)
+    m.set_role("master")
+    m.log_path.parent.mkdir(parents=True, exist_ok=True)
+    m.log_path.write_text("[tisma-cloud] una línea vieja\nINFO:     Finished server process [1]\n", encoding="utf-8")
+
+    class Fails:
+        def __init__(self, *args, **kwargs):
+            with open(m.log_path, "a", encoding="utf-8") as log:
+                log.write("INFO:     Started server process [2]\n"
+                          "The key in storage/data.key is not the one this database was encrypted with\n"
+                          "INFO:     Waiting for application shutdown.\n")
+
+    monkeypatch.setattr(manager_module.subprocess, "Popen", Fails)
+    monkeypatch.setattr(Manager, "autostart_enabled", lambda self: False)
+    st = m.start(wait_s=0.5)
+    assert not st.running
+    assert st.detail == "No arrancó: The key in storage/data.key is not the one this database was encrypted with"
+    # Nothing new in the log: it points to it.
+    monkeypatch.setattr(manager_module.subprocess, "Popen", lambda *a, **k: None)
+    assert m.start(wait_s=0.3).detail == "No arrancó (ver «tisma-cloud logs»)"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the Task Scheduler of Windows")
+def test_windows_start_through_the_task_ends_a_stale_run_and_falls_back_without_rights(tmp_path, monkeypatch):
+    """Right after a stop or a cut the Task Scheduler may still count the task as running: with IgnoreNew a /Run is
+    ignored and «Reiniciar» left the service stopped. Without rights over the task (a window not as administrator)
+    the service starts as this user instead of failing."""
+    m = Manager(tmp_path)
+    m.set_role("node")
+    calls = []
+    monkeypatch.setattr(Manager, "autostart_enabled", lambda self: True)
+    monkeypatch.setattr(manager_module.system, "task_running", lambda name: True)
+    monkeypatch.setattr(manager_module.system, "end_task", lambda name: calls.append("end"))
+
+    def denied(name):
+        calls.append("run")
+        raise RuntimeError("Acceso denegado.")
+
+    monkeypatch.setattr(manager_module.system, "run_task", denied)
+    monkeypatch.setattr(manager_module.subprocess, "Popen", lambda *a, **k: calls.append("direct"))
+    m.start(wait_s=0.3)
+    assert calls == ["end", "run", "direct"]
+
+
+def test_a_master_whose_port_is_taken_says_so(tmp_path):
+    """The port of the master used by another program (an older Tisma Cloud left running): the supervisor starts the
+    master again and again; the service said «Arrancando» for ever. It says why, until a start goes well."""
+    m = Manager(tmp_path)
+    m.set_role("master")
+    m.set_setting("port", "18981")
+    m.log_path.parent.mkdir(parents=True, exist_ok=True)
+    m.log_path.write_text(
+        "INFO:     Started server process [9]\n"
+        "ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 18981): [errno 98] address "
+        "already in use\n"
+        "INFO:     Waiting for application shutdown.\n"
+        "[tisma-cloud] 2026-11-23 18:59:16: el servicio terminó con el código 3; arranca de nuevo en 20 s\n",
+        encoding="utf-8")
+    assert m.master_failing().startswith("el puerto 18981 está ocupado por otro programa")
+    with open(m.log_path, "a", encoding="utf-8") as log:
+        log.write("INFO:     Started server process [10]\nINFO:     Application startup complete.\n")
+    assert m.master_failing() == ""
+    with open(m.log_path, "a", encoding="utf-8") as log:
+        log.write("ERROR:    Traceback of something else\n")
+    assert m.master_failing() == "Traceback of something else"

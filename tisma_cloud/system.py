@@ -216,6 +216,13 @@ def end_task(name: str) -> None:
     _run(["schtasks", "/End", "/TN", name])
 
 
+def task_running(name: str) -> bool:
+    """The Task Scheduler counts an instance of the task as running. Its state from PowerShell, not the text of
+    schtasks /Query (translated with the language of Windows)."""
+    r = _powershell(f"(Get-ScheduledTask -TaskName '{name}' -ErrorAction SilentlyContinue).State")
+    return r.returncode == 0 and r.stdout.strip() == "Running"
+
+
 # ---- the Windows firewall
 def firewall_port() -> int | None:
     """The TCP port opened by the rule of Tisma Cloud in the Windows firewall, or None (no rule, or not Windows)."""

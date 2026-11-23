@@ -28,7 +28,7 @@ import sys
 import time
 import tomllib
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import system
@@ -844,6 +844,10 @@ class Manager:
         elif role == "master":
             detail = (f"En marcha (pid {pid}), puerto {self.port()}" if healthy else
                       f"Arrancando (pid {pid}), puerto {self.port()}")
+            if not healthy:
+                problem = self.master_failing()
+                if problem:
+                    detail = f"No responde (pid {pid}): {problem}"
         else:
             detail = f"En marcha (pid {pid}), maestro {self.read_node().get('master_url')}"
             state = self.node_connection()
@@ -889,10 +893,21 @@ class Manager:
         if note:
             print(note, file=sys.stderr)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_from = self.log_path.stat().st_size if self.log_path.is_file() else 0
+        direct = True
         if os.name == "nt" and self.autostart_enabled():
             # The scheduled task runs apart from the session (an SSH session closes its processes when it ends).
-            system.run_task(TASK_NAME)
-        else:
+            # Right after a stop or a cut the Task Scheduler may still count its last run as running: with
+            # IgnoreNew it would ignore this one and nothing would start («Reiniciar» left it stopped).
+            if system.task_running(TASK_NAME):
+                system.end_task(TASK_NAME)
+            try:
+                system.run_task(TASK_NAME)
+                direct = False
+            except RuntimeError as e:
+                # No rights over the task (a window not run as administrator): started here instead, as this user.
+                print(f"La tarea de Windows no arrancó ({e}): se inicia como este usuario", file=sys.stderr)
+        if direct:
             kwargs: dict = {"cwd": str(self.home), "stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                             "stderr": subprocess.DEVNULL, "close_fds": True}
             env = system.own_env(TISMA_HOME=str(self.home))
@@ -910,7 +925,40 @@ class Manager:
             if st.running and (st.role != "master" or st.healthy):
                 return st
             time.sleep(0.3)
-        return self.status()
+        st = self.status()
+        if not st.running:
+            # Never a bare «Detenido» after «Iniciar»: the last line its log wrote says why.
+            why = self.start_failure(log_from)
+            return replace(st, detail="No arrancó" + (f": {why}" if why else " (ver «tisma-cloud logs»)"))
+        return st
+
+    def master_failing(self) -> str:
+        """Why the master of a running service does not answer, when its last start failed (the supervisor starts it
+        again and again): said for a person, or "" while it is only starting."""
+        lines = self.logs(30)
+        for i in range(len(lines) - 1, -1, -1):
+            if "Uvicorn running on" in lines[i] or "Application startup complete" in lines[i]:
+                return ""   # its last start went well
+            if lines[i].startswith("ERROR:"):
+                text = lines[i].removeprefix("ERROR:").strip()
+                if "address already in use" in text.lower() or "10048" in text:
+                    return (f"el puerto {self.port()} está ocupado por otro programa (¿otro Tisma Cloud que quedó "
+                            f"en marcha?). Cerralo, o cambiá el puerto: «tisma-cloud config port N»")
+                return text[:300]
+        return ""
+
+    def start_failure(self, log_from: int = 0) -> str:
+        """The last line the log wrote since log_from (its size before the start) that tells why the service ended
+        or failed (an error, a refusal), or ""."""
+        if not self.log_path.is_file():
+            return ""
+        with open(self.log_path, "rb") as f:
+            f.seek(max(log_from, f.seek(0, os.SEEK_END) - 50_000))
+            lines = f.read().decode("utf-8", errors="replace").splitlines()
+        for line in reversed(lines):
+            if line.strip() and not line.startswith((" ", "INFO:", "Traceback", "^")):
+                return line.strip()[:300]
+        return ""
 
     def stop(self, wait_s: float = 15.) -> Status:
         pid = self._read_pid()
@@ -960,6 +1008,9 @@ class Manager:
         deadline = time.monotonic() + 5.
         while _pid_alive(pid) and time.monotonic() < deadline:
             time.sleep(0.2)
+        if os.name == "nt" and self.autostart_enabled() and system.task_running(TASK_NAME):
+            # Its run is ended too: a stopped service is not one the Task Scheduler counts as running (or failed).
+            system.end_task(TASK_NAME)
         self.pid_path.unlink(missing_ok=True)
         return self.status()
 
@@ -1455,6 +1506,12 @@ class Manager:
             os.dup2(log.fileno(), 2)
             sys.stdout = sys.stderr = log
         if not child:
+            other = self._read_pid()
+            if other is not None and other != os.getpid() and _pid_alive(other):
+                # A second start of the same folder (the task at boot and a start by hand, two clicks): it would run
+                # a second master on the same port, failing and started again forever, and a twin of the node.
+                print(f"[tisma-cloud] ya está en marcha (pid {other}): este arranque no hace nada", flush=True)
+                return 0
             self._write_pid()
             try:
                 return self._supervise()
