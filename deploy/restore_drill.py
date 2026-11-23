@@ -30,6 +30,8 @@ import httpx
 def tc(exe: str, home: Path, *args: str, check: bool = True) -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("TISMA_")}
     env["TISMA_HOME"] = str(home)
+    # Two masters of one machine: neither is made to start with it (the drill must not leave a scheduled task).
+    env["TISMA_NO_AUTOSTART"] = "1"
     run = subprocess.run([exe, *args], capture_output=True, text=True, env=env, cwd=home, timeout=600)
     if check and run.returncode != 0:
         raise RuntimeError(f"tisma-cloud {' '.join(args)}: {run.returncode}\n{run.stdout}\n{run.stderr}")

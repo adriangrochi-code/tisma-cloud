@@ -18,6 +18,7 @@ the master of the same machine.
 from __future__ import annotations
 
 import contextlib
+import html
 import os
 import re
 import shutil
@@ -858,7 +859,12 @@ class Manager:
         if self._settings().get("autostart_decided") or os.environ.get("TISMA_NO_AUTOSTART"):
             return ""
         note = ""
-        if not self.autostart_enabled():
+        other = self.autostart_folder()
+        if other is not None and not self._same_folder(other):
+            # One per machine: another folder has it; it is not taken from that one.
+            note = (f"El inicio con la máquina ya es de otra carpeta ({other}): esta no arranca sola («tisma-cloud "
+                    f"autostart on» se lo pasa a esta)")
+        elif not self.autostart_enabled():
             if os.name != "nt" and not (shutil.which("systemctl") and Path("/run/systemd/system").is_dir()):
                 note = ("Esta máquina no usa systemd: el servicio no arranca solo con ella (en otra: «tisma-cloud "
                         "autostart on»)")
@@ -975,11 +981,30 @@ class Manager:
         folder = Path("/etc/systemd/system") if system else Path.home() / ".config" / "systemd" / "user"
         return folder / f"{SERVICE_NAME}.service", ([] if system else ["--user"])
 
-    def autostart_enabled(self) -> bool:
+    def autostart_folder(self) -> Path | None:
+        """The folder the machine's scheduled task or systemd unit starts (there is one per machine), or None when
+        there is none. A task made by an older version without its folder counts as this folder's."""
         if os.name == "nt":
-            return system.task_definition(TASK_NAME) is not None
+            xml = system.task_definition(TASK_NAME)
+            if xml is None:
+                return None
+            found = re.search(r"<WorkingDirectory>(.*?)</WorkingDirectory>", xml, re.S)
+            return Path(html.unescape(found.group(1)).strip()) if found and found.group(1).strip() else self.home
         unit, _ = self._systemd_unit()
-        return unit.is_file()
+        if not unit.is_file():
+            return None
+        found = re.search(r"^WorkingDirectory=(.+)$", unit.read_text(encoding="utf-8", errors="replace"), re.M)
+        return Path(found.group(1).strip()) if found else self.home
+
+    def _same_folder(self, folder: Path) -> bool:
+        a, b = os.path.normcase(os.path.abspath(folder)), os.path.normcase(os.path.abspath(self.home))
+        return a.rstrip("\\/") == b.rstrip("\\/")
+
+    def autostart_enabled(self) -> bool:
+        """This folder starts with the machine (the task or unit of another folder of the same machine does not
+        count: «start» here must not start that one)."""
+        folder = self.autostart_folder()
+        return folder is not None and self._same_folder(folder)
 
     def autostart_problems(self) -> list[str]:
         """Windows: what is wrong in the scheduled task (one made by an older version); empty when it is right."""

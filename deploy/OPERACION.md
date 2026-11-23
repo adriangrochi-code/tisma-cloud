@@ -171,7 +171,7 @@ trabajos que estaban corriendo vuelven a la cola y los toma un nodo cuando haya 
 
 Después de apagar la PC del nodo de golpe, un corte de luz o de red, o un reinicio del maestro, el nodo vuelve solo:
 arranca con la máquina (el primer `start` de cada carpeta activa «Inicio con la máquina»; `tisma-cloud autostart off`
-lo apaga) y se reconecta apenas llega al maestro, probando de nuevo a los 2, 4, 8… hasta 60 s. El trabajo que
+lo apaga; es uno por máquina: si otra carpeta de la misma PC ya lo tiene, esta no se lo quita y lo dice, y `tisma-cloud autostart on` en esta se lo pasa) y se reconecta apenas llega al maestro, probando de nuevo a los 2, 4, 8… hasta 60 s. El trabajo que
 calculaba vuelve a la cola y lo termina un nodo; si fue el maestro el que se reinició, el nodo lo sigue y lo entrega al
 volver. En el maestro, Nodos dice «Reconectado hace N s» (y `tisma-cloud admin node-list`, «reconnected»). El CI lo
 prueba en cada cambio (`deploy/reconnect_drill.py`). Si no vuelve:

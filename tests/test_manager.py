@@ -12,6 +12,7 @@ import pytest
 
 from tisma_cloud import cli
 from tisma_cloud import manager as manager_module
+from tisma_cloud import system
 from tisma_cloud.manager import Manager
 from tisma_cloud.node.config import NodeConfig
 
@@ -539,6 +540,7 @@ def test_a_folder_is_made_to_start_with_the_machine_at_its_first_start(tmp_path,
     m.set_role("node")
     calls = []
     monkeypatch.setattr(Manager, "autostart_enabled", lambda self: False)
+    monkeypatch.setattr(Manager, "autostart_folder", lambda self: None)
 
     def enable(self, on):
         calls.append(on)
@@ -580,3 +582,27 @@ def test_a_folder_is_made_to_start_with_the_machine_at_its_first_start(tmp_path,
     monkeypatch.setattr(Manager, "set_autostart", refuse)
     assert "No se pudo activar el inicio con la máquina (acceso denegado)" in failing.autostart_by_default()
     assert failing.autostart_by_default() == ""
+
+
+def test_the_start_with_the_machine_of_another_folder_is_not_this_one(tmp_path, monkeypatch):
+    """There is one scheduled task (one systemd unit) per machine. A second folder of the same machine (the restore
+    drill's machine B, or a master and a node tried on one PC) must not see it as its own: its «start» ran the task,
+    which starts the first folder, and the second never started (Windows CI, 23-11)."""
+    a, b = Manager(tmp_path / "a"), Manager(tmp_path / "b")
+    for m in (a, b):
+        m.set_role("master")
+    if os.name == "nt":
+        xml = system.task_xml("tisma-cloud.exe", f"--home {a.home} run", str(a.home), "Tisma Cloud")
+        monkeypatch.setattr(manager_module.system, "task_definition", lambda name: xml)
+    else:
+        unit = tmp_path / "systemd" / "tisma-cloud.service"
+        unit.parent.mkdir()
+        unit.write_text(f"[Service]\nEnvironment=TISMA_HOME={a.home}\nWorkingDirectory={a.home}\n", encoding="utf-8")
+        monkeypatch.setattr(Manager, "_systemd_unit", lambda self: (unit, ["--user"]))
+    assert a.autostart_enabled() and not b.autostart_enabled()
+    assert b.autostart_folder() == a.home
+    monkeypatch.delenv("TISMA_NO_AUTOSTART")
+    monkeypatch.setattr(Manager, "set_autostart", lambda self, on: pytest.fail("took the other folder's"))
+    note = b.autostart_by_default()
+    assert "ya es de otra carpeta" in note and str(a.home) in note
+    assert b.autostart_by_default() == ""   # said once
