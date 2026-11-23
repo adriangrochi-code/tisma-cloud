@@ -35,6 +35,26 @@ def test_sanitize_copies_the_project(tmp_path):
         assert {n: a.read(n) for n in a.namelist()} == {n: b.read(n) for n in b.namelist()}
 
 
+def test_sanitize_does_not_hold_a_part_in_memory(tmp_path):
+    """A project of a few MB can hold a part of gigabytes (the master accepts up to 1000 times its compressed size):
+    the copy goes in small pieces, not the whole part in the node's memory at once."""
+    import tracemalloc
+
+    src = tmp_path / "big.3mf"
+    with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("3D/3dmodel.model", b"\0" * (64 << 20))
+    dst = tmp_path / "out.3mf"
+    tracemalloc.start()
+    try:
+        sanitize_project(src, dst)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 16 << 20, f"{peak >> 20} MB held at once"
+    with zipfile.ZipFile(dst) as b:
+        assert b.getinfo("3D/3dmodel.model").file_size == 64 << 20
+
+
 def test_sanitize_refuses(tmp_path, monkeypatch):
     from tisma_cloud.node import runners
 

@@ -64,7 +64,12 @@ def sanitize_project(src: Path, dst: Path) -> None:
         with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out:
             for info in infos:
                 if not info.is_dir():
-                    out.writestr(info.filename, archive.read(info), compress_type=zipfile.ZIP_DEFLATED)
+                    # In pieces: a part of gigabytes (a project of a few MB that compresses 1000 times) never sits in
+                    # memory whole.
+                    item = zipfile.ZipInfo(info.filename, date_time=time.localtime()[:6])
+                    item.compress_type = zipfile.ZIP_DEFLATED
+                    with archive.open(info) as part, out.open(item, "w", force_zip64=info.file_size > 1 << 30) as copy:
+                        shutil.copyfileobj(part, copy, 1 << 20)
 
 
 def _run(cmd: list[str], cfg: NodeConfig, progress_re: re.Pattern, progress: Progress, cancelled: Cancelled,
