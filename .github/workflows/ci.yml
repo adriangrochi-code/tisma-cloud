@@ -408,7 +408,7 @@ jobs:
           # one supervisor only (a second start of the folder does nothing).
           for ($i = 1; $i -le 3; $i++) {
             tc restart
-            if (-not (healthy)) { tc logs 40; throw "restart $i: the master does not answer" }
+            if (-not (healthy)) { tc logs 40; throw "restart ${i}: the master does not answer" }
           }
           # The log (the owner, 23-11): each request with who asked, the start by the task, the master's own lines,
           # all with the UTC date and the component.
