@@ -70,7 +70,9 @@ LOGIN_FAILURES_PER_HOUR = 20
 CODES_PER_DAY = 10
 # A password chosen when registering is kept when the address is confirmed within this time; later, the one who
 # confirms may not be who chose it (someone registered the address of another person first).
-REGISTRATION_PASSWORD_TRUST = timedelta(hours=1)
+REGISTRATION_PASSWORD_TRUST = codes.VALIDITY
+# Wrong current passwords an account may give an hour when changing its password (a stolen session guessing it).
+PASSWORD_FAILURES_PER_HOUR = 5
 # Free space a scan leaves on the master's disk once it is there (results, the database, the copies) [bytes].
 SCAN_ROOM_LEFT = 2 << 30
 # The library (library.py): models published and reports sent by one account in a day.
@@ -966,9 +968,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return peer
         for k, v in scope.get("headers", []):
             if k == ip_header:
-                first = v.decode("latin-1").split(",")[0].strip()
-                if first:
-                    return first
+                # The LAST entry: the one the proxy itself added. A list is what Cloudflare makes of an X-Forwarded-For
+                # the user sent («their text, the real address»): its first entry is the user's own text, and with
+                # the default setting behind a Cloudflare Tunnel «192.168.1.5» there passed as the local network and
+                # reached the administration. Caddy replaces the header, so for it the one entry is the same.
+                last = v.decode("latin-1").split(",")[-1].strip()
+                if last:
+                    return last
         return peer
 
     def client_key(request: Request) -> str:
@@ -1781,12 +1787,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """A new password, knowing the current one; the other devices are logged out."""
         if not limiter.allow(f"password:{user.id}", cfg.login_per_minute):
             raise HTTPException(429, "Too many attempts: wait a minute", headers={"Retry-After": "60"})
+        # A stolen session guessing the password: at most PASSWORD_FAILURES_PER_HOUR wrong ones an hour.
+        if services.hourly.used(f"password-fail:{user.id}") >= PASSWORD_FAILURES_PER_HOUR:
+            raise HTTPException(429, "Too many wrong passwords: try again in an hour", headers={"Retry-After": "3600"})
         with db.session() as s:
             u = s.get(User, user.id)
             if not u.password_hash:
                 raise HTTPException(409, "The account has no password: choose one with \"Forgot my password\"")
             ok = verify_password(body.current_password, u.password_hash)
         if not ok:
+            services.hourly.allow(f"password-fail:{user.id}", PASSWORD_FAILURES_PER_HOUR + 1)
             raise HTTPException(403, "Wrong password")
         new_hash = hash_password(body.new_password)
         with db.session() as s:
@@ -1973,8 +1983,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Hashed in both cases, so that the time does not tell either.
         password_hash = hash_password(body.password)
         with db.session() as s:
-            if s.execute(select(User.id).where(User.email_index == crypto.index(email))).first():
+            existing = s.execute(select(User).where(User.email_index == crypto.index(email))).scalar_one_or_none()
+            if existing is not None:
                 code = None
+                if not existing.email_verified:
+                    # Two registrations of an address nobody confirmed: two people chose a password (or a Google
+                    # account), and the one who confirms by the code may not be who chose the kept one («pre-account
+                    # hijacking»). Neither is kept: the owner of the address opens the account with the code and
+                    # chooses a password with "Forgot my password".
+                    existing.password_hash = ""
+                    existing.google_sub = None
             else:
                 code = new_account(s, email, body.plan, password_hash)
         if code is None:
@@ -2413,7 +2431,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True}
 
     if provider is not None and provider.name == "test":
-        @app.get("/billing/test/{payment_id}", response_class=HTMLResponse, include_in_schema=False)
+        # Only from the local network: left on in production by mistake, anyone from internet would approve their
+        # own payment. A tester on the local network still tries the whole flow.
+        log.warning("TISMA_BILLING_PROVIDER=test: payments are approved by hand from the local network; never in "
+                    "production")
+
+        @app.get("/billing/test/{payment_id}", response_class=HTMLResponse, include_in_schema=False,
+                 dependencies=[Depends(local_only)])
         def test_checkout(payment_id: str) -> HTMLResponse:
             with db.session() as s:
                 p = s.get(Payment, payment_id)
@@ -2428,7 +2452,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return HTMLResponse(page, headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
                                                                            "form-action 'self'"})
 
-        @app.post("/billing/test/{payment_id}/{status}", include_in_schema=False)
+        @app.post("/billing/test/{payment_id}/{status}", include_in_schema=False, dependencies=[Depends(local_only)])
         def test_pay(payment_id: str, status: str) -> Response:
             if status not in ("approved", "rejected"):
                 raise HTTPException(404, "Not Found")

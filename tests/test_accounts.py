@@ -314,3 +314,39 @@ def test_a_confirmed_google_link_survives_a_new_password(gweb):
     assert r.status_code == 200
     assert gweb.post("/v1/auth/google", json={"id_token": google_token("pepe@correo.uy", sub="g-pepe")}
                      ).status_code == 200
+
+
+def test_a_second_registration_of_an_unconfirmed_address_keeps_no_password(web):
+    """The hour the first fix left open: someone registers the victim's address minutes before the victim does. A
+    second registration of an address nobody confirmed drops the password chosen before (and any Google link): the
+    victim, confirming by the code, opens the account and chooses a password; the attacker's never works."""
+    services = web.app.state.services
+    web.post("/v1/auth/register", json={"email": "rapida@correo.uy", "password": "clave del atacante"})
+    services.limiter._hits.clear()
+    web.post("/v1/auth/register", json={"email": "rapida@correo.uy", "password": "clave de la victima"})
+    services.limiter._hits.clear()
+    assert web.post("/v1/auth/resend", json={"email": "rapida@correo.uy"}).status_code == 200
+    r = web.post("/v1/auth/verify", json={"email": "rapida@correo.uy", "code": code_of(web, "rapida@correo.uy",
+                                                                                       "confirmar")})
+    assert r.status_code == 200
+    for password in ("clave del atacante", "clave de la victima"):
+        assert web.post("/v1/auth/login", json={"email": "rapida@correo.uy", "password": password}).status_code == 401
+    assert web.get("/v1/me", headers={"Authorization": f"Bearer {r.json()['token']}"}).json()["has_password"] is False
+
+
+def test_a_stolen_session_cannot_keep_guessing_the_password(web):
+    """With a stolen session, /v1/me/password let 10 guesses of the current password a minute. After 5 wrong ones in
+    an hour it refuses, the right one included, until the hour passes."""
+    services = web.app.state.services
+    web.post("/v1/auth/register", json={"email": "robada@correo.uy", "password": "la clave correcta"})
+    token = web.post("/v1/auth/verify", json={"email": "robada@correo.uy",
+                                              "code": code_of(web, "robada@correo.uy")}).json()["token"]
+    h = {"Authorization": f"Bearer {token}"}
+    for i in range(5):
+        r = web.post("/v1/me/password", headers=h, json={"current_password": f"intento {i}",
+                                                         "new_password": "otra clave larga"})
+        assert r.status_code == 403
+    services.limiter._hits.clear()
+    r = web.post("/v1/me/password", headers=h, json={"current_password": "la clave correcta",
+                                                     "new_password": "otra clave larga"})
+    assert r.status_code == 429 and r.headers["retry-after"] == "3600"

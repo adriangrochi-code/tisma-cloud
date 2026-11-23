@@ -65,6 +65,20 @@ def test_register_and_plans(shop):
     assert shop.get("/cuenta").status_code == 200
 
 
+def lan(shop) -> TestClient:
+    """The same master seen from the local network: the test provider's pages answer only there."""
+    return TestClient(shop.app, client=("192.168.1.10", 50000))
+
+
+def test_the_test_provider_pages_do_not_exist_from_internet(shop):
+    """TISMA_BILLING_PROVIDER=test left on in production: from internet anyone approved their own payment."""
+    user = register(shop)
+    pid = shop.post("/v1/billing/checkout", headers=user, json={"plan": "pro"}).json()["payment"]["id"]
+    assert shop.get(f"/billing/test/{pid}").status_code == 404
+    assert shop.post(f"/billing/test/{pid}/approved", follow_redirects=False).status_code == 404
+    assert shop.get("/v1/me", headers=user).json()["plan"] != "pro"
+
+
 def test_payment_with_the_test_provider(shop):
     user = register(shop)
     r = shop.post("/v1/billing/checkout", headers=user, json={"plan": "pro"})
@@ -72,14 +86,14 @@ def test_payment_with_the_test_provider(shop):
     url, pid = r.json()["url"], r.json()["payment"]["id"]
     assert url == f"https://tismaservidores.net/billing/test/{pid}"
     assert r.json()["payment"]["amount_cents"] == 2500                     # the price of the plan, set by the master
-    assert "USD 25.00" in shop.get(f"/billing/test/{pid}").text
-    r = shop.post(f"/billing/test/{pid}/approved", follow_redirects=False)
+    assert "USD 25.00" in lan(shop).get(f"/billing/test/{pid}").text
+    r = lan(shop).post(f"/billing/test/{pid}/approved", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/cuenta?pago=approved"
     me = shop.get("/v1/me", headers=user).json()
     assert me["paid"] and me["plan"] == "pro"
     until = me["paid_until"]
     # A notice applied twice does not pay twice.
-    shop.post(f"/billing/test/{pid}/approved", follow_redirects=False)
+    lan(shop).post(f"/billing/test/{pid}/approved", follow_redirects=False)
     assert shop.get("/v1/me", headers=user).json()["paid_until"] == until
     pays = shop.get("/v1/billing/payments", headers=user).json()["payments"]
     assert [(p["status"], p["provider"], p["amount_cents"]) for p in pays] == [("approved", "test", 2500)]
@@ -88,7 +102,7 @@ def test_payment_with_the_test_provider(shop):
     assert r.status_code == 201
     # A second month starts when the first ends.
     pid2 = shop.post("/v1/billing/checkout", headers=user, json={"plan": "pro"}).json()["payment"]["id"]
-    shop.post(f"/billing/test/{pid2}/approved", follow_redirects=False)
+    lan(shop).post(f"/billing/test/{pid2}/approved", follow_redirects=False)
     db = shop.app.state.services.db
     with db.session() as s:
         u = s.query(User).filter_by(email_index=crypto.index("ana@correo.com")).one()
@@ -98,7 +112,7 @@ def test_payment_with_the_test_provider(shop):
 def test_rejected_and_bad_notices(shop):
     user = register(shop)
     pid = shop.post("/v1/billing/checkout", headers=user, json={"plan": "basico"}).json()["payment"]["id"]
-    shop.post(f"/billing/test/{pid}/rejected", follow_redirects=False)
+    lan(shop).post(f"/billing/test/{pid}/rejected", follow_redirects=False)
     assert shop.get("/v1/me", headers=user).json()["paid"] is False
     assert shop.post("/v1/billing/checkout", headers=user, json={"plan": "interno"}).status_code == 422
     assert shop.post("/v1/billing/checkout", json={"plan": "basico"}).status_code == 401
@@ -156,14 +170,14 @@ def test_remote_printers_plan(shop):
     r = shop.post("/v1/billing/checkout", headers=user, json={"plan": "remoto", "extra_printers": 2})
     assert r.status_code == 200 and r.json()["payment"]["amount_cents"] == 400
     assert r.json()["payment"]["extra_printers"] == 2
-    shop.post(f"/billing/test/{r.json()['payment']['id']}/approved", follow_redirects=False)
+    lan(shop).post(f"/billing/test/{r.json()['payment']['id']}/approved", follow_redirects=False)
     me = shop.get("/v1/me", headers=user).json()
     assert me["remote_printers"] == 5 and me["extra_printers"] == 2 and me["extra_printer_cents"] == 100
     assert not any(p["locked"] for p in shop.get("/v1/remote/printers", headers=user).json()["bridges"][0]["printers"])
     assert shop.post("/v1/remote/bridges/casa/printers/p4/pause", headers=user).status_code == 201
     # The next month without them: the first three printers only.
     pid = shop.post("/v1/billing/checkout", headers=user, json={"plan": "remoto"}).json()["payment"]["id"]
-    shop.post(f"/billing/test/{pid}/approved", follow_redirects=False)
+    lan(shop).post(f"/billing/test/{pid}/approved", follow_redirects=False)
     locked = [p["locked"] for p in shop.get("/v1/remote/printers", headers=user).json()["bridges"][0]["printers"]]
     assert locked == [False, False, False, True, True]
     r = shop.post("/v1/remote/bridges/casa/printers/p4/pause", headers=user)

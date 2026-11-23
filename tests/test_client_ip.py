@@ -73,3 +73,15 @@ def test_the_api_documentation_is_only_for_the_local_network(settings):
         assert lan.get("/openapi.json").json()["info"]["title"] == "Tisma Cloud"
         assert "swagger" in lan.get("/docs").text.lower()
         assert lan.get("/redoc").status_code == 404
+
+
+def test_a_tunnel_left_with_the_default_header_cannot_be_fooled_either(settings):
+    """Behind a Cloudflare Tunnel without TISMA_CLIENT_IP_HEADER=cf-connecting-ip (the default x-forwarded-for):
+    Cloudflare appends the real address to the X-Forwarded-For the user wrote. Its first entry was taken, so a user
+    from internet writing «192.168.1.5» reached the administration. The last entry, Cloudflare's, is taken now."""
+    with TestClient(new_app(settings), client=("127.0.0.1", 50000)) as c:
+        f = Factory(c)
+        admin = f.user("root@x.com", admin=True)
+        forged = {**admin, "x-forwarded-for": "192.168.1.5, 203.0.113.9", "cf-connecting-ip": "203.0.113.9"}
+        assert _admin_status(c, forged) == 404
+        assert _admin_status(c, {**admin, "x-forwarded-for": "10.0.0.8, 192.168.1.5"}) == 200
