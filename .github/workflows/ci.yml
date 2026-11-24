@@ -167,25 +167,31 @@ jobs:
         run: |
           set -e
           rm -rf engine-download dist/tisma-engine
-          if gh release download nightly -R "$ENGINE_REPO" -p "tisma-engine-nightly-*-${{ matrix.name }}-x64.zip" -D engine-download; then
+          # The package's zip by its new name (tisma-engine-<v>-<os>.zip, 24-11) or its old one (...-<os>-x64.zip);
+          # never the installer (.exe) nor the Android app (.apk) of the same release.
+          if gh release download nightly -R "$ENGINE_REPO" -p "tisma-engine-*-${{ matrix.name }}.zip" \
+               -p "tisma-engine-nightly-*-${{ matrix.name }}-x64.zip" -D engine-download; then
             gh release view nightly -R "$ENGINE_REPO" --json name,body -q '.name + "\n" + .body' > engine-source.txt
           else
             # No nightly release (publishing it can fail): the newest package of the engine's nightly runs (workflow
             # nightly.yml), an artifact named by its system (linux-x64, windows-x64) that holds the package's zip.
             # A nightly run inside its 20 h window ends well without building one, so the runs are looked through,
             # newest first.
+            # Its artifact is named "<os>-x64" (old) or "<os>" (new).
             found_run=""
+            artifact=""
             for run in $(gh run list -R "$ENGINE_REPO" --workflow nightly.yml --status success --limit 20 \
                          --json databaseId -q '.[].databaseId'); do
-              if gh api "repos/$ENGINE_REPO/actions/runs/$run/artifacts" \
-                   --jq '.artifacts[] | select(.expired | not) | .name' | grep -qx "${{ matrix.name }}-x64"; then
+              artifact=$(gh api "repos/$ENGINE_REPO/actions/runs/$run/artifacts" \
+                   --jq '.artifacts[] | select(.expired | not) | .name' | grep -xE "${{ matrix.name }}(-x64)?" | head -n 1 || true)
+              if [ -n "$artifact" ]; then
                 found_run=$run; break
               fi
             done
             [ -n "$found_run" ] || { echo "no nightly release and no package of a nightly run of tisma-engine"; exit 1; }
             info=$(gh run view "$found_run" -R "$ENGINE_REPO" --json headSha,createdAt -q '"\(.headSha) \(.createdAt)"')
             echo "::warning::tisma-engine has no nightly release: the package of its nightly run $found_run ($info)"
-            gh run download "$found_run" -R "$ENGINE_REPO" -n "${{ matrix.name }}-x64" -D engine-download
+            gh run download "$found_run" -R "$ENGINE_REPO" -n "$artifact" -D engine-download
             printf 'tisma-engine nightly run %s (commit and date: %s): https://github.com/%s/actions/runs/%s\n' \
               "$found_run" "$info" "$ENGINE_REPO" "$found_run" > engine-source.txt
           fi
